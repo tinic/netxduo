@@ -55,6 +55,7 @@
 /*    hop_limit                             Value for the hop limit field,*/
 /*                                             or zero for the IP         */
 /*                                             instance default           */
+/*    traffic_class                         Value for the traffic class   */
 /*                                                                        */
 /*  OUTPUT                                                                */
 /*                                                                        */
@@ -73,7 +74,7 @@
 /**************************************************************************/
 UINT  _nxd_ipv6_raw_packet_send_internal(NX_IP *ip_ptr, NX_PACKET *packet_ptr,
                                          NXD_ADDRESS *destination_ip,
-                                         ULONG protocol, UINT hop_limit)
+                                         ULONG protocol, UINT hop_limit, ULONG traffic_class)
 {
 
 ULONG packet_hop_limit;
@@ -111,6 +112,7 @@ ULONG ip_address_lsw;
 
     /* Ok to send the packet! */
     _nx_ipv6_packet_send(ip_ptr, packet_ptr, protocol, packet_ptr -> nx_packet_length, packet_hop_limit,
+                         traffic_class,
                          packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address,
                          destination_ip -> nxd_ip_address.v6);
 
