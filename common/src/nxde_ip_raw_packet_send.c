@@ -72,7 +72,7 @@ NX_CALLER_CHECKING_EXTERNS
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
-/*    _nxd_ip_raw_packet_source_send        Actual raw packet send        */
+/*    _nxd_ip_raw_packet_send               Actual raw packet send        */
 /*                                             function.                  */
 /*                                                                        */
 /*  CALLED BY                                                             */
@@ -86,6 +86,7 @@ UINT  _nxde_ip_raw_packet_send(NX_IP *ip_ptr, NX_PACKET **packet_ptr_ptr,
 
 
 NX_PACKET *packet_ptr;
+UINT       status;
 
 
     /* Setup packet pointer.  */
@@ -166,7 +167,8 @@ NX_PACKET *packet_ptr;
     /* Check for appropriate caller.  */
     NX_THREADS_ONLY_CALLER_CHECKING
 
-    _nxd_ip_raw_packet_source_send(ip_ptr, packet_ptr, destination_ip, 0, protocol, ttl, tos);
+    /* Call the actual service.  */
+    status = _nxd_ip_raw_packet_send(ip_ptr, packet_ptr, destination_ip, protocol, ttl, tos);
 
     /* Now clear the application's packet pointer so it can't be accidentally
        used again by the application.  This is only done when error checking is
@@ -174,6 +176,6 @@ NX_PACKET *packet_ptr;
     *packet_ptr_ptr =  NX_NULL;
 
     /* Return completion status.  */
-    return(NX_SUCCESS);
+    return(status);
 }
 
