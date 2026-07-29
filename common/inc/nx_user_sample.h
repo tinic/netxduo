@@ -72,6 +72,15 @@
 #define NX_DISABLE_LOOPBACK_INTERFACE
 */
 
+/* Defined, an IPv4 broadcast sent by this host is also delivered to this host's
+   own sockets, as 4.4BSD and Linux do, at the cost of one packet copy per
+   broadcast sent.  It still goes out on the wire.  Off by default, which leaves
+   a locally-sent broadcast unseen by this host.  Uncomment out the follow code
+   to enable it. */
+/*
+#define NX_ENABLE_IP_BROADCAST_LOOPBACK
+*/
+
 /* If defined, the link driver is able to specify extra capability, such as checksum offloading features. */
 /*
 #define NX_ENABLE_INTERFACE_CAPABILITY

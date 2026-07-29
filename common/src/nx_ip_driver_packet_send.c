@@ -114,6 +114,14 @@ UINT         queued_count;
             driver_request.nx_ip_driver_command =               NX_LINK_PACKET_BROADCAST;
             driver_request.nx_ip_driver_physical_address_msw =  0xFFFFUL;
             driver_request.nx_ip_driver_physical_address_lsw =  0xFFFFFFFFUL;
+
+#ifdef NX_ENABLE_IP_BROADCAST_LOOPBACK
+
+            /* This host is one of the destinations of a broadcast, so deliver
+               a copy to it as well.  The driver interface is left in place,
+               so the packet still goes out on the wire.  */
+            loopback = NX_TRUE;
+#endif /* NX_ENABLE_IP_BROADCAST_LOOPBACK */
         }
         /* Determine if we have a loopback address.  */
         else if (destination_ip == packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_address)
