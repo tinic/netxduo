@@ -67,7 +67,7 @@ extern   "C" {
 
 /* Define macros that get the data on unaligned address.  */
 #define NX_MDNS_GET_USHORT_DATA(data)           (USHORT)((*(data) << 8) | (*(data + 1)))
-#define NX_MDNS_GET_ULONG_DATA(data)            (ULONG)((*(data) << 24) | (*(data + 1) << 16) | (*(data + 2) << 8) | (*(data + 3)))
+#define NX_MDNS_GET_ULONG_DATA(data)            (((ULONG)(*(data)) << 24) | ((ULONG)(*(data + 1)) << 16) | ((ULONG)(*(data + 2)) << 8) | ((ULONG)(*(data + 3))))
 
 /* Disable the mDNS Server functionality.  By default mDNS server
    function is enabled.  To remove the mDNS server function from
