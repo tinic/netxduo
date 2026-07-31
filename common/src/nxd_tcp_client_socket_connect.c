@@ -196,6 +196,9 @@ NX_IP        *ip_ptr;
 /*    If bound and not connected, this function will send the first SYN   */
 /*    message to the specified server to initiate the connection process. */
 /*                                                                        */
+/*    The outgoing source address is selected from the destination.  Use  */
+/*    _nxd_tcp_client_socket_source_connect() to name one instead.        */
+/*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
 /*    socket_ptr                            Pointer to TCP client socket  */
@@ -209,13 +212,8 @@ NX_IP        *ip_ptr;
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
-/*    _nx_tcp_socket_thread_suspend         Suspend thread for connection */
-/*    _nx_tcp_packet_send_syn               Send SYN packet               */
-/*    _nx_ip_route_find                     Find a suitable outgoing      */
-/*                                            interface.                  */
-/*    tx_mutex_get                          Obtain protection             */
-/*    tx_mutex_put                          Release protection            */
-/*    _nx_http_proxy_client_initialize      Initialize the HTTP Proxy     */
+/*    _nxd_tcp_client_socket_connect_internal                             */
+/*                                          Actual connect service        */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -226,6 +224,70 @@ UINT  _nxd_tcp_client_socket_connect(NX_TCP_SOCKET *socket_ptr,
                                      NXD_ADDRESS *server_ip,
                                      UINT server_port,
                                      ULONG wait_option)
+{
+
+    return(_nxd_tcp_client_socket_connect_internal(socket_ptr, server_ip, server_port,
+                                                   NX_TCP_SOURCE_ADDRESS_ANY, wait_option));
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nxd_tcp_client_socket_connect_internal            PORTABLE C       */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function handles the connect request for the supplied socket.  */
+/*    If bound and not connected, this function will send the first SYN   */
+/*    message to the specified server to initiate the connection process. */
+/*                                                                        */
+/*    address_index names the local address every segment of the          */
+/*    connection is to leave from: an nx_ip_interface[] index for an IPv4 */
+/*    destination, an nx_ipv6_address[] index for an IPv6 one, as in      */
+/*    _nxd_udp_socket_source_send().  NX_TCP_SOURCE_ADDRESS_ANY leaves    */
+/*    the selection to the destination.                                   */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    socket_ptr                            Pointer to TCP client socket  */
+/*    server_ip                             IP address of server          */
+/*    server_port                           Port number of server         */
+/*    address_index                         Index of IPv4 or IPv6 address */
+/*                                            to use as the source address*/
+/*    wait_option                           Suspension option             */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    status                                Completion status             */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_tcp_socket_thread_suspend         Suspend thread for connection */
+/*    _nx_tcp_packet_send_syn               Send SYN packet               */
+/*    _nx_ip_route_find                     Find a suitable outgoing      */
+/*                                            interface.                  */
+/*    _nxd_ipv6_interface_find              Find a suitable source address*/
+/*    tx_mutex_get                          Obtain protection             */
+/*    tx_mutex_put                          Release protection            */
+/*    _nx_http_proxy_client_initialize      Initialize the HTTP Proxy     */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nxd_tcp_client_socket_connect        Connect from any source       */
+/*    _nxd_tcp_client_socket_source_connect Connect from a named source   */
+/*                                                                        */
+/**************************************************************************/
+UINT  _nxd_tcp_client_socket_connect_internal(NX_TCP_SOCKET *socket_ptr,
+                                              NXD_ADDRESS *server_ip,
+                                              UINT server_port,
+                                              UINT address_index,
+                                              ULONG wait_option)
 {
 
 UINT          ip_header_size = 0;
@@ -256,8 +318,35 @@ ULONG         ip_address_log = 0;
 #ifndef NX_DISABLE_IPV4
     if (server_ip -> nxd_ip_version == NX_IP_VERSION_V4)
     {
+
+        /* A named source constrains the route lookup rather than seeding it:
+           _nx_ip_route_find() treats a non-null interface as a filter, so it
+           answers whether that interface reaches the server rather than which
+           interface would.  */
+        if (address_index != NX_TCP_SOURCE_ADDRESS_ANY)
+        {
+            outgoing_interface = &(ip_ptr -> nx_ip_interface[address_index]);
+
+            if ((outgoing_interface -> nx_interface_valid == NX_FALSE) ||
+                (outgoing_interface -> nx_interface_link_up == NX_FALSE))
+            {
+
+                /* Return an interface address error code.  */
+                return(NX_NO_INTERFACE_ADDRESS);
+            }
+        }
+
         if (_nx_ip_route_find(ip_ptr, server_ip -> nxd_ip_address.v4, &outgoing_interface, &socket_ptr -> nx_tcp_socket_next_hop_address) != NX_SUCCESS)
         {
+            /* Return an IP address error code.  */
+            return(NX_IP_ADDRESS_ERROR);
+        }
+
+        /* A zero next hop is not a route.  _nx_ip_packet_send() would discard
+           the SYN and report nothing, so refuse the connect here instead.  */
+        if (socket_ptr -> nx_tcp_socket_next_hop_address == 0)
+        {
+
             /* Return an IP address error code.  */
             return(NX_IP_ADDRESS_ERROR);
         }
@@ -269,13 +358,33 @@ ULONG         ip_address_log = 0;
     if (server_ip -> nxd_ip_version == NX_IP_VERSION_V6)
     {
 
-        status = _nxd_ipv6_interface_find(ip_ptr, server_ip -> nxd_ip_address.v6,
-                                          &socket_ptr -> nx_tcp_socket_ipv6_addr,
-                                          NX_NULL);
-
-        if (status != NX_SUCCESS)
+        if (address_index != NX_TCP_SOURCE_ADDRESS_ANY)
         {
-            return(status);
+
+            /* A named source is taken as given, as _nxd_udp_socket_source_send()
+               takes it, rather than selected for the destination.  */
+            socket_ptr -> nx_tcp_socket_ipv6_addr = &(ip_ptr -> nx_ipv6_address[address_index]);
+
+            if ((socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID) ||
+                (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_attached == NX_NULL))
+            {
+                socket_ptr -> nx_tcp_socket_ipv6_addr = NX_NULL;
+
+                /* Return an interface address error code.  */
+                return(NX_NO_INTERFACE_ADDRESS);
+            }
+        }
+        else
+        {
+
+            status = _nxd_ipv6_interface_find(ip_ptr, server_ip -> nxd_ip_address.v6,
+                                              &socket_ptr -> nx_tcp_socket_ipv6_addr,
+                                              NX_NULL);
+
+            if (status != NX_SUCCESS)
+            {
+                return(status);
+            }
         }
 
         outgoing_interface = socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_attached;
