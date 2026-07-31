@@ -343,6 +343,7 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nxd_nd_cache_invalidate.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxd_nd_cache_ip_address_find.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxd_tcp_client_socket_connect.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nxd_tcp_client_socket_source_connect.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxd_tcp_socket_peer_info_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxd_udp_packet_info_extract.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxd_udp_socket_send.c
@@ -375,6 +376,7 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nxde_nd_cache_invalidate.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxde_nd_cache_ip_address_find.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxde_tcp_client_socket_connect.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nxde_tcp_client_socket_source_connect.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxde_tcp_socket_peer_info_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxde_udp_packet_info_extract.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxde_udp_socket_send.c

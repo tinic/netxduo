@@ -3293,6 +3293,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_tcp_socket_window_update_notify_set          _nx_tcp_socket_window_update_notify_set
 #define nx_tcp_socket_vlan_priority_set                 _nx_tcp_socket_vlan_priority_set
 #define nxd_tcp_client_socket_connect                   _nxd_tcp_client_socket_connect
+#define nxd_tcp_client_socket_source_connect            _nxd_tcp_client_socket_source_connect
 #define nxd_tcp_socket_peer_info_get                    _nxd_tcp_socket_peer_info_get
 
 /* APIs for UDP. */
@@ -3485,6 +3486,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_tcp_socket_window_update_notify_set          _nxe_tcp_socket_window_update_notify_set
 #define nx_tcp_socket_vlan_priority_set                 _nxe_tcp_socket_vlan_priority_set
 #define nxd_tcp_client_socket_connect                   _nxde_tcp_client_socket_connect
+#define nxd_tcp_client_socket_source_connect            _nxde_tcp_client_socket_source_connect
 #define nxd_tcp_socket_peer_info_get                    _nxde_tcp_socket_peer_info_get
 
 /* APIs for UDP. */
@@ -3790,6 +3792,8 @@ UINT nx_tcp_socket_window_update_notify_set(NX_TCP_SOCKET *socket_ptr,
 UINT nx_tcp_socket_vlan_priority_set(NX_TCP_SOCKET *socket_ptr, UINT vlan_priority);
 UINT nxd_tcp_client_socket_connect(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *server_ip,
                                    UINT server_port, ULONG wait_option);
+UINT nxd_tcp_client_socket_source_connect(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *server_ip,
+                                          UINT server_port, UINT address_index, ULONG wait_option);
 UINT nxd_tcp_socket_peer_info_get(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *peer_ip_address, ULONG *peer_port);
 
 /* APIs for UDP. */

@@ -220,9 +220,17 @@ typedef  struct NX_TCP_HEADER_STRUCT
 } NX_TCP_HEADER;
 
 
+/* Define the address_index value that leaves the outgoing source unconstrained,
+   so the connect selects it from the destination as it always has.  */
+
+#define NX_TCP_SOURCE_ADDRESS_ANY                   ((UINT)0xFFFFFFFF)
+
+
 /* Define TCP component API function prototypes.  */
 
 UINT _nxd_tcp_client_socket_connect(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *server_ip, UINT server_port, ULONG wait_option);
+UINT _nxd_tcp_client_socket_source_connect(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *server_ip, UINT server_port, UINT address_index, ULONG wait_option);
+UINT _nxd_tcp_client_socket_connect_internal(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *server_ip, UINT server_port, UINT address_index, ULONG wait_option);
 UINT _nxd_tcp_socket_peer_info_get(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *peer_ip_address, ULONG *peer_port);
 UINT _nx_tcp_client_socket_bind(NX_TCP_SOCKET *socket_ptr, UINT port, ULONG wait_option);
 UINT _nx_tcp_client_socket_connect(NX_TCP_SOCKET *socket_ptr, ULONG server_ip, UINT server_port, ULONG wait_option);
@@ -337,6 +345,7 @@ UINT _nx_tcp_socket_vlan_priority_set(NX_TCP_SOCKET *socket_ptr, UINT vlan_prior
    application.  */
 
 UINT _nxde_tcp_client_socket_connect(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *server_ip, UINT server_port, ULONG wait_option);
+UINT _nxde_tcp_client_socket_source_connect(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *server_ip, UINT server_port, UINT address_index, ULONG wait_option);
 UINT _nxde_tcp_socket_peer_info_get(NX_TCP_SOCKET *socket_ptr, NXD_ADDRESS *peer_ip_address, ULONG *peer_port);
 UINT _nxe_tcp_client_socket_bind(NX_TCP_SOCKET *socket_ptr, UINT port, ULONG wait_option);
 UINT _nxe_tcp_client_socket_connect(NX_TCP_SOCKET *socket_ptr, ULONG server_ip, UINT server_port, ULONG wait_option);
