@@ -149,6 +149,16 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
      */
 
 
+    /* Every branch below reads a two- or four-byte header out of the message
+       before anything has established that the message has one. Four is the
+       largest of them, and no valid CertificateVerify is shorter than that in
+       any version -- the shortest carries a two-byte length and a signature the
+       size of a key modulus. */
+    if (message_length < 4)
+    {
+        return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+    }
+
     /* Get reference to remote device certificate so we can get the public key for signature verification. */
     status = _nx_secure_x509_remote_endpoint_certificate_get(&tls_session -> nx_secure_tls_credentials.nx_secure_tls_certificate_store,
                                                              &client_certificate);
@@ -561,8 +571,14 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
         }
 #endif
 
-        /* Length sanity check. */
-        if (length > message_length )
+        /* Length sanity check. The signature starts after the header the branch
+           above stepped over, so what has to hold it is the message minus that
+           header -- comparing `length` with the whole message lets a signature
+           of exactly the modulus size read the header's own bytes past the end.
+           This is the test the ECDSA path below already makes. received_signature
+           is still NX_NULL if no version branch ran. */
+        if ((received_signature == NX_NULL) ||
+            (((UINT)(received_signature - packet_buffer) + length) > message_length))
         {
             /* Incoming message was too long! */
             return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
