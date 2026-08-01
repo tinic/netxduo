@@ -133,7 +133,7 @@ NX_UDP_HEADER  *udp_header_ptr;
         if (_nx_ipv6_header_add(ip_ptr, &packet_ptr,
                                 NX_PROTOCOL_UDP,
                                 packet_ptr -> nx_packet_length,
-                                ip_ptr -> nx_ipv6_hop_limit,
+                                socket_ptr -> nx_udp_socket_time_to_live,
                                 0,
                                 remote_ip -> nxd_ip_address.v6,
                                 local_ip -> nxd_ip_address.v6,
