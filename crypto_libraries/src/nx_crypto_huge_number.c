@@ -1587,10 +1587,10 @@ UINT      num_words;
 #if (NX_CRYPTO_HUGE_NUMBER_BITS == 16)
         word = (HN_UBASE)((byte_stream[i] << 8) | (byte_stream[i + 1]));
 #else /* NX_CRYPTO_HUGE_NUMBER_BITS == 32 */
-        word = (HN_UBASE)((byte_stream[i] << 24) |
-                          (byte_stream[i + 1] << 16) |
-                          (byte_stream[i + 2] << 8) |
-                          (byte_stream[i + 3]));
+        word = (HN_UBASE)(((HN_UBASE)byte_stream[i] << 24) |
+                          ((HN_UBASE)byte_stream[i + 1] << 16) |
+                          ((HN_UBASE)byte_stream[i + 2] << 8) |
+                          ((HN_UBASE)byte_stream[i + 3]));
 #endif
         *destination = word;
         destination--;
