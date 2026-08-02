@@ -583,8 +583,11 @@ NX_IP         *ip_ptr;
         {
 #endif /* NX_ENABLE_LOW_WATERMARK */
 
-            /* Packet data begins to the right of the expected sequence (out of sequence data). Force an ACK. */
-            _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+            /* Packet data begins to the right of the expected sequence (out of sequence data).
+               Force an ACK, but leave it to the end of this function so that it reports the
+               sequence number and window this segment leaves behind rather than the ones it
+               arrived to.  */
+            need_ack = NX_TRUE;
 
             /* Add debug information. */
             NX_PACKET_DEBUG(NX_PACKET_TCP_RECEIVE_QUEUE, __LINE__, packet_ptr);
@@ -632,10 +635,13 @@ NX_IP         *ip_ptr;
         /* Go through the received packet chain, and locate the first packet that the
            packet_begin_sequence is to the right of the end of it. */
 
-        /* Packet data begins to the right of the expected sequence (out of sequence data). Force an ACK. */
+        /* Packet data begins to the right of the expected sequence (out of sequence data).
+           Force an ACK, but leave it to the end of this function.  A segment that fills the
+           gap is about to advance rx_sequence, and acknowledging before that reports the gap
+           as still open.  */
         if (((INT)(packet_begin_sequence - socket_ptr -> nx_tcp_socket_rx_sequence)) > 0)
         {
-            _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+            need_ack = NX_TRUE;
         }
 
         /* At this point, it is guaranteed that the receive queue contains packets. */
