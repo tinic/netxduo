@@ -583,8 +583,15 @@ NX_IP         *ip_ptr;
         {
 #endif /* NX_ENABLE_LOW_WATERMARK */
 
-            /* Packet data begins to the right of the expected sequence (out of sequence data). Force an ACK. */
-            _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+            /* Packet data begins to the right of the expected sequence (out of sequence data).
+               Force an ACK, but leave it to the end of this function: RFC 2018 section 4 has
+               the first SACK block hold the segment that triggered the acknowledgment, and it
+               cannot if the acknowledgment goes out before the segment is queued.  */
+            need_ack = NX_TRUE;
+
+#ifdef NX_ENABLE_TCP_SACK
+            socket_ptr -> nx_tcp_socket_sack_recent_sequence = packet_begin_sequence;
+#endif /* NX_ENABLE_TCP_SACK */
 
             /* Add debug information. */
             NX_PACKET_DEBUG(NX_PACKET_TCP_RECEIVE_QUEUE, __LINE__, packet_ptr);
@@ -632,10 +639,17 @@ NX_IP         *ip_ptr;
         /* Go through the received packet chain, and locate the first packet that the
            packet_begin_sequence is to the right of the end of it. */
 
-        /* Packet data begins to the right of the expected sequence (out of sequence data). Force an ACK. */
+        /* Packet data begins to the right of the expected sequence (out of sequence data).
+           Force an ACK, but leave it to the end of this function: RFC 2018 section 4 has the
+           first SACK block hold the segment that triggered the acknowledgment, and it cannot
+           if the acknowledgment goes out before the segment is queued.  */
         if (((INT)(packet_begin_sequence - socket_ptr -> nx_tcp_socket_rx_sequence)) > 0)
         {
-            _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+            need_ack = NX_TRUE;
+
+#ifdef NX_ENABLE_TCP_SACK
+            socket_ptr -> nx_tcp_socket_sack_recent_sequence = packet_begin_sequence;
+#endif /* NX_ENABLE_TCP_SACK */
         }
 
         /* At this point, it is guaranteed that the receive queue contains packets. */

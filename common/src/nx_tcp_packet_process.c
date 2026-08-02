@@ -119,6 +119,9 @@ UINT                         status;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
 ULONG                        rwin_scale = 0xFF;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+#ifdef NX_ENABLE_TCP_SACK
+ULONG                        sack_permitted = NX_FALSE;
+#endif /* NX_ENABLE_TCP_SACK */
 
 #ifdef NX_DISABLE_TCP_RX_CHECKSUM
     compute_checksum = 0;
@@ -308,6 +311,16 @@ ULONG                        rwin_scale = 0xFF;
             is_valid_option_flag = NX_FALSE;
         }
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+#ifdef NX_ENABLE_TCP_SACK
+        status = _nx_tcp_sack_permitted_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)), option_words * (ULONG)sizeof(ULONG), &sack_permitted);
+
+        /* Check the status. if status is NX_FALSE, means Option Length is invalid.  */
+        if (status == NX_FALSE)
+        {
+            is_valid_option_flag = NX_FALSE;
+        }
+#endif /* NX_ENABLE_TCP_SACK */
     }
 
     /* Pickup the destination TCP port.  */
@@ -406,6 +419,14 @@ ULONG                        rwin_scale = 0xFF;
                          */
                         socket_ptr -> nx_tcp_snd_win_scale_value = rwin_scale;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+#ifdef NX_ENABLE_TCP_SACK
+
+                        /* RFC 2018 section 2: the option has to be on both SYNs, so what the
+                           peer's SYN carried decides whether this side may describe its
+                           holes in blocks.  */
+                        socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
+#endif /* NX_ENABLE_TCP_SACK */
                     }
 
                     /* Process the packet within an existing TCP connection.  */
@@ -698,6 +719,14 @@ ULONG                        rwin_scale = 0xFF;
                      */
                     socket_ptr -> nx_tcp_snd_win_scale_value = rwin_scale;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+#ifdef NX_ENABLE_TCP_SACK
+
+                    /* RFC 2018 section 2: the option has to be on both SYNs, so what the
+                       peer's SYN carried decides whether this side may describe its
+                       holes in blocks.  */
+                    socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
+#endif /* NX_ENABLE_TCP_SACK */
 
                     /* Set the initial slow start threshold to be the advertised window size. */
                     socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = socket_ptr -> nx_tcp_socket_tx_window_advertised;

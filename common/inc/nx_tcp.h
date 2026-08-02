@@ -85,6 +85,30 @@
 #define NX_TCP_RWIN_KIND                0x03                /* RWIN option kind             */
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+#ifdef NX_ENABLE_TCP_SACK
+
+/* Define the selective acknowledgment options, RFC 2018.  */
+
+#define NX_TCP_SACK_PERMITTED_KIND      0x04                /* SACK-Permitted option kind   */
+#define NX_TCP_SACK_KIND                0x05                /* SACK option kind             */
+
+/* NOP, NOP, kind 4, length 2.  Two NOPs pad the two-byte option out to the
+   word _nx_tcp_packet_send_syn has to fill, and unlike NX_TCP_OPTION_END it
+   contains no end-of-list, so an option may follow it.  */
+#define NX_TCP_SACK_PERMITTED_OPTION    ((ULONG)0x01010402)
+
+/* Blocks carried by one SACK option.  Four is what fits: two NOPs, the kind and
+   length bytes, and eight bytes per block come to 36 of the 40 bytes a TCP
+   header has for options.  Three is the right value for a build that also sends
+   RFC 7323 timestamps, which this stack does not.  */
+#ifndef NX_TCP_SACK_MAX_BLOCKS
+#define NX_TCP_SACK_MAX_BLOCKS          4
+#endif
+
+#define NX_TCP_SACK_OPTION_SIZE(n)      (4 + ((n) << 3))
+#define NX_TCP_SACK_OPTION_MAX_SIZE     NX_TCP_SACK_OPTION_SIZE(NX_TCP_SACK_MAX_BLOCKS)
+#endif /* NX_ENABLE_TCP_SACK */
+
 
 /* Define constants for the optional TCP keepalive Timer.  To enable this
    feature, the TCP source must be compiled with NX_ENABLE_TCP_KEEPALIVE
@@ -303,7 +327,12 @@ VOID _nx_tcp_packet_send_rst(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *header_pt
 VOID _nx_tcp_packet_send_syn(NX_TCP_SOCKET *socket_ptr, ULONG tx_sequence);
 VOID _nx_tcp_packet_send_probe(NX_TCP_SOCKET *socket_ptr, ULONG tx_sequence, UCHAR data);
 VOID _nx_tcp_packet_send_control(NX_TCP_SOCKET *socket_ptr, ULONG control_bits, ULONG tx_sequence,
-                                 ULONG ack_number, ULONG option_word_1, ULONG option_word_2, UCHAR *data);
+                                 ULONG ack_number, ULONG option_word_1, ULONG option_word_2,
+                                 UCHAR *option_ptr, UINT option_size, UCHAR *data);
+#ifdef NX_ENABLE_TCP_SACK
+UINT _nx_tcp_sack_permitted_option_get(UCHAR *option_ptr, ULONG option_area_size, ULONG *sack_permitted);
+UINT _nx_tcp_sack_option_build(NX_TCP_SOCKET *socket_ptr, UCHAR *option_ptr);
+#endif /* NX_ENABLE_TCP_SACK */
 VOID _nx_tcp_periodic_processing(NX_IP *ip_ptr);
 VOID _nx_tcp_queue_process(NX_IP *ip_ptr);
 VOID _nx_tcp_receive_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);

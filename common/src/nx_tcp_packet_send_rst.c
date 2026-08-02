@@ -74,12 +74,12 @@ VOID  _nx_tcp_packet_send_rst(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *header_p
     if (header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT)
     {
         _nx_tcp_packet_send_control(socket_ptr, NX_TCP_RST_BIT, header_ptr -> nx_tcp_acknowledgment_number,
-                                    0, 0, 0, NX_NULL);
+                                    0, 0, 0, NX_NULL, 0, NX_NULL);
     }
     else
     {
         _nx_tcp_packet_send_control(socket_ptr, (NX_TCP_RST_BIT | NX_TCP_ACK_BIT), 0,
-                                    header_ptr -> nx_tcp_sequence_number, 0, 0, NX_NULL);
+                                    header_ptr -> nx_tcp_sequence_number, 0, 0, NX_NULL, 0, NX_NULL);
     }
 
 #ifndef NX_DISABLE_TCP_INFO

@@ -2008,6 +2008,21 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_snd_win_scale_value;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+#ifdef NX_ENABLE_TCP_SACK
+
+    /* NX_TRUE when the peer's SYN carried SACK-Permitted, which is what allows
+       this side to describe its out-of-order data in SACK blocks.  RFC 2018
+       section 2 requires the option on both SYNs.  */
+    UCHAR       nx_tcp_socket_sack_permitted;
+
+    /* It is reserved for future use. */
+    UCHAR       nx_tcp_socket_sack_reserved[3];
+
+    /* Begin sequence of the most recent segment queued out of sequence.  RFC 2018
+       section 4 puts the block holding it first in the option.  */
+    ULONG       nx_tcp_socket_sack_recent_sequence;
+#endif /* NX_ENABLE_TCP_SACK */
+
     /* Define the TCP keepalive timer parameters.  If enabled with NX_ENABLE_TCP_KEEPALIVE,
        these parameters are used to implement the keepalive timer.  */
 #ifdef NX_ENABLE_TCP_KEEPALIVE

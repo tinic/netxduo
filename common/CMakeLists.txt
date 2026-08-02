@@ -225,6 +225,8 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_packet_send_rst.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_packet_send_syn.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_periodic_processing.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_sack_option_build.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_sack_permitted_option_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_queue_process.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_receive_cleanup.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_server_socket_accept.c

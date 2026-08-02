@@ -462,6 +462,21 @@
 #define NX_ENABLE_TCP_WINDOW_SCALING
 */
 
+/* Defined, this option enables selective acknowledgment on the receive side (RFC 2018): the
+   SACK-Permitted option is offered on the SYN and honoured on the peer's, and an acknowledgment
+   that leaves a hole describes the data held above it in SACK blocks, so the peer retransmits
+   the hole rather than everything after it.  Default disabled. */
+/*
+#define NX_ENABLE_TCP_SACK
+*/
+
+/* Blocks one SACK option may carry.  Four is the most that fits in the 40 bytes a TCP header
+   has for options; three is the right value alongside an option that takes a word of its own.
+   The default value is 4.  */
+/*
+#define NX_TCP_SACK_MAX_BLOCKS      4
+*/
+
 /* Defined, this option disables the reset processing during disconnect when the timeout value is
    specified as NX_NO_WAIT.  */
 /*
