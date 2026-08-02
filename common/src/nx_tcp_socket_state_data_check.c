@@ -1194,7 +1194,15 @@ NX_IP         *ip_ptr;
 #endif
     }
 
-    if (need_ack == NX_TRUE)
+    /* An acknowledgment repeating both the acknowledgment number and the window of
+       the one before it, with nothing received in between, tells the peer nothing it
+       does not already know, and RFC 5681 section 3.2 has the peer count it as a
+       duplicate ACK.  Three of those cost a retransmission of data this socket
+       already holds.  rx_sequence_acked and rx_window_last_sent are what the last
+       acknowledgment put on the wire.  */
+    if ((need_ack == NX_TRUE) &&
+        ((socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
+         (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
     {
 
         /* Need to send ACK.  */

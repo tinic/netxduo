@@ -198,7 +198,20 @@ ULONG         tcpip_offload;
             /* If an incoming segment is not acceptable, an acknowledgment should be sent in reply
                (unless the RST bit is set, if so drop the segment and return).
                Section 3.9, Page 69, RFC 793.  */
-            if (!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT))
+            /* A segment from rx_sequence - 1 onwards is answered unconditionally.  Ahead
+               of the window, the peer has run past what it was offered and has to be told
+               where the window is; at rx_sequence - 1 it is a keepalive or a zero window
+               probe, whose whole purpose is to draw an acknowledgment out
+               (_nx_tcp_periodic_processing sends one built the same way, and
+               _nx_tcp_socket_state_data_check already treats that sequence as a probe).
+
+               A segment further behind than that is data already acknowledged.  If the
+               last acknowledgment sent carried this sequence number and this window then
+               repeating it adds nothing, and the peer counts it as a duplicate ACK.  */
+            if ((!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)) &&
+                ((((INT)((packet_sequence + 1) - rx_sequence)) >= 0) ||
+                 (socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
+                 (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
             {
 
                 /* Send an immediate ACK.  */
