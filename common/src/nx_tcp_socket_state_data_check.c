@@ -317,6 +317,7 @@ ULONG          trim_data_length;
 TX_THREAD     *thread_ptr;
 ULONG          acked_packets = 0;
 UINT           need_ack = NX_FALSE;
+UINT           out_of_sequence = NX_FALSE;
 #ifdef NX_ENABLE_TCPIP_OFFLOAD
 ULONG          tcpip_offload;
 #endif /* NX_ENABLE_TCPIP_OFFLOAD */
@@ -588,6 +589,7 @@ NX_IP         *ip_ptr;
                sequence number and window this segment leaves behind rather than the ones it
                arrived to.  */
             need_ack = NX_TRUE;
+            out_of_sequence = NX_TRUE;
 
             /* Add debug information. */
             NX_PACKET_DEBUG(NX_PACKET_TCP_RECEIVE_QUEUE, __LINE__, packet_ptr);
@@ -642,6 +644,7 @@ NX_IP         *ip_ptr;
         if (((INT)(packet_begin_sequence - socket_ptr -> nx_tcp_socket_rx_sequence)) > 0)
         {
             need_ack = NX_TRUE;
+            out_of_sequence = NX_TRUE;
         }
 
         /* At this point, it is guaranteed that the receive queue contains packets. */
@@ -1197,11 +1200,21 @@ NX_IP         *ip_ptr;
     /* An acknowledgment repeating both the acknowledgment number and the window of
        the one before it, with nothing received in between, tells the peer nothing it
        does not already know, and RFC 5681 section 3.2 has the peer count it as a
-       duplicate ACK.  Three of those cost a retransmission of data this socket
-       already holds.  rx_sequence_acked and rx_window_last_sent are what the last
-       acknowledgment put on the wire.  */
+       duplicate ACK.  rx_sequence_acked and rx_window_last_sent are what the last
+       acknowledgment put on the wire.
+
+       A segment that arrived out of sequence is the exception, and it is the case
+       RFC 5681 section 3.2 is written about: the duplicate acknowledgment is how the
+       receiver reports a hole, and three of them are what put the sender into fast
+       retransmit.  Such a segment advances neither rx_sequence nor rx_window_current
+       -- the window is only debited by how far rx_sequence moved -- so both halves
+       below compare equal and the gate would suppress exactly the acknowledgment the
+       sender is waiting for, leaving it to recover by timeout instead.  A segment
+       that closes the hole advances rx_sequence, so the acknowledgment it forces is
+       new and is not counted as a duplicate.  */
     if ((need_ack == NX_TRUE) &&
-        ((socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
+        ((out_of_sequence == NX_TRUE) ||
+         (socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
          (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
     {
 
