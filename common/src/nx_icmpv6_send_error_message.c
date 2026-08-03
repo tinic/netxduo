@@ -133,6 +133,38 @@ NXD_ADDRESS      dest_addr;
         return;
     }
 
+    /* RFC 4443 Section 2.4 (e.3): an ICMPv6 error message MUST NOT be
+       originated as a result of receiving a packet destined to an IPv6
+       multicast address.  Every node on the link received that packet, so
+       every one of them would answer it, and every answer goes to whatever
+       source address it carried.
+
+       The section allows two exceptions, both because the sender has to be
+       told and no unicast reply can tell it: Packet Too Big, so that Path MTU
+       Discovery works for multicast (Section 3.2), and Parameter Problem code
+       2, an unrecognised option whose two highest-order Option Type bits are
+       10 (Section 3.4).
+
+       The test belongs here rather than at each call site.  Two of the six
+       callers made it and four did not, so a malformed multicast packet with
+       an extension-header problem drew a unicast error from every listener on
+       the link.  */
+    if (IPv6_Address_Type(dest_ip) & IPV6_ADDRESS_MULTICAST)
+    {
+
+    UCHAR type;
+    UCHAR code;
+
+        type = (UCHAR)((word1 >> 24) & 0xFF);
+        code = (UCHAR)((word1 >> 16) & 0xFF);
+
+        if ((type != NX_ICMPV6_PACKET_TOO_BIG_TYPE) &&
+            ((type != NX_ICMPV6_PARAMETER_PROBLEM_TYPE) || (code != 2)))
+        {
+            return;
+        }
+    }
+
     /* Allocate a packet to build the ICMPv6 error message in.  */
     if (_nx_packet_allocate(ip_ptr -> nx_ip_default_packet_pool, &pkt_ptr, NX_IPv6_ICMP_PACKET, NX_NO_WAIT))
     {

@@ -193,24 +193,17 @@ NX_UDP_HEADER *udp_header_ptr;
 
 #ifdef FEATURE_NX_IPV6
 #ifndef NX_DISABLE_ICMPV6_ERROR_MESSAGE
-        /* If ICMPv6 is enabled, send Destination unreachable. */
+        /* If ICMPv6 is enabled, send Destination unreachable.  Whether one may
+           be originated at all is _nx_icmpv6_send_error_message()'s decision;
+           RFC 4443 Section 2.4 states the rules once, for every caller.  */
         if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
         {
-        NX_IPV6_HEADER *ip_header;
 
-            /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-            ip_header = (NX_IPV6_HEADER *)packet_ptr -> nx_packet_ip_header;
+            /* Restore UDP header. */
+            NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_0);
+            NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_1);
 
-            if ((ip_header -> nx_ip_header_destination_ip[0] & (ULONG)0xFF000000) != (ULONG)0xFF000000)
-            {
-
-                /* Restore UDP header. */
-                NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_0);
-                NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_1);
-
-                /* Send out ICMP error message if dest is not multicast. */
-                NX_ICMPV6_SEND_DEST_UNREACHABLE(ip_ptr, packet_ptr, NX_ICMPV6_DEST_UNREACHABLE_CODE);
-            }
+            NX_ICMPV6_SEND_DEST_UNREACHABLE(ip_ptr, packet_ptr, NX_ICMPV6_DEST_UNREACHABLE_CODE);
         }
 #endif /* NX_DISABLE_ICMPV6_ERROR_MESSAGE */
 #endif /* FEATURE_NX_IPV6 */
@@ -310,25 +303,17 @@ NX_UDP_HEADER *udp_header_ptr;
 #endif /* !NX_DISABLE_IPV4 && !NX_DISABLE_ICMPV4_ERROR_MESSAGE  */
 
 #if defined(FEATURE_NX_IPV6) && !defined(NX_DISABLE_ICMPV6_ERROR_MESSAGE)
-        /* If ICMPv6 is enabled, send Destination unreachable. */
+        /* If ICMPv6 is enabled, send Destination unreachable.  See the note on
+           the same call above: RFC 4443 Section 2.4 is enforced in the
+           generator.  */
         if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
         {
 
-        NX_IPV6_HEADER *ip_header;
+            /* Restore UDP header. */
+            NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_0);
+            NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_1);
 
-            /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-            ip_header = (NX_IPV6_HEADER *)packet_ptr -> nx_packet_ip_header;
-
-            /* Send out ICMP error message if dest is not multicast. */
-            if ((ip_header -> nx_ip_header_destination_ip[0] & (ULONG)0xFF000000) != (ULONG)0xFF000000)
-            {
-
-                /* Restore UDP header. */
-                NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_0);
-                NX_CHANGE_ULONG_ENDIAN(udp_header_ptr -> nx_udp_header_word_1);
-
-                NX_ICMPV6_SEND_DEST_UNREACHABLE(ip_ptr, packet_ptr, NX_ICMPV6_DEST_UNREACHABLE_CODE);
-            }
+            NX_ICMPV6_SEND_DEST_UNREACHABLE(ip_ptr, packet_ptr, NX_ICMPV6_DEST_UNREACHABLE_CODE);
         }
 #endif /* FEATURE_NX_IPV6 && !NX_DISABLE_ICMPV6_ERROR_MESSAGE  */
 
