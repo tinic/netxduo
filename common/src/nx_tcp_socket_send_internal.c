@@ -849,6 +849,22 @@ UINT            compute_checksum = 1;
             /* Restore interrupts.  */
             TX_RESTORE
 
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+
+            /* One segment in flight is timed at a time, which is what RFC 6298
+               section 3 describes as the traditional measurement and all a
+               connection without the timestamp option can do.  Record where
+               this one ends and when it left; the acknowledgment that covers
+               that sequence is the sample, and the next segment sent after it
+               arms the next measurement.  */
+            if (socket_ptr -> nx_tcp_socket_rtt_timing == NX_FALSE)
+            {
+                socket_ptr -> nx_tcp_socket_rtt_sequence = socket_ptr -> nx_tcp_socket_tx_sequence;
+                socket_ptr -> nx_tcp_socket_rtt_start    = tx_time_get();
+                socket_ptr -> nx_tcp_socket_rtt_timing   = NX_TRUE;
+            }
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
             /* Reset zero window probe flag. */
             socket_ptr -> nx_tcp_socket_zero_window_probe_has_data = NX_FALSE;
 

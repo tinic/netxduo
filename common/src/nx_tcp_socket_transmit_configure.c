@@ -90,6 +90,14 @@ NX_IP *ip_ptr;
 
     /* Setup the socket with the new transmit parameters.  */
     socket_ptr -> nx_tcp_socket_timeout_rate =                    timeout;
+
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+
+    /* An application that names a timeout here means it, so the estimator
+       stops writing over it for the life of the socket.  */
+    socket_ptr -> nx_tcp_socket_rtt_configured =                  NX_TRUE;
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
     socket_ptr -> nx_tcp_socket_timeout_max_retries =             max_retries;
     socket_ptr -> nx_tcp_socket_timeout_shift =                   (UCHAR)timeout_shift;
     socket_ptr -> nx_tcp_socket_transmit_queue_maximum_default =  max_queue_depth;
