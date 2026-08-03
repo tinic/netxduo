@@ -501,20 +501,22 @@ UINT                          interface_index;
                 }
             }
         }
-#ifdef NX_ENABLE_IPV6_PATH_MTU_DISCOVERY
 
         /* Check for an MTU update from the router. */
         else if (option_ptr -> nx_icmpv6_option_type == ICMPV6_OPTION_TYPE_MTU)
         {
 
+#ifdef NX_ENABLE_IPV6_PATH_MTU_DISCOVERY
         NX_IPV6_DESTINATION_ENTRY *dest_entry_ptr;
+#endif
+        NX_ICMPV6_OPTION_MTU      *option_mtu_ptr;
         UINT                       mtu_size;
 
             /* Get a local pointer to the MTU option data. */
             /*lint -e{929} -e{826} -e{740} suppress cast of pointer to pointer, since it is necessary  */
-            mtu_ptr = (NX_ICMPV6_OPTION_MTU *)option_ptr;
+            option_mtu_ptr = (NX_ICMPV6_OPTION_MTU *)option_ptr;
 
-            mtu_size = mtu_ptr -> nx_icmpv6_option_mtu_path_mtu;
+            mtu_size = option_mtu_ptr -> nx_icmpv6_option_mtu_path_mtu;
 
             NX_CHANGE_ULONG_ENDIAN(mtu_size);
 
@@ -525,13 +527,31 @@ UINT                          interface_index;
                 mtu_size = if_ptr -> nx_interface_ip_mtu_size;
             }
 
+            /* The router is describing the link, not one path across it, so a
+               value below what the driver reported becomes the interface's MTU.
+               RFC 4861 6.3.4, subject to the RFC 8200 minimum: a router that
+               advertises less than 1280 is describing a link IPv6 cannot run on
+               and is ignored. */
+            if ((mtu_size >= (UINT)NX_MINIMUM_IPV6_PATH_MTU) &&
+                (mtu_size < if_ptr -> nx_interface_ip_mtu_size))
+            {
+                if_ptr -> nx_interface_ip_mtu_size = mtu_size;
+            }
+
+#ifdef NX_ENABLE_IPV6_PATH_MTU_DISCOVERY
+
+            /* Remember that this advertisement carried an MTU, so the router
+               does not also get a destination table entry at the link MTU
+               below. */
+            mtu_ptr = option_mtu_ptr;
+
             /* Add destination table entry. */
             _nx_icmpv6_dest_table_add(ip_ptr, ipv6_header -> nx_ip_header_source_ip, &dest_entry_ptr,
                                       ipv6_header -> nx_ip_header_source_ip /* Next Hop address */,
                                       mtu_size, NX_WAIT_FOREVER,
                                       packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr);
-        }
 #endif
+        }
 
         /* Update the amount of packet option data remaining. */
         packet_length -= (option_ptr -> nx_icmpv6_option_length << 3);
