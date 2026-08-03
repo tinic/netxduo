@@ -144,6 +144,33 @@ ULONG                        rwin_scale = 0xFF;
         mss = 536;
 
         interface_ptr = packet_ptr -> nx_packet_address.nx_packet_interface_ptr;
+
+        /* A TCP segment addressed to a broadcast or a multicast destination
+           must be silently discarded, outlined in RFC 1122, Section 4.2.3.10,
+           Page 105.  Every host on the link received it, so any answer -- a
+           SYN/ACK from a listening port, a RST from a closed one -- is sent
+           by all of them at once to whatever source address the segment
+           carried.  */
+        if (((*dest_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE) ||
+            (*dest_ip == NX_IP_LIMITED_BROADCAST) ||
+            (((*dest_ip & interface_ptr -> nx_interface_ip_network_mask) ==
+              interface_ptr -> nx_interface_ip_network) &&
+             ((*dest_ip & ~(interface_ptr -> nx_interface_ip_network_mask)) ==
+              ~(interface_ptr -> nx_interface_ip_network_mask))))
+        {
+
+#ifndef NX_DISABLE_TCP_INFO
+
+            /* Increment the TCP invalid packet error count.  */
+            ip_ptr -> nx_ip_tcp_invalid_packets++;
+#endif /* NX_DISABLE_TCP_INFO */
+
+            /* Release the packet.  */
+            _nx_packet_release(packet_ptr);
+
+            /* Finished processing, simply return!  */
+            return;
+        }
     }
 #endif /* !NX_DISABLE_IPV4  */
 
