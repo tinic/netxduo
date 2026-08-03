@@ -223,6 +223,7 @@ VOID _nx_icmp_queue_process(NX_IP *ip_ptr);
 VOID _nx_icmpv4_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 VOID _nx_icmpv4_process_echo_reply(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 VOID _nx_icmpv4_process_echo_request(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
+VOID _nx_icmpv4_process_error(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 UINT _nx_icmp_interface_ping(NX_IP *ip_ptr, ULONG ip_address,
                              NX_INTERFACE *interface_ptr, ULONG next_hop_address,
                              CHAR *data_ptr, ULONG data_size,

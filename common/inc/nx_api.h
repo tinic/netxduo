@@ -1269,6 +1269,14 @@ typedef struct NX_IPV6_DEFAULT_ROUTER_ENTRY_STRUCT
 #define NX_CONTINUE                                0x55
 #define NX_TCPIP_OFFLOAD_ERROR                     0x56
 
+/* Reported by an ICMP Destination Unreachable or Time Exceeded message that
+   named one of this node's own datagrams. RFC 1122 Section 3.2.2.1 requires
+   these be passed to the transport layer.  */
+#define NX_NET_UNREACHABLE                         0x57
+#define NX_HOST_UNREACHABLE                        0x58
+#define NX_PROTOCOL_UNREACHABLE                    0x59
+#define NX_PORT_UNREACHABLE                        0x5A
+
 /* Define Link Driver constants.  */
 
 #define NX_LINK_PACKET_SEND                        0
@@ -1813,6 +1821,22 @@ typedef struct NX_UDP_SOCKET_STRUCT
        available on for the socket.  */
     VOID (*nx_udp_receive_callback)(struct NX_UDP_SOCKET_STRUCT *socket_ptr);
 
+    /* Define the callback function for an ICMP error naming a datagram this
+       socket sent.  RFC 1122 Section 4.1.3.3 requires the error be passed to
+       the application, but a UDP socket is bound to a local port only, so the
+       stack cannot tell which of the peers it talks to an error belongs to.
+       The callback is given the peer the offending datagram was addressed to
+       and returns NX_TRUE if the socket owns the error, in which case the
+       error becomes pending and the next receive returns it.  NX_NULL, the
+       default, declines every error.  */
+    UINT (*nx_udp_socket_icmp_error_callback)(struct NX_UDP_SOCKET_STRUCT *socket_ptr,
+                                              UINT error_code,
+                                              NXD_ADDRESS *peer_address,
+                                              UINT peer_port);
+
+    /* Pending ICMP error, returned and cleared by the next receive.  */
+    UINT        nx_udp_socket_icmp_error;
+
     /* This pointer is reserved for application specific use.  */
     /*lint -esym(768,NX_UDP_SOCKET_STRUCT::nx_udp_socket_reserved_ptr) suppress member not referenced. It is reserved for future use. */
     void        *nx_udp_socket_reserved_ptr;
@@ -1877,6 +1901,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
 
     /* Define the state of the TCP connection.  */
     UINT        nx_tcp_socket_state;
+
+    /* Define the last error an ICMP message reported for this connection,
+       NX_SUCCESS if none.  RFC 1122 Section 4.2.3.9: a soft error is recorded
+       and made available to the application rather than acted on, so that a
+       connection that later times out can say why.  */
+    UINT        nx_tcp_socket_icmp_error;
 
     /* Define the receive and transmit sequence numbers.   */
     ULONG       nx_tcp_socket_tx_sequence;
@@ -3311,6 +3341,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_udp_socket_port_get                          _nx_udp_socket_port_get
 #define nx_udp_socket_receive                           _nx_udp_socket_receive
 #define nx_udp_socket_receive_notify                    _nx_udp_socket_receive_notify
+#define nx_udp_socket_icmp_error_notify                 _nx_udp_socket_icmp_error_notify
 #define nx_udp_socket_send                              _nx_udp_socket_send
 #define nx_udp_socket_source_send                       _nx_udp_socket_source_send
 #define nx_udp_socket_unbind                            _nx_udp_socket_unbind
@@ -3502,6 +3533,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_udp_socket_port_get                          _nxe_udp_socket_port_get
 #define nx_udp_socket_receive                           _nxe_udp_socket_receive
 #define nx_udp_socket_receive_notify                    _nxe_udp_socket_receive_notify
+#define nx_udp_socket_icmp_error_notify                 _nxe_udp_socket_icmp_error_notify
 #define nx_udp_socket_send(s, p, i, t)                  _nxe_udp_socket_send(s, &p, i, t)
 #define nx_udp_socket_source_send(s, p, i, t, a)        _nxe_udp_socket_source_send(s, &p, i, t, a)
 #define nx_udp_socket_unbind                            _nxe_udp_socket_unbind
@@ -3822,6 +3854,8 @@ UINT nx_udp_socket_port_get(NX_UDP_SOCKET *socket_ptr, UINT *port_ptr);
 UINT nx_udp_socket_receive(NX_UDP_SOCKET *socket_ptr, NX_PACKET **packet_ptr, ULONG wait_option);
 UINT nx_udp_socket_receive_notify(NX_UDP_SOCKET *socket_ptr,
                                   VOID (*udp_receive_notify)(NX_UDP_SOCKET *));
+UINT nx_udp_socket_icmp_error_notify(NX_UDP_SOCKET *socket_ptr,
+                                     UINT (*udp_icmp_error_notify)(NX_UDP_SOCKET *, UINT, NXD_ADDRESS *, UINT));
 #ifndef NX_DISABLE_ERROR_CHECKING
 UINT _nxde_udp_socket_send(NX_UDP_SOCKET *socket_ptr, NX_PACKET **packet_ptr,
                            NXD_ADDRESS *ip_address, UINT port);

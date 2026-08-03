@@ -342,6 +342,10 @@ ULONG         ip_address_log = 0;
     /* Move the TCP state to Sequence Sent, the next state of an active open.  */
     socket_ptr -> nx_tcp_socket_state =  NX_TCP_SYN_SENT;
 
+    /* Nothing an ICMP message said about the last connection this socket
+       carried applies to the new one.  */
+    socket_ptr -> nx_tcp_socket_icmp_error =  NX_SUCCESS;
+
     /* Save the server port and server IP address.  */
     socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version       = server_ip -> nxd_ip_version;
 
