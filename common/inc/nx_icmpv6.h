@@ -130,6 +130,12 @@
 #define NX_ICMPV6_RTR_SOLICITATION_DELAY       1
 #endif /* NX_ICMPV6_RTR_SOLICITATION_DELAY */
 
+/* Define the ceiling the router solicitation retransmission interval backs off
+   to, in seconds.  RFC 7559 section 2 sets MRT to 3600 for this exchange. */
+#ifndef NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL
+#define NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL 3600
+#endif /* NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL */
+
 #endif
 
 
