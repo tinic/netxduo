@@ -305,15 +305,20 @@ UINT                          interface_index;
                 continue;
             }
 
+            prefix_length = prefix_ptr -> nx_icmpv6_option_prefix_length;
+
+            /* The two flags in a prefix information option are independent.
+               The on-link (L) flag drives the prefix list, RFC 4861 6.3.4.
+               The autonomous (A) flag drives address formation, RFC 4862 5.5.3,
+               and is processed below whether or not L is set. */
+            status = NX_SUCCESS;
+
             /* Determine whether or not the on-link flag is set. */
-            /* Ignore the prefix information option when it is link-local. Page 55, Section 6.3.4, RFC 4861. */
             if (prefix_ptr -> nx_icmpv6_option_prefix_flag & 0x80)
             {
 
                 /* This prefix option contains onlink prefix information. */
                 /* The following process follows RFC 4861 6.3.4 */
-
-                prefix_length = prefix_ptr -> nx_icmpv6_option_prefix_length;
 
                 if (prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime == 0)
                 {
@@ -329,106 +334,110 @@ UINT                          interface_index;
                        So add the prefix to our list. RFC 4861 6.3.4 p55.*/
                     status = _nx_ipv6_prefix_list_add_entry(ip_ptr, prefix_ptr -> nx_icmpv6_option_prefix,
                                                             (ULONG)prefix_length, prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime);
+                }
+            }
 
-                    /* Check for "A" bit. */
-                    if ((prefix_ptr -> nx_icmpv6_option_prefix_flag & 0x40) &&
-                        (prefix_ptr -> nx_icmpv6_option_prefix_length == (128 - NX_IPV6_HOST_ID_LENGTH)) &&
-                        (status == NX_SUCCESS))
+            /* Check for "A" bit.  A prefix with a zero valid lifetime forms no
+               address, RFC 4862 5.5.3(c).  When the prefix was also advertised
+               on-link and the prefix list would not hold it, no address is
+               formed from it either. */
+            if ((prefix_ptr -> nx_icmpv6_option_prefix_flag & 0x40) &&
+                (prefix_ptr -> nx_icmpv6_option_prefix_length == (128 - NX_IPV6_HOST_ID_LENGTH)) &&
+                (prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime != 0) &&
+                (status == NX_SUCCESS))
+            {
+            /* The autonomous flag is set */
+
+            /* Set first_unused to be an invalid entry. */
+            UINT              first_unused = NX_MAX_IPV6_ADDRESSES;
+            ULONG             word2, word3;
+            ULONG             address[4];
+            NXD_IPV6_ADDRESS *ipv6_address;
+
+                /* Find an entry that shares the same prefix. */
+                /* Note: RFC 4862 5.5.3(d) specifies that the search is limited to IPv6
+                   addresses formed by address autoconfiguration.  Towards the end of 5.5.3(d),
+                   the RFC explains that the search may still lead to address conflict (by not
+                   searching for addresses configured manually or via DHCP.  Therefore this
+                   implemenation chooses to search the entire IPv6 global address, in order to
+                   avoid conflict IP addresses. */
+                for (i = 0; i < NX_MAX_IPV6_ADDRESSES; i++)
+                {
+
+                    if (ip_ptr -> nx_ipv6_address[i].nxd_ipv6_address_valid == NX_FALSE)
                     {
-                    /* The autonomous flag is set */
 
-                    /* Set first_unused to be an invalid entry. */
-                    UINT              first_unused = NX_MAX_IPV6_ADDRESSES;
-                    ULONG             word2, word3;
-                    ULONG             address[4];
-                    NXD_IPV6_ADDRESS *ipv6_address;
+                        /* Found the first unused entry. */
+                        first_unused = i;
+                        break;
+                    }
+                }
 
-                        /* Find an entry that shares the same prefix. */
-                        /* Note: RFC 4862 5.5.3(d) specifies that the search is limited to IPv6
-                           addresses formed by address autoconfiguration.  Towards the end of 5.5.3(d),
-                           the RFC explains that the search may still lead to address conflict (by not
-                           searching for addresses configured manually or via DHCP.  Therefore this
-                           implemenation chooses to search the entire IPv6 global address, in order to
-                           avoid conflict IP addresses. */
-                        for (i = 0; i < NX_MAX_IPV6_ADDRESSES; i++)
-                        {
-
-                            if (ip_ptr -> nx_ipv6_address[i].nxd_ipv6_address_valid == NX_FALSE)
-                            {
-
-                                /* Found the first unused entry. */
-                                first_unused = i;
-                                break;
-                            }
-                        }
-
-                        if ((first_unused != NX_MAX_IPV6_ADDRESSES)
+                if ((first_unused != NX_MAX_IPV6_ADDRESSES)
 #ifdef NX_IPV6_STATELESS_AUTOCONFIG_CONTROL
-                            && (if_ptr -> nx_ipv6_stateless_address_autoconfig_status == NX_STATELESS_ADDRESS_AUTOCONFIG_ENABLED)
+                    && (if_ptr -> nx_ipv6_stateless_address_autoconfig_status == NX_STATELESS_ADDRESS_AUTOCONFIG_ENABLED)
 #endif /* NX_IPV6_STATELESS_AUTOCONFIG_CONTROL */
-                           )
-                        {
+                   )
+                {
 
-                            /* If there are no global addresses with such a prefix, and there is an unused entry,
-                               a new global address is formed. RFC 4862 5.5.3(d), p18 */
+                    /* If there are no global addresses with such a prefix, and there is an unused entry,
+                       a new global address is formed. RFC 4862 5.5.3(d), p18 */
 
-                            ipv6_address = &ip_ptr -> nx_ipv6_address[first_unused];
+                    ipv6_address = &ip_ptr -> nx_ipv6_address[first_unused];
 
-                            /* Find 64-bit interface ID. See RFC 4291 */
-                            word2 = if_ptr -> nx_interface_physical_address_msw << 16 |
-                                ((if_ptr -> nx_interface_physical_address_lsw & 0xFF000000) >> 16) | 0xFF;
+                    /* Find 64-bit interface ID. See RFC 4291 */
+                    word2 = if_ptr -> nx_interface_physical_address_msw << 16 |
+                        ((if_ptr -> nx_interface_physical_address_lsw & 0xFF000000) >> 16) | 0xFF;
 
-                            /* Fix the 2nd lower-order bit of the 1st byte */
-                            word2 = (word2 & 0xFDFFFFFF) | (~(word2 | 0xFDFFFFFF));
-                            word3 = (if_ptr -> nx_interface_physical_address_lsw & 0x00FFFFFF) | 0xFE000000;
+                    /* Fix the 2nd lower-order bit of the 1st byte */
+                    word2 = (word2 & 0xFDFFFFFF) | (~(word2 | 0xFDFFFFFF));
+                    word3 = (if_ptr -> nx_interface_physical_address_lsw & 0x00FFFFFF) | 0xFE000000;
 
-                            ipv6_address -> nxd_ipv6_address_valid = NX_TRUE;
-                            ipv6_address -> nxd_ipv6_address_type = NX_IP_VERSION_V6;
+                    ipv6_address -> nxd_ipv6_address_valid = NX_TRUE;
+                    ipv6_address -> nxd_ipv6_address_type = NX_IP_VERSION_V6;
 
-                            ipv6_address -> nxd_ipv6_address_attached = if_ptr;
-                            ipv6_address -> nxd_ipv6_address[0] = prefix_ptr -> nx_icmpv6_option_prefix[0];
-                            ipv6_address -> nxd_ipv6_address[1] = prefix_ptr -> nx_icmpv6_option_prefix[1];
-                            ipv6_address -> nxd_ipv6_address[2] = word2;
-                            ipv6_address -> nxd_ipv6_address[3] = word3;
+                    ipv6_address -> nxd_ipv6_address_attached = if_ptr;
+                    ipv6_address -> nxd_ipv6_address[0] = prefix_ptr -> nx_icmpv6_option_prefix[0];
+                    ipv6_address -> nxd_ipv6_address[1] = prefix_ptr -> nx_icmpv6_option_prefix[1];
+                    ipv6_address -> nxd_ipv6_address[2] = word2;
+                    ipv6_address -> nxd_ipv6_address[3] = word3;
 
-                            ipv6_address -> nxd_ipv6_address_next = if_ptr -> nxd_interface_ipv6_address_list_head;
-                            if_ptr -> nxd_interface_ipv6_address_list_head = ipv6_address;
+                    ipv6_address -> nxd_ipv6_address_next = if_ptr -> nxd_interface_ipv6_address_list_head;
+                    if_ptr -> nxd_interface_ipv6_address_list_head = ipv6_address;
 
 #ifndef NX_DISABLE_IPV6_DAD
-                            /* Set the address to Tentative, so the stack can start DAD process. */
-                            ipv6_address -> nxd_ipv6_address_state = NX_IPV6_ADDR_STATE_TENTATIVE;
+                    /* Set the address to Tentative, so the stack can start DAD process. */
+                    ipv6_address -> nxd_ipv6_address_state = NX_IPV6_ADDR_STATE_TENTATIVE;
 #else /* !NX_DISABLE_IPV6_DAD */
-                            /* DAD is disabled.  Set the address to VALID. */
-                            ipv6_address -> nxd_ipv6_address_state = NX_IPV6_ADDR_STATE_VALID;
+                    /* DAD is disabled.  Set the address to VALID. */
+                    ipv6_address -> nxd_ipv6_address_state = NX_IPV6_ADDR_STATE_VALID;
 #endif /* NX_DISABLE_IPV6_DAD */
 
-                            /* Join the solicited-node multicast group */
-                            /* FF02::1:FFXX:XXXX */
-                            SET_SOLICITED_NODE_MULTICAST_ADDRESS(address, ipv6_address -> nxd_ipv6_address);
-                            _nx_ipv6_multicast_join(ip_ptr, address, ipv6_address -> nxd_ipv6_address_attached);
+                    /* Join the solicited-node multicast group */
+                    /* FF02::1:FFXX:XXXX */
+                    SET_SOLICITED_NODE_MULTICAST_ADDRESS(address, ipv6_address -> nxd_ipv6_address);
+                    _nx_ipv6_multicast_join(ip_ptr, address, ipv6_address -> nxd_ipv6_address_attached);
 
-                            ipv6_address -> nxd_ipv6_address_prefix_length = (UCHAR)prefix_length;
-                            ipv6_address -> nxd_ipv6_address_ConfigurationMethod = NX_IPV6_ADDRESS_BASED_ON_INTERFACE;
+                    ipv6_address -> nxd_ipv6_address_prefix_length = (UCHAR)prefix_length;
+                    ipv6_address -> nxd_ipv6_address_ConfigurationMethod = NX_IPV6_ADDRESS_BASED_ON_INTERFACE;
 #ifndef NX_DISABLE_IPV6_DAD
-                            ipv6_address -> nxd_ipv6_address_DupAddrDetectTransmit = NX_IPV6_DAD_TRANSMITS - 1;
+                    ipv6_address -> nxd_ipv6_address_DupAddrDetectTransmit = NX_IPV6_DAD_TRANSMITS - 1;
 #endif /* NX_DISABLE_IPV6_DAD */
 
 #ifdef NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY
-                            if (ip_ptr -> nx_ipv6_address_change_notify)
-                            {
-                                interface_index = if_ptr -> nx_interface_index;
-                                (ip_ptr -> nx_ipv6_address_change_notify)(ip_ptr, NX_IPV6_ADDRESS_STATELESS_AUTO_CONFIG, interface_index,
-                                                                          first_unused, &ipv6_address -> nxd_ipv6_address[0]);
-                            }
-                            if ((ip_ptr -> nx_ipv6_address_change_notify_internal) && (ipv6_address -> nxd_ipv6_address_state == NX_IPV6_ADDR_STATE_VALID))
-                            {
-                                interface_index = if_ptr -> nx_interface_index;
-                                (ip_ptr -> nx_ipv6_address_change_notify_internal)(ip_ptr, NX_IPV6_ADDRESS_STATELESS_AUTO_CONFIG, interface_index,
-                                                                                   first_unused, &ipv6_address -> nxd_ipv6_address[0]);
-                            }
-#endif /* NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY */
-                        }
+                    if (ip_ptr -> nx_ipv6_address_change_notify)
+                    {
+                        interface_index = if_ptr -> nx_interface_index;
+                        (ip_ptr -> nx_ipv6_address_change_notify)(ip_ptr, NX_IPV6_ADDRESS_STATELESS_AUTO_CONFIG, interface_index,
+                                                                  first_unused, &ipv6_address -> nxd_ipv6_address[0]);
                     }
+                    if ((ip_ptr -> nx_ipv6_address_change_notify_internal) && (ipv6_address -> nxd_ipv6_address_state == NX_IPV6_ADDR_STATE_VALID))
+                    {
+                        interface_index = if_ptr -> nx_interface_index;
+                        (ip_ptr -> nx_ipv6_address_change_notify_internal)(ip_ptr, NX_IPV6_ADDRESS_STATELESS_AUTO_CONFIG, interface_index,
+                                                                           first_unused, &ipv6_address -> nxd_ipv6_address[0]);
+                    }
+#endif /* NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY */
                 }
             }
         }
