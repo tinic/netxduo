@@ -277,6 +277,27 @@ ULONG         tcpip_offload;
             return;
         }
 
+#ifdef NX_ENABLE_TCP_SACK
+
+        /* RFC 2018 section 3: read the blocks before the acknowledgment is
+           processed, so a fast retransmit this segment sets off already knows
+           what the peer holds.  Reading them afterwards would leave the
+           retransmission driven by the previous segment's blocks.
+
+           The option area is walked by length, so an option this build does
+           not send -- an RFC 7323 timestamp, say -- is stepped over rather
+           than ending the walk, and whatever a peer fits into its 40 bytes is
+           accepted regardless of what this side emits.  */
+        if ((tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_ACK_BIT) &&
+            (header_length > sizeof(NX_TCP_HEADER)))
+        {
+
+            _nx_tcp_sack_option_get(socket_ptr,
+                                    packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER),
+                                    header_length - (ULONG)sizeof(NX_TCP_HEADER));
+        }
+#endif /* NX_ENABLE_TCP_SACK */
+
         /* Step4: Check the ACK field. According to RFC 793, Section 3.9, Page 72.  */
         if (socket_ptr -> nx_tcp_socket_state != NX_TCP_SYN_RECEIVED)
         {
