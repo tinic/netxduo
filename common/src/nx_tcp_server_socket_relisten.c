@@ -353,6 +353,11 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                        peer's SYN carried decides whether this side may describe its
                        holes in blocks.  */
                     socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
+
+                    /* A duplicate recorded against the previous connection has no
+                       meaning in this one's sequence space.  */
+                    socket_ptr -> nx_tcp_socket_dsack_left = 0;
+                    socket_ptr -> nx_tcp_socket_dsack_right = 0;
 #endif /* NX_ENABLE_TCP_SACK */
 
                     /* If trace is enabled, insert this event into the trace buffer.  */

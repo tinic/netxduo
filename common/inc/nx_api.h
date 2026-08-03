@@ -2048,6 +2048,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
     /* Begin sequence of the most recent segment queued out of sequence.  RFC 2018
        section 4 puts the block holding it first in the option.  */
     ULONG       nx_tcp_socket_sack_recent_sequence;
+
+    /* The duplicate segment waiting to be reported as a D-SACK block, RFC 2883.
+       Equal bounds mean none is pending; the option builder clears them as it
+       writes the block, so a duplicate is reported on one acknowledgment only.  */
+    ULONG       nx_tcp_socket_dsack_left;
+    ULONG       nx_tcp_socket_dsack_right;
 #endif /* NX_ENABLE_TCP_SACK */
 
     /* Define the TCP keepalive timer parameters.  If enabled with NX_ENABLE_TCP_KEEPALIVE,

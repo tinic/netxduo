@@ -63,6 +63,11 @@ static VOID _nx_tcp_sack_sequence_write(UCHAR *option_ptr, ULONG sequence)
 /*    single forward walk produces the blocks: skip what the cumulative   */
 /*    acknowledgment already covers, then coalesce adjacent packets.      */
 /*                                                                        */
+/*    RFC 2883 comes first when a duplicate is pending: its block reports */
+/*    the sequence range of data received twice, which may lie below the   */
+/*    cumulative acknowledgment, and that is what tells the two apart.  It */
+/*    is written once, on the acknowledgment following the duplicate.      */
+/*                                                                        */
 /*    RFC 2018 section 4 puts the block containing the segment that       */
 /*    triggered this acknowledgment first.  The rest follow in decreasing */
 /*    sequence order, which is decreasing order of arrival for every      */
@@ -103,6 +108,9 @@ ULONG          left[NX_TCP_SACK_MAX_BLOCKS];
 ULONG          right[NX_TCP_SACK_MAX_BLOCKS];
 UINT           count = 0;
 UINT           recent = 0;
+UINT           limit;
+UINT           blocks;
+UINT           dsack = 0;
 UINT           i;
 UCHAR         *write_ptr;
 
@@ -113,26 +121,38 @@ UCHAR         *write_ptr;
         return(0);
     }
 
-    search_ptr = socket_ptr -> nx_tcp_socket_receive_queue_head;
-
-    if (search_ptr == NX_NULL)
+    /* A duplicate is reported whether or not there is anything else to say, so
+       the ordinary blocks are collected around it rather than instead of it.  */
+    if (socket_ptr -> nx_tcp_socket_dsack_left != socket_ptr -> nx_tcp_socket_dsack_right)
     {
-        return(0);
+        dsack = 1;
     }
+
+    limit = NX_TCP_SACK_MAX_BLOCKS - dsack;
 
     rx_sequence = socket_ptr -> nx_tcp_socket_rx_sequence;
 
-    /* The queue is ordered, so out-of-sequence data can only be at the end of
-       it.  This keeps an acknowledgment on an in-order stream, which is the
-       common case, from walking a queue the application has not drained yet.  */
-    search_header_ptr = (NX_TCP_HEADER *)socket_ptr -> nx_tcp_socket_receive_queue_tail -> nx_packet_prepend_ptr;
-    header_length = (search_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
-    end_sequence = search_header_ptr -> nx_tcp_sequence_number +
-                   socket_ptr -> nx_tcp_socket_receive_queue_tail -> nx_packet_length - header_length;
+    search_ptr = socket_ptr -> nx_tcp_socket_receive_queue_head;
 
-    if (((INT)(end_sequence - rx_sequence)) <= 0)
+    if ((search_ptr == NX_NULL) || (limit == 0))
     {
-        return(0);
+        search_ptr = NX_NULL;
+    }
+    else
+    {
+
+        /* The queue is ordered, so out-of-sequence data can only be at the end of
+           it.  This keeps an acknowledgment on an in-order stream, which is the
+           common case, from walking a queue the application has not drained yet.  */
+        search_header_ptr = (NX_TCP_HEADER *)socket_ptr -> nx_tcp_socket_receive_queue_tail -> nx_packet_prepend_ptr;
+        header_length = (search_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
+        end_sequence = search_header_ptr -> nx_tcp_sequence_number +
+                       socket_ptr -> nx_tcp_socket_receive_queue_tail -> nx_packet_length - header_length;
+
+        if (((INT)(end_sequence - rx_sequence)) <= 0)
+        {
+            search_ptr = NX_NULL;
+        }
     }
 
     /* Collect the blocks in ascending sequence order.  */
@@ -158,7 +178,7 @@ UCHAR         *write_ptr;
                 /* Contiguous with the block being built, so extend it.  */
                 right[count - 1] = end_sequence;
             }
-            else if (count < NX_TCP_SACK_MAX_BLOCKS)
+            else if (count < limit)
             {
                 left[count] = begin_sequence;
                 right[count] = end_sequence;
@@ -172,20 +192,20 @@ UCHAR         *write_ptr;
                    ones nearest its own retransmission point least, having
                    already been told about them by the cumulative
                    acknowledgment moving.  */
-                for (i = 1; i < NX_TCP_SACK_MAX_BLOCKS; i++)
+                for (i = 1; i < limit; i++)
                 {
                     left[i - 1] = left[i];
                     right[i - 1] = right[i];
                 }
-                left[NX_TCP_SACK_MAX_BLOCKS - 1] = begin_sequence;
-                right[NX_TCP_SACK_MAX_BLOCKS - 1] = end_sequence;
+                left[limit - 1] = begin_sequence;
+                right[limit - 1] = end_sequence;
             }
         }
 
         search_ptr = search_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
     }
 
-    if (count == 0)
+    if ((count == 0) && (dsack == 0))
     {
         return(0);
     }
@@ -193,7 +213,7 @@ UCHAR         *write_ptr;
     /* RFC 2018 section 4: the block holding the segment that triggered this
        acknowledgment goes first.  If that segment has since been covered, the
        highest block is the most recent one.  */
-    recent = count - 1;
+    recent = (count > 0) ? (count - 1) : 0;
     for (i = 0; i < count; i++)
     {
         if ((((INT)(socket_ptr -> nx_tcp_socket_sack_recent_sequence - left[i])) >= 0) &&
@@ -204,17 +224,36 @@ UCHAR         *write_ptr;
         }
     }
 
+    blocks = count + dsack;
+
     write_ptr = option_ptr;
 
     /* Two NOPs align the option, as RFC 2018 section 3 illustrates.  */
     *write_ptr++ = NX_TCP_NOP_KIND;
     *write_ptr++ = NX_TCP_NOP_KIND;
     *write_ptr++ = NX_TCP_SACK_KIND;
-    *write_ptr++ = (UCHAR)(2 + (count << 3));
+    *write_ptr++ = (UCHAR)(2 + (blocks << 3));
 
-    _nx_tcp_sack_sequence_write(write_ptr, left[recent]);
-    _nx_tcp_sack_sequence_write(write_ptr + 4, right[recent]);
-    write_ptr += 8;
+    /* RFC 2883 section 4: the D-SACK block is the first, ahead of the ordinary
+       ones.  Clearing it here is what makes it appear on exactly one
+       acknowledgment -- a sender that saw it twice would count the second as a
+       fresh duplicate and undo its congestion window a second time.  */
+    if (dsack != 0)
+    {
+        _nx_tcp_sack_sequence_write(write_ptr, socket_ptr -> nx_tcp_socket_dsack_left);
+        _nx_tcp_sack_sequence_write(write_ptr + 4, socket_ptr -> nx_tcp_socket_dsack_right);
+        write_ptr += 8;
+
+        socket_ptr -> nx_tcp_socket_dsack_left = 0;
+        socket_ptr -> nx_tcp_socket_dsack_right = 0;
+    }
+
+    if (count > 0)
+    {
+        _nx_tcp_sack_sequence_write(write_ptr, left[recent]);
+        _nx_tcp_sack_sequence_write(write_ptr + 4, right[recent]);
+        write_ptr += 8;
+    }
 
     /* The rest in decreasing sequence order.  */
     i = count;
@@ -232,6 +271,6 @@ UCHAR         *write_ptr;
         write_ptr += 8;
     }
 
-    return((UINT)NX_TCP_SACK_OPTION_SIZE(count));
+    return((UINT)NX_TCP_SACK_OPTION_SIZE(blocks));
 }
 #endif /* NX_ENABLE_TCP_SACK */

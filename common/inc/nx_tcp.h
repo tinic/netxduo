@@ -107,6 +107,17 @@
 
 #define NX_TCP_SACK_OPTION_SIZE(n)      (4 + ((n) << 3))
 #define NX_TCP_SACK_OPTION_MAX_SIZE     NX_TCP_SACK_OPTION_SIZE(NX_TCP_SACK_MAX_BLOCKS)
+
+/* Record a duplicate segment for the next acknowledgment to report as a D-SACK
+   block, RFC 2883 section 4.  The most recent duplicate wins: only one block is
+   spent on this, and the newest is the one the sender has not yet learnt about.  */
+#define NX_TCP_DSACK_RECORD(s, l, r)                            \
+    if (((s) -> nx_tcp_socket_sack_permitted == NX_TRUE) &&      \
+        (((INT)((r) - (l))) > 0))                               \
+    {                                                           \
+        (s) -> nx_tcp_socket_dsack_left = (l);                  \
+        (s) -> nx_tcp_socket_dsack_right = (r);                 \
+    }
 #endif /* NX_ENABLE_TCP_SACK */
 
 

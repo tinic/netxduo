@@ -370,6 +370,16 @@ NX_IP         *ip_ptr;
             /* Calculate the data length that out of window.  */
             trim_data_length = socket_ptr -> nx_tcp_socket_rx_sequence - packet_begin_sequence;
 
+#ifdef NX_ENABLE_TCP_SACK
+
+            /* What is being trimmed is data already acknowledged, arriving a
+               second time.  RFC 2883 section 4 reports exactly the duplicate
+               range, so the block ends at the cumulative acknowledgment and not
+               at the end of the segment.  */
+            NX_TCP_DSACK_RECORD(socket_ptr, packet_begin_sequence,
+                                socket_ptr -> nx_tcp_socket_rx_sequence)
+#endif /* NX_ENABLE_TCP_SACK */
+
             /* Trim the data that exceed the receive window.  */
             _nx_tcp_socket_state_data_trim_front(packet_ptr, trim_data_length);
 
@@ -737,6 +747,16 @@ NX_IP         *ip_ptr;
             if ((((INT)(packet_begin_sequence - search_begin_sequence)) >= 0) &&
                 (((INT)(search_end_sequence - packet_end_sequence)) >= 0))
             {
+
+#ifdef NX_ENABLE_TCP_SACK
+
+                /* A duplicate of data already held above the hole, so already
+                   reported in an ordinary block.  RFC 2883 section 4's second
+                   example: the D-SACK block is the duplicate's own range and
+                   the block covering it stays in the option behind it, which is
+                   what lets the sender tell a duplicate from a new arrival.  */
+                NX_TCP_DSACK_RECORD(socket_ptr, packet_begin_sequence, packet_end_sequence)
+#endif /* NX_ENABLE_TCP_SACK */
 
                 /* Send an immediate ACK.  */
                 _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);

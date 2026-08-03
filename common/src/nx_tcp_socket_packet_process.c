@@ -208,8 +208,24 @@ ULONG         tcpip_offload;
                A segment further behind than that is data already acknowledged.  If the
                last acknowledgment sent carried this sequence number and this window then
                repeating it adds nothing, and the peer counts it as a duplicate ACK.  */
+#ifdef NX_ENABLE_TCP_SACK
+
+            /* Data below the window is data this side already acknowledged, so
+               the peer sent it again for nothing.  RFC 2883 section 4's first
+               example: report the range in a D-SACK block and the peer can tell
+               its retransmission was needless rather than inferring loss.  */
+            if ((!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)) &&
+                (packet_data_length > 0) &&
+                (((INT)((packet_sequence + packet_data_length) - rx_sequence)) <= 0))
+            {
+                NX_TCP_DSACK_RECORD(socket_ptr, packet_sequence,
+                                    packet_sequence + packet_data_length)
+            }
+#endif /* NX_ENABLE_TCP_SACK */
+
             if ((!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)) &&
                 ((((INT)((packet_sequence + 1) - rx_sequence)) >= 0) ||
+                 (socket_ptr -> nx_tcp_socket_dsack_left != socket_ptr -> nx_tcp_socket_dsack_right) ||
                  (socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
                  (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
             {
