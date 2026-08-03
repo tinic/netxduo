@@ -94,6 +94,10 @@ NX_INTERFACE *interface_ptr;
     /* Reset the RS count. */
     interface_ptr -> nx_ipv6_rtr_solicitation_count = ip_ptr -> nx_ip_interface[interface_index].nx_ipv6_rtr_solicitation_max;
 
+    /* And the retransmission interval, which a previous round of solicitations
+       on this interface may have backed off. */
+    interface_ptr -> nx_ipv6_rtr_solicitation_interval = NX_ICMPV6_RTR_SOLICITATION_INTERVAL;
+
     interface_ptr -> nx_ipv6_rtr_solicitation_timer = NX_ICMPV6_RTR_SOLICITATION_DELAY;
 #endif /* NX_DISABLE_ICMPV6_ROUTER_SOLICITATION */
 

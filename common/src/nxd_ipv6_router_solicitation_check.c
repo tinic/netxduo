@@ -60,6 +60,8 @@
 /*  CALLS                                                                 */
 /*                                                                        */
 /*    _nx_icmpv6_send_rs                   Send router solicitation packet*/
+/*    NX_RAND                              Randomize the retransmission   */
+/*                                            interval                    */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -75,14 +77,17 @@
 /**************************************************************************/
 void _nxd_ipv6_router_solicitation_check(NX_IP *ip_ptr)
 {
-UINT i;
+UINT  i;
+ULONG interval;
+ULONG spread;
 
     for (i = 0; i < NX_MAX_PHYSICAL_INTERFACES; i++)
     {
         if (ip_ptr -> nx_ip_interface[i].nx_interface_valid == NX_TRUE)
         {
 
-            /* Check if max number of router solicitation messages have been sent. */
+            /* A zero count means nothing is soliciting on this interface: either
+               a router has answered, or stateless autoconfiguration is off. */
             if (ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_count != 0)
             {
 
@@ -101,8 +106,50 @@ UINT i;
                     }
                     else
                     {
-                        ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_count--;
-                        ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_timer = ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_interval;
+
+                        /* NX_ICMPV6_MAX_RTR_SOLICITATIONS are sent at the initial
+                           interval.  After that the count stays at one -- it is
+                           what tells this loop to keep going, and only a router
+                           advertisement or an application clears it -- and the
+                           interval doubles instead, up to the RFC 7559 ceiling. */
+                        if (ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_count > 1)
+                        {
+                            ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_count--;
+                        }
+                        else
+                        {
+                            interval = ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_interval << 1;
+
+                            if ((interval > (ULONG)NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL) ||
+                                (interval < ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_interval))
+                            {
+                                interval = (ULONG)NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL;
+                            }
+
+                            ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_interval = interval;
+                        }
+
+                        /* RFC 3315 section 14, which RFC 7559 section 2 adopts
+                           for this exchange: every retransmission timer carries
+                           a random factor between -0.1 and +0.1 of its own
+                           value.  Below ten seconds there is no room for one at
+                           this timer's one-second resolution, and the interval
+                           is used as it stands. */
+                        interval = ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_interval;
+                        spread = interval / 10;
+
+                        if (spread != 0)
+                        {
+                            interval = (interval - spread) + ((ULONG)NX_RAND() % ((spread << 1) + 1));
+                        }
+
+                        /* A zero would leave the count down never reaching zero. */
+                        if (interval == 0)
+                        {
+                            interval = 1;
+                        }
+
+                        ip_ptr -> nx_ip_interface[i].nx_ipv6_rtr_solicitation_timer = interval;
                     }
                 }
             }
