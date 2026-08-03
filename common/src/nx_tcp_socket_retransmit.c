@@ -82,6 +82,16 @@ ULONG      original_header_word_3;
 ULONG      original_header_word_4;
 ULONG      available;
 ULONG      window_size;
+#ifdef NX_ENABLE_TCP_SACK
+ULONG      sack_left[NX_TCP_SACK_MAX_BLOCKS];
+ULONG      sack_right[NX_TCP_SACK_MAX_BLOCKS];
+ULONG      sack_high;
+ULONG      sacked_bytes;
+ULONG      unacked;
+ULONG      in_flight;
+UINT       sack_blocks;
+UINT       sack_index;
+#endif /* NX_ENABLE_TCP_SACK */
 
     /* If the receiver winodw is zero, we enter the zero window probe phase
        RFC 793 Sec 3.7, p42: keep send new data.
@@ -146,6 +156,19 @@ ULONG      window_size;
         socket_ptr -> nx_tcp_socket_zero_window_probe_has_data = NX_FALSE;
     }
 
+#ifdef NX_ENABLE_TCP_SACK
+
+    /* RFC 6675 section 5.1: a retransmission timeout says the connection has
+       lost track of what the peer holds, so what it reported is dropped and
+       the queue is resent from the front.  A fast retransmit, and the partial
+       acknowledgments that follow it, are the case the blocks exist for and
+       keep them.  */
+    if ((need_fast_retransmit == NX_FALSE) && (socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE))
+    {
+        socket_ptr -> nx_tcp_socket_sack_block_count = 0;
+    }
+#endif /* NX_ENABLE_TCP_SACK */
+
     /* Increment the retry counter only if the receiver window is open. */
     /* Increment the retry counter.  */
     socket_ptr -> nx_tcp_socket_timeout_retries++;
@@ -191,6 +214,75 @@ ULONG      window_size;
     /* Get available size of packet that can be sent. */
     available = socket_ptr -> nx_tcp_socket_tx_window_congestion;
 
+#ifdef NX_ENABLE_TCP_SACK
+
+    /* Take the blocks the peer reported that still describe unacknowledged
+       data.  A block at or below the cumulative acknowledgment, or past what
+       has been sent, is stale -- the window has moved over it since -- and is
+       dropped here rather than trusted, so a block can never outlive the data
+       it described.  */
+    unacked = socket_ptr -> nx_tcp_socket_tx_sequence - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
+    sack_high = unacked;
+    sacked_bytes = 0;
+    sack_blocks = 0;
+
+    for (sack_index = 0; sack_index < (UINT)socket_ptr -> nx_tcp_socket_sack_block_count; sack_index++)
+    {
+
+        if ((((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - unacked)) <= 0) ||
+            (((INT)(socket_ptr -> nx_tcp_socket_tx_sequence -
+                    socket_ptr -> nx_tcp_socket_sack_right[sack_index])) < 0))
+        {
+            continue;
+        }
+
+        sack_left[sack_blocks] = socket_ptr -> nx_tcp_socket_sack_left[sack_index];
+        sack_right[sack_blocks] = socket_ptr -> nx_tcp_socket_sack_right[sack_index];
+        sacked_bytes = sacked_bytes + (sack_right[sack_blocks] - sack_left[sack_blocks]);
+
+        if (((INT)(sack_right[sack_blocks] - sack_high)) > 0)
+        {
+            sack_high = sack_right[sack_blocks];
+        }
+
+        sack_blocks++;
+    }
+
+    if ((sack_blocks > 0) && (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE))
+    {
+
+        /* The blocks say how much of what is outstanding the peer already has,
+           so what is still in the network is the rest.  RFC 6675 section 3
+           calls that the pipe, and the room under the congestion window is
+           what may go out now.  That is what lets every hole the peer
+           described leave in this round instead of one per round trip, which
+           is all NewReno on its own can infer.  Never less than the one
+           segment that would have been sent without the blocks.  */
+        if (socket_ptr -> nx_tcp_socket_tx_outstanding_bytes > sacked_bytes)
+        {
+            in_flight = socket_ptr -> nx_tcp_socket_tx_outstanding_bytes - sacked_bytes;
+        }
+        else
+        {
+            in_flight = 0;
+        }
+
+        if (available > in_flight)
+        {
+            available = available - in_flight;
+        }
+        else
+        {
+            available = 0;
+        }
+
+        if (available < socket_ptr -> nx_tcp_socket_connect_mss)
+        {
+            available = socket_ptr -> nx_tcp_socket_connect_mss;
+        }
+    }
+#endif /* NX_ENABLE_TCP_SACK */
+
     /* Pickup the head of the transmit queue.  */
     packet_ptr =  socket_ptr -> nx_tcp_socket_transmit_sent_head;
 
@@ -205,6 +297,12 @@ ULONG      window_size;
     NX_TCP_HEADER *header_ptr;
     ULONG         *source_ip = NX_NULL, *dest_ip = NX_NULL;
     NX_PACKET     *next_ptr;
+#ifdef NX_ENABLE_TCP_SACK
+    ULONG          queued_word;
+    ULONG          queued_begin;
+    ULONG          queued_end;
+    UINT           peer_holds_it = NX_FALSE;
+#endif /* NX_ENABLE_TCP_SACK */
 #if defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
     UINT           compute_checksum = 1;
 #endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
@@ -212,6 +310,75 @@ ULONG      window_size;
 #ifdef NX_DISABLE_TCP_TX_CHECKSUM
         compute_checksum = 0;
 #endif /* NX_DISABLE_TCP_TX_CHECKSUM */
+
+#ifdef NX_ENABLE_TCP_SACK
+        if (sack_blocks > 0)
+        {
+
+            /* Where this packet sits in the sequence space.  A queued packet
+               that the driver has finished with holds its header at the
+               prepend pointer, in network order.  */
+            /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+            queued_word = ((NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr) -> nx_tcp_sequence_number;
+            NX_CHANGE_ULONG_ENDIAN(queued_word);
+            queued_begin = queued_word;
+
+            /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+            queued_word = ((NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr) -> nx_tcp_header_word_3;
+            NX_CHANGE_ULONG_ENDIAN(queued_word);
+            queued_end = queued_begin + (packet_ptr -> nx_packet_length -
+                                         ((queued_word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG)));
+
+            /* Nothing at or above the highest byte the peer reported holding
+               has been shown to be missing.  RFC 6675 section 4 draws the same
+               line from a count of SACKed segments above; one is enough here,
+               where the transmit queue is a few packets deep and this is only
+               reached after three duplicate acknowledgments.  Sending on any
+               weaker evidence than that is guessing.  */
+            if (((INT)(queued_begin - sack_high)) >= 0)
+            {
+                break;
+            }
+
+            /* A packet whose whole payload falls inside a block is one the
+               peer has said it holds, so it is stepped over.  Stepped over and
+               nothing more: the packet stays on the queue and stays counted,
+               because RFC 2018 section 4 lets a receiver discard data it has
+               already reported and the cumulative acknowledgment is the only
+               thing that may release anything.
+
+               A segment carrying no payload is never skipped.  A FIN occupies
+               a sequence number that its length does not account for, so a
+               block reaching up to it does not mean the peer saw it.  */
+            if (((INT)(queued_end - queued_begin)) > 0)
+            {
+                for (sack_index = 0; sack_index < sack_blocks; sack_index++)
+                {
+                    if ((((INT)(queued_begin - sack_left[sack_index])) >= 0) &&
+                        (((INT)(sack_right[sack_index] - queued_end)) >= 0))
+                    {
+                        peer_holds_it = NX_TRUE;
+                        break;
+                    }
+                }
+            }
+
+            if (peer_holds_it == NX_TRUE)
+            {
+
+                next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+
+                /*lint -e{923} suppress cast of ULONG to pointer.  */
+                if (next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
+                {
+                    break;
+                }
+
+                packet_ptr = next_ptr;
+                continue;
+            }
+        }
+#endif /* NX_ENABLE_TCP_SACK */
 
         if (packet_ptr -> nx_packet_length > (available + sizeof(NX_TCP_HEADER)))
         {
@@ -407,11 +574,27 @@ ULONG      window_size;
         /* Move to next packet. */
         /* During fast recovery, only one packet is retransmitted at once. */
         /* After a timeout, the sending data can be at most one SMSS. */
-        if ((next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED) ||
-            (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE))
+        /*lint -e{923} suppress cast of ULONG to pointer.  */
+        if (next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
         {
             break;
         }
+#ifdef NX_ENABLE_TCP_SACK
+        else if ((socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE) && (sack_blocks == 0))
+        {
+
+            /* One segment per round trip is all a sender without blocks can
+               infer.  With them the walk carries on, so every hole the peer
+               described leaves in this round, under the window computed
+               above.  */
+            break;
+        }
+#else
+        else if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE)
+        {
+            break;
+        }
+#endif /* NX_ENABLE_TCP_SACK */
         else
         {
             packet_ptr = next_ptr;

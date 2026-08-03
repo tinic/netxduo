@@ -97,14 +97,8 @@
    contains no end-of-list, so an option may follow it.  */
 #define NX_TCP_SACK_PERMITTED_OPTION    ((ULONG)0x01010402)
 
-/* Blocks carried by one SACK option.  Four is what fits: two NOPs, the kind and
-   length bytes, and eight bytes per block come to 36 of the 40 bytes a TCP
-   header has for options.  Three is the right value for a build that also sends
-   RFC 7323 timestamps, which this stack does not.  */
-#ifndef NX_TCP_SACK_MAX_BLOCKS
-#define NX_TCP_SACK_MAX_BLOCKS          4
-#endif
-
+/* NX_TCP_SACK_MAX_BLOCKS is in nx_api.h: it sizes a member of NX_TCP_SOCKET as
+   well as the option built here.  */
 #define NX_TCP_SACK_OPTION_SIZE(n)      (4 + ((n) << 3))
 #define NX_TCP_SACK_OPTION_MAX_SIZE     NX_TCP_SACK_OPTION_SIZE(NX_TCP_SACK_MAX_BLOCKS)
 #endif /* NX_ENABLE_TCP_SACK */
@@ -332,6 +326,7 @@ VOID _nx_tcp_packet_send_control(NX_TCP_SOCKET *socket_ptr, ULONG control_bits, 
 #ifdef NX_ENABLE_TCP_SACK
 UINT _nx_tcp_sack_permitted_option_get(UCHAR *option_ptr, ULONG option_area_size, ULONG *sack_permitted);
 UINT _nx_tcp_sack_option_build(NX_TCP_SOCKET *socket_ptr, UCHAR *option_ptr);
+VOID _nx_tcp_sack_option_get(NX_TCP_SOCKET *socket_ptr, UCHAR *option_ptr, ULONG option_area_size);
 #endif /* NX_ENABLE_TCP_SACK */
 VOID _nx_tcp_periodic_processing(NX_IP *ip_ptr);
 VOID _nx_tcp_queue_process(NX_IP *ip_ptr);
