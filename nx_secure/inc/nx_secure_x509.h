@@ -163,6 +163,7 @@ extern   "C" {
 #define NX_SECURE_X509_INSUFFICIENT_CERT_SPACE                    0x1A8 /* Not enough certificate buffer space allocated for a certificate. */
 #define NX_SECURE_X509_CERT_ID_DUPLICATE                          0x1A9 /* Tried to add a certificate with a numeric ID that was already used - needs to be unique. */
 #define NX_SECURE_X509_MISSING_CRYPTO_ROUTINE                     0x1AA /* In attempting to perform a cryptographic operation, an entry in the ciphersuite table (or one of its function pointers) was NULL. */
+#define NX_SECURE_X509_INVALID_CA_CERTIFICATE                     0x1AB /* A certificate used to issue another one is not a CA: basicConstraints is absent, has cA FALSE, or its pathLenConstraint is exceeded. */
 
 /* Defines for working with private key types. */
 #define NX_SECURE_X509_KEY_TYPE_USER_DEFINED_MASK                 (0xFFFF0000)
@@ -981,6 +982,8 @@ UINT _nx_secure_x509_extended_key_usage_extension_parse(NX_SECURE_X509_CERT *cer
 UINT _nx_secure_x509_extension_find(NX_SECURE_X509_CERT *certificate,
                                     NX_SECURE_X509_EXTENSION *extension, USHORT extension_id);
 UINT _nx_secure_x509_key_usage_extension_parse(NX_SECURE_X509_CERT *certificate, USHORT *bitfield);
+UINT _nx_secure_x509_basic_constraints_extension_parse(NX_SECURE_X509_CERT *certificate,
+                                                       UINT *is_ca, INT *path_length);
 UINT _nx_secure_x509_subject_alt_names_find(NX_SECURE_X509_EXTENSION *extension, const UCHAR *name,
                                             UINT name_length, USHORT name_type);
 
@@ -1013,6 +1016,7 @@ UINT _nxe_secure_x509_key_usage_extension_parse(NX_SECURE_X509_CERT *certificate
 #define nx_secure_x509_extended_key_usage_extension_parse _nx_secure_x509_extended_key_usage_extension_parse
 #define nx_secure_x509_extension_find                     _nx_secure_x509_extension_find
 #define nx_secure_x509_key_usage_extension_parse          _nx_secure_x509_key_usage_extension_parse
+#define nx_secure_x509_basic_constraints_extension_parse   _nx_secure_x509_basic_constraints_extension_parse
 #else
 #define nx_secure_x509_certificate_initialize             _nxe_secure_x509_certificate_initialize
 #define nx_secure_x509_common_name_dns_check              _nxe_secure_x509_common_name_dns_check
@@ -1021,6 +1025,7 @@ UINT _nxe_secure_x509_key_usage_extension_parse(NX_SECURE_X509_CERT *certificate
 #define nx_secure_x509_extended_key_usage_extension_parse _nxe_secure_x509_extended_key_usage_extension_parse
 #define nx_secure_x509_extension_find                     _nxe_secure_x509_extension_find
 #define nx_secure_x509_key_usage_extension_parse          _nxe_secure_x509_key_usage_extension_parse
+#define nx_secure_x509_basic_constraints_extension_parse   _nx_secure_x509_basic_constraints_extension_parse
 #endif
 
 UINT nx_secure_x509_certificate_initialize(NX_SECURE_X509_CERT *certificate, UCHAR *certificate_data,

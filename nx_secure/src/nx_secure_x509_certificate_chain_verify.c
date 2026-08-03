@@ -56,6 +56,8 @@
 /*                                          Find a cert in a store        */
 /*    _nx_secure_x509_distinguished_name_compare                          */
 /*                                          Compare distinguished name    */
+/*    _nx_secure_x509_basic_constraints_extension_parse                   */
+/*                                          Parse basicConstraints        */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -72,6 +74,11 @@ NX_SECURE_X509_CERT *current_certificate;
 NX_SECURE_X509_CERT *issuer_certificate;
 UINT                 issuer_location = NX_SECURE_X509_CERT_LOCATION_NONE;
 INT                  compare_result;
+#ifndef NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK
+UINT                 issuer_is_ca;
+INT                  issuer_path_length;
+UINT                 depth = 0;
+#endif
 
     /* Process, following X509 basic certificate authentication (RFC 5280):
      *    1. Last certificate in chain is the end entity - start with it.
@@ -110,6 +117,34 @@ INT                  compare_result;
             {
                 return(NX_SECURE_X509_ISSUER_CERTIFICATE_NOT_FOUND);
             }
+
+#ifndef NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK
+            /* RFC 5280 6.1.4 (k) and (l): a certificate that issued another one
+               is a CA, and has to say so. Without this the issuer is found by
+               subject name and signature alone, so any end-entity certificate
+               whose private key an attacker holds can issue a certificate for
+               any name and present the two together -- the chain from the forged
+               certificate up to the trust anchor verifies at every step. */
+            status = _nx_secure_x509_basic_constraints_extension_parse(issuer_certificate,
+                                                                       &issuer_is_ca,
+                                                                       &issuer_path_length);
+
+            if (status != NX_SECURE_X509_SUCCESS || issuer_is_ca != NX_CRYPTO_TRUE)
+            {
+                /* No extension at all is also a failure. The extension is what
+                   makes a CA a CA, and treating its absence as permission is
+                   what the paragraph above describes. */
+                return(NX_SECURE_X509_INVALID_CA_CERTIFICATE);
+            }
+
+            /* RFC 5280 6.1.4 (m): pathLenConstraint counts the non-self-issued
+               certificates that may follow this one, which is how many have been
+               walked past to get here. */
+            if (issuer_path_length >= 0 && (UINT)issuer_path_length < depth)
+            {
+                return(NX_SECURE_X509_INVALID_CA_CERTIFICATE);
+            }
+#endif /* NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK */
         }
         else
         {
@@ -158,6 +193,9 @@ INT                  compare_result;
 
         /* Advance our working pointer to the next entry in the list. */
         current_certificate = issuer_certificate;
+#ifndef NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK
+        depth++;
+#endif
     } /* End while. */
 
     /* Certificate is invalid. */
