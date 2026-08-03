@@ -159,6 +159,37 @@
 #define NX_TCP_TRANSMIT_TIMER_RATE      1
 #endif
 
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+
+/* Define the lower bound RFC 6298 section 2.4 places on a computed
+   retransmission timeout, in milliseconds.  One second is what the section
+   asks for and is what ships; a port whose link is known to be short may lower
+   it -- Linux uses 200 ms -- at the cost of that conformance.  */
+
+#ifndef NX_TCP_RTO_MINIMUM_MS
+#define NX_TCP_RTO_MINIMUM_MS           1000
+#endif
+
+/* Define the upper bound of RFC 6298 section 2.5, in milliseconds.  The
+   section allows any maximum at or above 60 seconds.  It also bounds the
+   fixed point below: no intermediate exceeds eight times this in ticks.  */
+
+#ifndef NX_TCP_RTO_MAXIMUM_MS
+#define NX_TCP_RTO_MAXIMUM_MS           60000
+#endif
+
+/* Milliseconds to whole timer ticks, rounded up so a bound is never crossed by
+   the conversion.  Split about the second so the product stays inside a ULONG
+   at any tick rate a port might use.  */
+
+#define NX_TCP_RTO_TICKS(ms)            ((((ULONG)(ms) / 1000UL) * (ULONG)NX_IP_PERIODIC_RATE) + \
+                                         (((((ULONG)(ms) % 1000UL) * (ULONG)NX_IP_PERIODIC_RATE) + 999UL) / 1000UL))
+
+#define NX_TCP_RTO_MINIMUM              NX_TCP_RTO_TICKS(NX_TCP_RTO_MINIMUM_MS)
+#define NX_TCP_RTO_MAXIMUM              NX_TCP_RTO_TICKS(NX_TCP_RTO_MAXIMUM_MS)
+
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
 /* Define the value of the TCP minimum acceptable MSS for the host to accept the connection,
    which by default is 128.  */
 
@@ -287,6 +318,9 @@ VOID _nx_tcp_client_bind_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 VOID _nx_tcp_deferred_cleanup_check(NX_IP *ip_ptr);
 VOID _nx_tcp_fast_periodic_processing(NX_IP *ip_ptr);
 VOID _nx_tcp_socket_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, UINT need_fast_retransmit);
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+VOID _nx_tcp_socket_rtt_sample(NX_TCP_SOCKET *socket_ptr, ULONG rtt_ticks);
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
 VOID _nx_tcp_connect_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 VOID _nx_tcp_disconnect_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 VOID _nx_tcp_initialize(VOID);

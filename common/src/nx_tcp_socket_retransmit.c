@@ -83,6 +83,17 @@ ULONG      original_header_word_4;
 ULONG      available;
 ULONG      window_size;
 
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+
+    /* Karn's algorithm, RFC 6298 section 3.  Whatever is about to go out again
+       carries a sequence number that has already been sent, so an
+       acknowledgment covering it says nothing about which transmission it
+       answers.  Abandon the measurement in progress; the next segment carrying
+       new data starts another one, and section 5.5's backoff holds the timeout
+       up in the meantime.  */
+    socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
     /* If the receiver winodw is zero, we enter the zero window probe phase
        RFC 793 Sec 3.7, p42: keep send new data.
 

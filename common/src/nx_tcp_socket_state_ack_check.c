@@ -186,6 +186,29 @@ UINT           wrapped_flag = NX_FALSE;
         }
 #endif
 
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+
+        /* An acknowledgment that covers the segment being timed measures the
+           round trip, RFC 6298 section 2.  It has to be an acknowledgment of
+           something this side sent: one past the transmit sequence is the peer
+           acknowledging data that does not exist, and is answered below.
+
+           A segment that was retransmitted is not timed at all -- the
+           retransmit path cleared the flag when it resent it -- so this is only
+           ever reached for an unambiguous one, which is section 3.  */
+        if ((socket_ptr -> nx_tcp_socket_rtt_timing == NX_TRUE) &&
+            ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number -
+                   socket_ptr -> nx_tcp_socket_rtt_sequence) >= 0) &&
+            ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - ending_tx_sequence) <= 0))
+        {
+
+            socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
+
+            _nx_tcp_socket_rtt_sample(socket_ptr,
+                                      tx_time_get() - socket_ptr -> nx_tcp_socket_rtt_start);
+        }
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
         /* First, determine if incoming ACK matches our transmit sequence.  */
         /*lint -e{923} suppress cast of pointer to ULONG.  */
         if (tcp_header_ptr -> nx_tcp_acknowledgment_number == ending_tx_sequence)

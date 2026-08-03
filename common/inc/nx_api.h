@@ -1997,6 +1997,33 @@ typedef struct NX_TCP_SOCKET_STRUCT
     UCHAR       nx_tcp_socket_reserved2[3];
 #endif /* NX_ENABLE_VLAN */
 
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+
+    /* RFC 6298 section 2's round-trip time state, in fixed point: the smoothed
+       estimate is held in eighths of a timer tick and the variation in
+       quarters, so the update in _nx_tcp_socket_rtt_sample() is shifts and
+       adds.  A smoothed value of zero means no sample has been taken yet and
+       the next one initialises both (section 2.2).  */
+    ULONG       nx_tcp_socket_rtt_smoothed;
+    ULONG       nx_tcp_socket_rtt_variation;
+
+    /* The one segment being timed: the sequence number just past its last
+       byte, and the tick it was sent on.  */
+    ULONG       nx_tcp_socket_rtt_sequence;
+    ULONG       nx_tcp_socket_rtt_start;
+
+    /* NX_TRUE while a segment is being timed.  Cleared without a sample when
+       that segment is retransmitted, which is RFC 6298 section 3.  */
+    UCHAR       nx_tcp_socket_rtt_timing;
+
+    /* NX_TRUE when nx_tcp_socket_transmit_configure() named a timeout, which
+       the estimator then leaves alone.  */
+    UCHAR       nx_tcp_socket_rtt_configured;
+
+    /* It is reserved for future use. */
+    UCHAR       nx_tcp_socket_rtt_reserved[2];
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
     /* Local receive window size, when user creates the TCP socket. */
     ULONG       nx_tcp_socket_rx_window_maximum;

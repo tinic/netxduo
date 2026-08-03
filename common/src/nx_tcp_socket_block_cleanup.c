@@ -95,6 +95,20 @@ VOID  _nx_tcp_socket_block_cleanup(NX_TCP_SOCKET *socket_ptr)
     /* Reset fast recovery stage. */
     socket_ptr -> nx_tcp_socket_fast_recovery = NX_FALSE;
 
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+
+    /* The estimate describes the path this connection took, and the socket may
+       be listened on again for a peer somewhere else, so the next connection
+       starts from the default of RFC 6298 section 2.1.  */
+    if (socket_ptr -> nx_tcp_socket_rtt_configured == NX_FALSE)
+    {
+        socket_ptr -> nx_tcp_socket_rtt_smoothed  = 0;
+        socket_ptr -> nx_tcp_socket_rtt_variation = 0;
+        socket_ptr -> nx_tcp_socket_rtt_timing    = NX_FALSE;
+        socket_ptr -> nx_tcp_socket_timeout_rate  = _nx_tcp_transmit_timer_rate;
+    }
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
     /* Connection needs to be closed down immediately.  */
     if (socket_ptr -> nx_tcp_socket_client_type)
     {
