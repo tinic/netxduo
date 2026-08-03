@@ -158,6 +158,31 @@ extern   "C" {
 #endif
 #endif
 
+/* RFC 4443 Section 2.4 (f): "an IPv6 node MUST limit the rate of ICMPv6 error
+   messages it originates", by the token bucket the section recommends, and
+   "the limit parameters SHOULD be configurable".  One token is spent per
+   message originated; the bucket holds NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE and
+   refills at NX_ICMPV6_ERROR_MESSAGE_TOKEN_RATE tokens per second.  The
+   defaults let a burst of ten through and then ten a second, which is far
+   above anything a correct peer provokes and far below what it costs to answer
+   a flood: each message is a packet out of the pool.  */
+
+#ifndef NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE
+#define NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE                 10
+#endif
+
+#ifndef NX_ICMPV6_ERROR_MESSAGE_TOKEN_RATE
+#define NX_ICMPV6_ERROR_MESSAGE_TOKEN_RATE                  10
+#endif
+
+/* Ticks between tokens.  Both operands are constants, so this is folded and
+   no division is emitted; the floor of one tick keeps a rate faster than the
+   timer from becoming an interval of zero and refilling without limit.  */
+#define NX_ICMPV6_ERROR_MESSAGE_TOKEN_INTERVAL                          \
+    ((((NX_IP_PERIODIC_RATE) / (NX_ICMPV6_ERROR_MESSAGE_TOKEN_RATE)) > 0) \
+     ? ((ULONG)(NX_IP_PERIODIC_RATE) / (ULONG)(NX_ICMPV6_ERROR_MESSAGE_TOKEN_RATE)) \
+     : (ULONG)1)
+
 
 /* This defines the ASSET and process on ASSET fail. */
 #ifndef NX_DISABLE_ASSERT
@@ -2774,6 +2799,14 @@ typedef struct NX_IP_STRUCT
 
     /* Define the ICMPv6 router advertisement flag callback. */
     void        (*nx_icmpv6_ra_flag_callback)(struct NX_IP_STRUCT *, UINT);
+
+#ifndef NX_DISABLE_ICMPV6_ERROR_MESSAGE
+    /* Define the token bucket that limits how fast ICMPv6 error messages may
+       be originated, RFC 4443 Section 2.4 (f).  The level is in tokens and the
+       timestamp is the tick at which it was last refilled.  */
+    ULONG        nx_ip_icmpv6_error_message_tokens;
+    ULONG        nx_ip_icmpv6_error_message_timestamp;
+#endif /* NX_DISABLE_ICMPV6_ERROR_MESSAGE */
 
 #ifdef NX_ENABLE_IPV6_PATH_MTU_DISCOVERY
     /* Define the MTU path discovery periodic update. */

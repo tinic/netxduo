@@ -101,6 +101,12 @@ UINT _nxd_icmp_enable(NX_IP *ip_ptr)
     /* Set the initial size to zero. */
     ip_ptr -> nx_ipv6_destination_table_size = 0;
 
+#ifndef NX_DISABLE_ICMPV6_ERROR_MESSAGE
+    /* Fill the ICMPv6 error message token bucket, RFC 4443 Section 2.4 (f). */
+    ip_ptr -> nx_ip_icmpv6_error_message_tokens = NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE;
+    ip_ptr -> nx_ip_icmpv6_error_message_timestamp = tx_time_get();
+#endif /* NX_DISABLE_ICMPV6_ERROR_MESSAGE */
+
 #ifdef NX_ENABLE_IPV6_PATH_MTU_DISCOVERY
     /* Set up the MTU path discovery periodic update. */
     ip_ptr -> nx_destination_table_periodic_update = _nx_icmpv6_destination_table_periodic_update;

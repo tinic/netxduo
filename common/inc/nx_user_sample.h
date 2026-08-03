@@ -180,6 +180,14 @@
 #define NX_DISABLE_ICMPV6_ERROR_MESSAGE
 */
 
+/* The rate at which ICMPv6 error messages may be originated, RFC 4443 section
+   2.4 (f): a bucket of this many tokens, refilled this many times a second,
+   one token spent per message.  The defaults are 10 and 10. */
+/*
+#define NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE     10
+#define NX_ICMPV6_ERROR_MESSAGE_TOKEN_RATE      10
+*/
+
 /* Disable the Duplicate Address Detection (DAD) protocol when configuring the host IP address. */
 /*
 #define NX_DISABLE_IPV6_DAD
