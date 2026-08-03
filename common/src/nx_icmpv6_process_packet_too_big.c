@@ -87,8 +87,9 @@ UINT _nx_icmpv6_process_packet_too_big(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 UINT                       status = NX_INVALID_MTU_DATA;
 NX_ICMPV6_OPTION_MTU      *icmpv6_mtu_option_ptr;
 ULONG                      mtu;
-NX_IPV6_DESTINATION_ENTRY *dest_entry_ptr;
+NX_IPV6_DESTINATION_ENTRY *dest_entry_ptr = NX_NULL;
 ULONG                     *original_destination_ip;
+ULONG                     *original_source_ip;
 ULONG                      default_next_hop_address[4];
 NX_IPV6_HEADER            *ip_header_ptr, *original_ip_header_ptr;
 NX_INTERFACE              *if_ptr;
@@ -137,6 +138,8 @@ NX_INTERFACE              *if_ptr;
     /* Yes this looks like a valid IP header for the original offending packet. */
     original_destination_ip = original_ip_header_ptr -> nx_ip_header_destination_ip;
     NX_IPV6_ADDRESS_CHANGE_ENDIAN(original_destination_ip);
+    original_source_ip = original_ip_header_ptr -> nx_ip_header_source_ip;
+    NX_IPV6_ADDRESS_CHANGE_ENDIAN(original_source_ip);
     COPY_IPV6_ADDRESS(ip_header_ptr -> nx_ip_header_source_ip, &default_next_hop_address[0]);
 
     /*  Handle endianness. */
@@ -145,8 +148,30 @@ NX_INTERFACE              *if_ptr;
     /* Create a local variable for convenience. */
     mtu = icmpv6_mtu_option_ptr -> nx_icmpv6_option_mtu_path_mtu;
 
-    /* MTU data is valid if it is non zero, and is no more than the driver MTU. */
-    if ((mtu > 0) && (mtu <= if_ptr -> nx_interface_ip_mtu_size))
+    /* RFC 8201 Section 4 wants the payload validated against traffic this node actually
+       sent.  RFC 4443 Section 2.4 addresses the error to the source of the offending
+       packet, so that source has to be the address the error arrived on; anything
+       else is a report about somebody else's traffic. */
+    if (!CHECK_IPV6_ADDRESSES_SAME(original_source_ip,
+                                   packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address))
+    {
+#ifndef NX_DISABLE_ICMP_INFO
+
+        /* Increment the ICMP invalid message count.  */
+        ip_ptr -> nx_ip_icmp_invalid_packets++;
+#endif
+
+        /* Not a report about our own traffic, just release it.  */
+        _nx_packet_release(packet_ptr);
+        return(NX_INVALID_MTU_DATA);
+    }
+
+    /* MTU data is valid if it is at least the IPv6 minimum link MTU, and is no more
+       than the driver MTU.  RFC 8201 Section 4 requires a report below the minimum to be
+       discarded and the path MTU estimate never to be taken below it; a report above
+       the driver MTU cannot be acted on, and the same section forbids raising the
+       estimate on the strength of this message. */
+    if ((mtu >= (ULONG)NX_MINIMUM_IPV6_PATH_MTU) && (mtu <= if_ptr -> nx_interface_ip_mtu_size))
     {
 
         /* Add destination table. */
@@ -155,8 +180,10 @@ NX_INTERFACE              *if_ptr;
                                            packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr);
 
         /* If a new ND cache is created, force the entry to be "INCOMPLETE" so that the timer logic will
-           re-try, and then timeout if no responses are received. */
-        if(dest_entry_ptr -> nx_ipv6_destination_entry_nd_entry != NX_NULL)
+           re-try, and then timeout if no responses are received.  The entry pointer only means
+           anything when the add succeeded: a full destination table returns without writing it. */
+        if((status == NX_SUCCESS) && (dest_entry_ptr != NX_NULL) &&
+           (dest_entry_ptr -> nx_ipv6_destination_entry_nd_entry != NX_NULL))
         {
             ND_CACHE_ENTRY *nd_entry = dest_entry_ptr -> nx_ipv6_destination_entry_nd_entry;
             if(nd_entry -> nx_nd_cache_nd_status == ND_CACHE_STATE_CREATED)
@@ -168,6 +195,15 @@ NX_INTERFACE              *if_ptr;
             }
         }
     }
+
+#ifndef NX_DISABLE_ICMP_INFO
+    else
+    {
+
+        /* Increment the ICMP invalid message count.  */
+        ip_ptr -> nx_ip_icmp_invalid_packets++;
+    }
+#endif
 
     /* Release the packet. */
     _nx_packet_release(packet_ptr);
