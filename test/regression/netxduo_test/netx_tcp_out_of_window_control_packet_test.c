@@ -215,7 +215,7 @@ NX_PACKET  *my_packet;
 
     /* Send out of window URG packet. */
     _nx_tcp_packet_send_control(&client_socket, NX_TCP_URG_BIT, client_socket.nx_tcp_socket_tx_sequence + WINDOW_SIZE, 
-                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL);
+                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL, 0, NX_NULL);
 
     /* Sleep one second. */
     tx_thread_sleep(NX_IP_PERIODIC_RATE);
@@ -229,7 +229,7 @@ NX_PACKET  *my_packet;
 
     /* Send out of window ACK packet. */
     _nx_tcp_packet_send_control(&client_socket, NX_TCP_ACK_BIT, client_socket.nx_tcp_socket_tx_sequence + WINDOW_SIZE, 
-                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL);
+                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL, 0, NX_NULL);
 
     /* Sleep one second. */
     tx_thread_sleep(NX_IP_PERIODIC_RATE);
@@ -243,7 +243,7 @@ NX_PACKET  *my_packet;
 
     /* Send out of window RST packet. */
     _nx_tcp_packet_send_control(&client_socket, NX_TCP_RST_BIT, client_socket.nx_tcp_socket_tx_sequence + WINDOW_SIZE, 
-                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL);
+                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL, 0, NX_NULL);
 
     /* Sleep one second. */
     tx_thread_sleep(NX_IP_PERIODIC_RATE);

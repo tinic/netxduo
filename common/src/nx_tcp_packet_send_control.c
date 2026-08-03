@@ -57,6 +57,13 @@
 /*    control_bits                          TCP control bits              */
 /*    tx_sequence                           Transmit sequence number      */
 /*    ack_number                            Transmit acknowledge number   */
+/*    option_word_1                         First SYN option word         */
+/*    option_word_2                         Second SYN option word        */
+/*    option_ptr                            Option bytes to append after  */
+/*                                            the SYN option words, or    */
+/*                                            NX_NULL                     */
+/*    option_size                           Size of those bytes, a        */
+/*                                            multiple of four            */
 /*    data                                  Data of zero window probe     */
 /*                                                                        */
 /*  OUTPUT                                                                */
@@ -80,7 +87,8 @@
 /*                                                                        */
 /**************************************************************************/
 VOID  _nx_tcp_packet_send_control(NX_TCP_SOCKET *socket_ptr, ULONG control_bits, ULONG tx_sequence,
-                                  ULONG ack_number, ULONG option_word_1, ULONG option_word_2, UCHAR *data)
+                                  ULONG ack_number, ULONG option_word_1, ULONG option_word_2,
+                                  UCHAR *option_ptr, UINT option_size, UCHAR *data)
 {
 
 NX_IP         *ip_ptr;
@@ -131,6 +139,21 @@ ULONG          window_size;
     }
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+    /* Options appended after the SYN option words widen the header.  The data
+       offset field is what tells the peer where the payload starts, so it has
+       to be grown here, before the header word is built.  */
+    if ((option_ptr == NX_NULL) || ((option_size & 3) != 0))
+    {
+
+        /* Nothing to append, or a size that is not a whole number of option
+           words and could not be described by the data offset field.  */
+        option_size = 0;
+    }
+    else
+    {
+        header_size += ((ULONG)(option_size >> 2)) << NX_TCP_HEADER_SHIFT;
+    }
+
 #ifdef NX_IPSEC_ENABLE
     /* Get data offset from socket directly. */
     data_offset = socket_ptr -> nx_tcp_socket_egress_sa_data_offset;
@@ -170,8 +193,8 @@ ULONG          window_size;
     }
 #endif /* NX_ENABLE_VLAN */
 
-    /* Check to see if the packet has enough room to fill with the max TCP header (SYN + probe data).  */
-    if ((UINT)(packet_ptr -> nx_packet_data_end - packet_ptr -> nx_packet_prepend_ptr) < (NX_TCP_SYN_SIZE + 1))
+    /* Check to see if the packet has enough room to fill with the max TCP header (SYN + appended options + probe data).  */
+    if ((UINT)(packet_ptr -> nx_packet_data_end - packet_ptr -> nx_packet_prepend_ptr) < (NX_TCP_SYN_SIZE + option_size + 1))
     {
 
         /* Error getting packet, so just get out!  */
@@ -228,14 +251,8 @@ ULONG          window_size;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_4);
 
-    /* Check whether or not data is set. */
-    if (data)
-    {
-
-        /* Zero window probe data exist. */
-        *packet_ptr -> nx_packet_append_ptr++ = *data;
-        packet_ptr -> nx_packet_length++;
-    }
+    /* Options come before payload: the data offset field says where the payload
+       starts, so anything written after it is payload whatever it holds.  */
 
     /* Whether it is a SYN packet. */
     if (control_bits & NX_TCP_SYN_BIT)
@@ -254,6 +271,28 @@ ULONG          window_size;
         /* Adjust packet information. */
         packet_ptr -> nx_packet_append_ptr += (sizeof(ULONG) << 1);
         packet_ptr -> nx_packet_length += (ULONG)(sizeof(ULONG) << 1);
+    }
+
+    /* Appended options, already in network byte order and copied a byte at a
+       time because the append pointer carries no alignment guarantee.  */
+    if (option_size)
+    {
+    UINT i;
+
+        for (i = 0; i < option_size; i++)
+        {
+            *packet_ptr -> nx_packet_append_ptr++ = option_ptr[i];
+        }
+        packet_ptr -> nx_packet_length += option_size;
+    }
+
+    /* Check whether or not data is set. */
+    if (data)
+    {
+
+        /* Zero window probe data exist. */
+        *packet_ptr -> nx_packet_append_ptr++ = *data;
+        packet_ptr -> nx_packet_length++;
     }
 
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY

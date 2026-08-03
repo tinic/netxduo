@@ -86,10 +86,15 @@ NX_IPSEC_SA *cur_sa_ptr = NX_NULL;
 #endif /* NX_IPSEC_ENABLE */
 ULONG        option_word_1;
 ULONG        option_word_2;
+UCHAR       *option_ptr = NX_NULL;
+UINT         option_size = 0;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
 UINT         include_window_scaling = NX_FALSE;
 UINT         scale_factor;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+#if defined(NX_ENABLE_TCP_SACK) && defined(NX_ENABLE_TCP_WINDOW_SCALING)
+UCHAR        sack_permitted_option[4];
+#endif /* NX_ENABLE_TCP_SACK && NX_ENABLE_TCP_WINDOW_SCALING */
 ULONG        mss = 0;
 
 #ifdef NX_IPSEC_ENABLE
@@ -310,16 +315,51 @@ ULONG        mss = 0;
     }
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+#ifdef NX_ENABLE_TCP_SACK
+
+    /* RFC 2018 section 2: offer SACK on a SYN of our own, and on a SYN+ACK only
+       when the peer's SYN offered it.  nx_tcp_socket_sack_permitted is what the
+       peer's SYN left behind, and it is also what allows blocks to be sent
+       later, so a connection where either end stayed quiet sends none.  */
+    if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT) ||
+        (socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE))
+    {
+
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+        if (include_window_scaling)
+        {
+
+            /* The window scale has taken the second option word, so
+               SACK-Permitted needs a third.  */
+            sack_permitted_option[0] = NX_TCP_SACK_PERMITTED_KIND;
+            sack_permitted_option[1] = 2;
+            sack_permitted_option[2] = NX_TCP_NOP_KIND;
+            sack_permitted_option[3] = NX_TCP_NOP_KIND;
+
+            option_ptr = sack_permitted_option;
+            option_size = sizeof(sack_permitted_option);
+        }
+        else
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+        {
+
+            /* The second option word is otherwise only padding.  */
+            option_word_2 = NX_TCP_SACK_PERMITTED_OPTION;
+        }
+    }
+#endif /* NX_ENABLE_TCP_SACK */
+
     /* Send SYN or SYN+ACK packet according to socket state. */
     if (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT)
     {
         _nx_tcp_packet_send_control(socket_ptr, NX_TCP_SYN_BIT, tx_sequence,
-                                    0, option_word_1, option_word_2, NX_NULL);
+                                    0, option_word_1, option_word_2, option_ptr, option_size, NX_NULL);
     }
     else
     {
         _nx_tcp_packet_send_control(socket_ptr, (NX_TCP_SYN_BIT | NX_TCP_ACK_BIT), tx_sequence,
-                                    socket_ptr -> nx_tcp_socket_rx_sequence, option_word_1, option_word_2, NX_NULL);
+                                    socket_ptr -> nx_tcp_socket_rx_sequence, option_word_1, option_word_2,
+                                    option_ptr, option_size, NX_NULL);
     }
 
     /* Initialize recover sequence and previous cumulative acknowledgment. */

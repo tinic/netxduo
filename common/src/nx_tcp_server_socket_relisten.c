@@ -91,6 +91,9 @@ NX_IPV4_HEADER              *ipv4_header_ptr;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
 ULONG                        rwin_scale = 0;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+#ifdef NX_ENABLE_TCP_SACK
+ULONG                        sack_permitted = NX_FALSE;
+#endif /* NX_ENABLE_TCP_SACK */
 VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT port);
 
 
@@ -225,6 +228,10 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
                             _nx_tcp_window_scaling_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)), option_words * (ULONG)sizeof(ULONG), &rwin_scale);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+#ifdef NX_ENABLE_TCP_SACK
+                            _nx_tcp_sack_permitted_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)), option_words * (ULONG)sizeof(ULONG), &sack_permitted);
+#endif /* NX_ENABLE_TCP_SACK */
                         }
                     }
 
@@ -339,6 +346,14 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                      */
                     socket_ptr -> nx_tcp_snd_win_scale_value = rwin_scale;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+#ifdef NX_ENABLE_TCP_SACK
+
+                    /* RFC 2018 section 2: the option has to be on both SYNs, so what the
+                       peer's SYN carried decides whether this side may describe its
+                       holes in blocks.  */
+                    socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
+#endif /* NX_ENABLE_TCP_SACK */
 
                     /* If trace is enabled, insert this event into the trace buffer.  */
                     NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_STATE_CHANGE, ip_ptr, socket_ptr, socket_ptr -> nx_tcp_socket_state, NX_TCP_LISTEN_STATE, NX_TRACE_INTERNAL_EVENTS, 0, 0);

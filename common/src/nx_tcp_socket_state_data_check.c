@@ -587,9 +587,14 @@ NX_IP         *ip_ptr;
             /* Packet data begins to the right of the expected sequence (out of sequence data).
                Force an ACK, but leave it to the end of this function so that it reports the
                sequence number and window this segment leaves behind rather than the ones it
-               arrived to.  */
+               arrived to, and so that RFC 2018 section 4's first SACK block can hold the
+               segment that triggered it.  */
             need_ack = NX_TRUE;
             out_of_sequence = NX_TRUE;
+
+#ifdef NX_ENABLE_TCP_SACK
+            socket_ptr -> nx_tcp_socket_sack_recent_sequence = packet_begin_sequence;
+#endif /* NX_ENABLE_TCP_SACK */
 
             /* Add debug information. */
             NX_PACKET_DEBUG(NX_PACKET_TCP_RECEIVE_QUEUE, __LINE__, packet_ptr);
@@ -640,11 +645,16 @@ NX_IP         *ip_ptr;
         /* Packet data begins to the right of the expected sequence (out of sequence data).
            Force an ACK, but leave it to the end of this function.  A segment that fills the
            gap is about to advance rx_sequence, and acknowledging before that reports the gap
-           as still open.  */
+           as still open; RFC 2018 section 4's first SACK block also has to hold the segment
+           that triggered it.  */
         if (((INT)(packet_begin_sequence - socket_ptr -> nx_tcp_socket_rx_sequence)) > 0)
         {
             need_ack = NX_TRUE;
             out_of_sequence = NX_TRUE;
+
+#ifdef NX_ENABLE_TCP_SACK
+            socket_ptr -> nx_tcp_socket_sack_recent_sequence = packet_begin_sequence;
+#endif /* NX_ENABLE_TCP_SACK */
         }
 
         /* At this point, it is guaranteed that the receive queue contains packets. */

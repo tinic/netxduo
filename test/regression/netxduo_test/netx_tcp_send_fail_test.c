@@ -160,7 +160,7 @@ NX_PACKET *packet_ptr;
 #endif /* NX_IPSEC_ENABLE */
 
     /* Send a fake packet with no control bits set. */
-    _nx_tcp_packet_send_control(&fake_socket, 0, 0, 0, 0, 0, NX_NULL);
+    _nx_tcp_packet_send_control(&fake_socket, 0, 0, 0, 0, 0, NX_NULL, 0, NX_NULL);
 
 #ifndef NX_DISABLE_TCP_INFO
     if (ip_1.nx_ip_tcp_receive_packets_dropped == 0)

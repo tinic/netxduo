@@ -75,8 +75,25 @@
 /**************************************************************************/
 VOID  _nx_tcp_packet_send_ack(NX_TCP_SOCKET *socket_ptr, ULONG tx_sequence)
 {
+
+#ifdef NX_ENABLE_TCP_SACK
+UCHAR sack_option[NX_TCP_SACK_OPTION_MAX_SIZE];
+UINT  sack_option_size;
+
+    /* RFC 2018 section 3: an acknowledgment that does not cover everything the
+       socket holds describes the rest in SACK blocks, so the peer retransmits
+       the hole rather than everything after it.  Nothing to report costs one
+       comparison and leaves the header five words long.  */
+    sack_option_size = _nx_tcp_sack_option_build(socket_ptr, sack_option);
+
     _nx_tcp_packet_send_control(socket_ptr, NX_TCP_ACK_BIT, tx_sequence,
-                                socket_ptr -> nx_tcp_socket_rx_sequence, 0, 0, NX_NULL);
+                                socket_ptr -> nx_tcp_socket_rx_sequence, 0, 0,
+                                sack_option, sack_option_size, NX_NULL);
+#else
+    _nx_tcp_packet_send_control(socket_ptr, NX_TCP_ACK_BIT, tx_sequence,
+                                socket_ptr -> nx_tcp_socket_rx_sequence, 0, 0,
+                                NX_NULL, 0, NX_NULL);
+#endif /* NX_ENABLE_TCP_SACK */
 
     /* Setup a new delayed ACK timeout.  */
     socket_ptr -> nx_tcp_socket_delayed_ack_timeout =  _nx_tcp_ack_timer_rate;
