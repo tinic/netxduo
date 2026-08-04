@@ -3591,6 +3591,23 @@ UINT        i;
                 /* Yes, have done, just return success.  */
                 return NX_SUCCESS;
             }
+            else if (status == NX_DNS_NAME_ERROR)
+            {
+
+                /* The server says the name does not exist, and every other
+                   server would have to say the same: RFC 2308 2.1's NXDOMAIN
+                   is an answer about the name and not about the server that
+                   gave it.  Asking the rest of the list, once per retry, buys
+                   nothing and costs the caller the whole timeout ladder. */
+
+                /* Unbind the socket.  */
+                nx_udp_socket_unbind(&(dns_ptr -> nx_dns_socket));
+
+                /* Release the mutex */
+                tx_mutex_put(&dns_ptr -> nx_dns_mutex);
+
+                return(NX_DNS_NAME_ERROR);
+            }
             else
             {
 
@@ -3814,6 +3831,19 @@ ULONG       rr_ttl;
         /* We have a response with matching ID, check that it is a response
            and is successful and has a response record.  */
         status =  _nx_dns_network_to_short_convert(receive_packet_ptr -> nx_packet_prepend_ptr + NX_DNS_FLAGS_OFFSET);
+
+        /* Check for an authoritative "no such name" -- see the same test in
+           _nx_dns_response_process().  An address with no PTR record is the
+           ordinary case, and it was indistinguishable from a broken server. */
+        if (((status & NX_DNS_QUERY_MASK) == NX_DNS_RESPONSE_FLAG) &&
+            ((status & NX_DNS_RCODE_MASK) == NX_DNS_RCODE_NAME_ERR))
+        {
+
+            /* No; Release the packet.  */
+            nx_packet_release(receive_packet_ptr);
+
+            return NX_DNS_NAME_ERROR;
+        }
 
         /* Check for indication of DNS server error (cannot authenticate answer or authority portion
            of the DNS data. */
@@ -4609,6 +4639,25 @@ UINT                host_name_size;
 
     /* Check that the packet has a valid response record.  */
     status =  _nx_dns_network_to_short_convert(packet_ptr -> nx_packet_prepend_ptr + NX_DNS_FLAGS_OFFSET);
+
+    /* Check for an authoritative "no such name".  RFC 1035 4.1.1 gives RCODE 3
+       the meaning "the domain name referenced in the query does not exist", and
+       RFC 2308 2.1 calls that answer NXDOMAIN.  It is an answer.  The mask
+       below is 0x8002 -- the response bit and bit 1 of the RCODE -- so RCODE 3
+       satisfies it exactly as RCODE 2 does, and both reached the caller as
+       NX_DNS_SERVER_AUTH_ERROR.  A client could therefore not tell a name that
+       does not exist from a server that is broken, and the retry loop went on
+       to ask every remaining server, once per retry, about a name the first one
+       had already answered for. */
+    if (((status & NX_DNS_QUERY_MASK) == NX_DNS_RESPONSE_FLAG) &&
+        ((status & NX_DNS_RCODE_MASK) == NX_DNS_RCODE_NAME_ERR))
+    {
+
+        /* Release the source packet.  */
+        nx_packet_release(packet_ptr);
+
+        return NX_DNS_NAME_ERROR;
+    }
 
     /* Check for indication of DNS server error (cannot authenticate answer or authority portion
        of the DNS data. */
@@ -7357,6 +7406,21 @@ UINT        length, index;
 
                 /* Yes, have done, just return success.  */
                 return NX_SUCCESS;
+            }
+            else if (status == NX_DNS_NAME_ERROR)
+            {
+
+                /* No PTR record for this address, said with authority.  The
+                   rest of the list would say the same -- see the forward
+                   lookup for the reasoning. */
+
+                /* Unbind the socket.  */
+                nx_udp_socket_unbind(&(dns_ptr -> nx_dns_socket));
+
+                /* Release the mutex */
+                tx_mutex_put(&(dns_ptr -> nx_dns_mutex));
+
+                return(NX_DNS_NAME_ERROR);
             }
         }
 

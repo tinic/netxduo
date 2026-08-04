@@ -107,6 +107,7 @@ extern   "C" {
 #define NX_DNS_FEATURE_NOT_SUPPORTED    0xB5        /* The requested feature is not supported in this build */
 #define NX_DNS_NAME_MISMATCH            0xB6        /* The name mismatch.                                   */
 #define NX_DNS_CACHE_ERROR              0xB7        /* The Cache size is not enough.                        */ 
+#define NX_DNS_NAME_ERROR               0xB8        /* Server answered RCODE 3: the name does not exist     */
 
 
 /* Define constants for the flags word.  */
