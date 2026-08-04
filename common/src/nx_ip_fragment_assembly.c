@@ -84,7 +84,6 @@ NX_PACKET                      *old_ptr;
 #ifndef NX_DISABLE_IPV4
 NX_IPV4_HEADER                 *search_header = NX_NULL;
 NX_IPV4_HEADER                 *current_header = NX_NULL;
-ULONG                           current_ttl = 0;
 #endif /* NX_DISABLE_IPV4 */
 ULONG                           current_id = 0;
 ULONG                           current_offset = 0;
@@ -143,15 +142,13 @@ UINT                            packet_consumed;
             /* Pickup the offset of the new IP fragment.  */
             current_offset =  current_header -> nx_ip_header_word_1 & NX_IP_OFFSET_MASK;
 
-            /* Pickup the time to live of this fragment.  */
-            current_ttl = (current_header -> nx_ip_header_word_2 & NX_IP_TIME_TO_LIVE_MASK) >> NX_IP_TIME_TO_LIVE_SHIFT;
-
-            /* Set the IPv4 reassembly time. RFC791, Section3.2, Page27.  */
+            /* Set the IPv4 reassembly time.  RFC 791 section 3.2 page 27 makes
+               it MAX(this constant, the header's TTL read as seconds), which
+               lets the sender choose how long its fragments are held -- up to
+               255 seconds for a TTL of 255, for one packet.  A flat timeout is
+               what RFC 1122 3.3.2 asks for and what the fixed IPv6 one below
+               already is.  */
             current_fragment -> nx_packet_reassembly_time = NX_IPV4_MAX_REASSEMBLY_TIME;
-            if (current_fragment -> nx_packet_reassembly_time < current_ttl)
-            {
-                current_fragment -> nx_packet_reassembly_time = current_ttl;
-            }
         }
 #endif /* NX_DISABLE_IPV4 */
 #ifdef FEATURE_NX_IPV6
@@ -216,12 +213,6 @@ UINT                            packet_consumed;
                             /* Yes, we found a match, just set the found_ptr and get out of
                                this loop!  */
                             found_ptr =  search_ptr;
-
-                            /* The reassmebly timer should be MAX(reassembly time, Time To Live). RFC791, Section3.2, Page27.  */
-                            if (search_ptr -> nx_packet_reassembly_time < current_ttl)
-                            {
-                                search_ptr -> nx_packet_reassembly_time = current_ttl;
-                            }
 
                             /* Updated the reassembly time.  */
                             current_fragment -> nx_packet_reassembly_time = search_ptr -> nx_packet_reassembly_time;

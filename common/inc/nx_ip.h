@@ -91,6 +91,23 @@
 #define NX_IP_STATUS_CHECK_WAIT_TIME 1
 #endif /* NX_IP_STATUS_CHECK_WAIT_TIME */
 
+/* How much of the pool reassembly may not take.  Nothing else bounds the
+   assembly list: there is no cap on concurrent datagrams, none on fragments
+   per datagram, and a first fragment whose tail never arrives pins a whole
+   pool packet for NX_IPV4_MAX_REASSEMBLY_TIME or NX_IPV6_MAX_REASSEMBLY_TIME
+   however few bytes it carried.  On a small pool a handful of them therefore
+   empties it and stops the stack, which a lossy link does by accident and an
+   attacker does for the cost of one packet per pool slot.  A fragment
+   arriving when the pool is already at or below the reserve is dropped, so
+   what is left is always enough for ARP, ND and the TCP that is running.
+
+   NX_ENABLE_LOW_WATERMARK is the same guard applied more widely -- it also
+   tail-drops TCP receive queues and UDP -- and remains available on top of
+   this one.  */
+#ifndef NX_IP_FRAGMENT_POOL_RESERVE
+#define NX_IP_FRAGMENT_POOL_RESERVE(pool_ptr) ((pool_ptr) -> nx_packet_pool_total >> 1)
+#endif /* NX_IP_FRAGMENT_POOL_RESERVE */
+
 #include "nx_ipv4.h"
 
 
