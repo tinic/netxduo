@@ -82,7 +82,8 @@
 /*                                                                        */
 /**************************************************************************/
 UINT  _nx_ipv6_prefix_list_add_entry(NX_IP *ip_ptr, ULONG *prefix,
-                                     ULONG prefix_length, ULONG valid_lifetime)
+                                     ULONG prefix_length, ULONG valid_lifetime,
+                                     ULONG onlink)
 {
 
 INT                   invalid_bits;
@@ -144,6 +145,14 @@ NX_IPV6_PREFIX_ENTRY *prev = NX_NULL; /* Pointer to the location where the
                     current -> nx_ipv6_prefix_entry_valid_lifetime = 2 * 60 * 60;
                 }
 
+                /* On-link is not taken back by a later advertisement that
+                   omits it: the prefix stays on-link until its lifetime runs
+                   out, RFC 4861 6.3.4. */
+                if (onlink)
+                {
+                    current -> nx_ipv6_prefix_entry_onlink = 1;
+                }
+
                 /* The entry is already in the table and is still valid.
                    No need to update.  Just return it.*/
 
@@ -181,6 +190,7 @@ NX_IPV6_PREFIX_ENTRY *prev = NX_NULL; /* Pointer to the location where the
     COPY_IPV6_ADDRESS(prefix, new_entry -> nx_ipv6_prefix_entry_network_address);
     new_entry -> nx_ipv6_prefix_entry_prefix_length = prefix_length;
     new_entry -> nx_ipv6_prefix_entry_valid_lifetime = valid_lifetime;
+    new_entry -> nx_ipv6_prefix_entry_onlink = onlink;
 
     /* Zero out the bits in the prefix after the prefix length */
     invalid_bits = (INT)(128 - prefix_length);

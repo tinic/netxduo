@@ -86,6 +86,15 @@ NXD_IPV6_ADDRESS     *ipv6_address;
     while (prefix_entry)
     {
 
+        /* A prefix that is on this list only so its lifetime is counted down
+           says nothing about what is on-link: it was advertised A=1 L=0, and
+           the L bit is what this question asks about. */
+        if (!prefix_entry -> nx_ipv6_prefix_entry_onlink)
+        {
+            prefix_entry = prefix_entry -> nx_ipv6_prefix_entry_next;
+            continue;
+        }
+
         /* Check whether or not the destination address is matched. */
         if (CHECK_IP_ADDRESSES_BY_PREFIX(dest_addr,
                                          prefix_entry -> nx_ipv6_prefix_entry_network_address,
@@ -112,6 +121,15 @@ NXD_IPV6_ADDRESS     *ipv6_address;
         /* Skip non-manually configured entires. */
         if (ipv6_address -> nxd_ipv6_address_ConfigurationMethod != NX_IPV6_ADDRESS_MANUAL_CONFIG)
         {
+            continue;
+        }
+
+        /* A prefix that is on this list only so its lifetime is counted down
+           says nothing about what is on-link: it was advertised A=1 L=0, and
+           the L bit is what this question asks about. */
+        if (!prefix_entry -> nx_ipv6_prefix_entry_onlink)
+        {
+            prefix_entry = prefix_entry -> nx_ipv6_prefix_entry_next;
             continue;
         }
 

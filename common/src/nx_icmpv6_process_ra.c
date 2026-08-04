@@ -333,14 +333,40 @@ UINT                          interface_index;
                     /* This prefix is onlink, and valid_lifetime is non-zero.
                        So add the prefix to our list. RFC 4861 6.3.4 p55.*/
                     status = _nx_ipv6_prefix_list_add_entry(ip_ptr, prefix_ptr -> nx_icmpv6_option_prefix,
-                                                            (ULONG)prefix_length, prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime);
+                                                            (ULONG)prefix_length, prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime,
+                                                            (ULONG)1);
+                }
+            }
+
+            /* An address is formed from a prefix advertised A=1 whether or not
+               it is on-link, and the prefix list is what ages that address out
+               when the lifetime expires: nxd_ipv6_prefix_router_timer_tick.c
+               counts these entries down and deletes the addresses formed from
+               them.  A=1 L=0 therefore has to go on the list too, marked
+               not-on-link so _nxd_ipv6_search_onlink() passes over it.
+               Without this the address was formed and nothing could ever
+               remove it, on a router configuration RFC 4862 5.5.3 allows and
+               that is not rare. */
+            if ((prefix_ptr -> nx_icmpv6_option_prefix_flag & 0x40) &&
+                ((prefix_ptr -> nx_icmpv6_option_prefix_flag & 0x80) == 0) &&
+                (prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime != 0) &&
+                (prefix_ptr -> nx_icmpv6_option_prefix_length == (128 - NX_IPV6_HOST_ID_LENGTH)))
+            {
+                status = _nx_ipv6_prefix_list_add_entry(ip_ptr, prefix_ptr -> nx_icmpv6_option_prefix,
+                                                        (ULONG)prefix_length,
+                                                        prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime,
+                                                        (ULONG)0);
+
+                /* A list with no room left forms no address either, so the
+                   address and the thing that removes it stay together. */
+                if (status == NX_DUPLICATED_ENTRY)
+                {
+                    status = NX_SUCCESS;
                 }
             }
 
             /* Check for "A" bit.  A prefix with a zero valid lifetime forms no
-               address, RFC 4862 5.5.3(c).  When the prefix was also advertised
-               on-link and the prefix list would not hold it, no address is
-               formed from it either. */
+               address, RFC 4862 5.5.3(c). */
             if ((prefix_ptr -> nx_icmpv6_option_prefix_flag & 0x40) &&
                 (prefix_ptr -> nx_icmpv6_option_prefix_length == (128 - NX_IPV6_HOST_ID_LENGTH)) &&
                 (prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime != 0) &&

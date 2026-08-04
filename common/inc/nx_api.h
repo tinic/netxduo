@@ -1118,6 +1118,14 @@ typedef struct NX_IPV6_PREFIX_ENTRY_STRUCT
     /* Valid life time, in seconds. */
     ULONG nx_ipv6_prefix_entry_valid_lifetime;
 
+    /* The prefix information option's L bit.  This list serves two purposes
+       that RFC 4861 and RFC 4862 keep separate: on-link determination, which
+       is the L bit's, and the lifetime that ages a stateless address out,
+       which follows the A bit.  A prefix advertised A=1 L=0 has to be on this
+       list to be aged and must not be treated as on-link, so the two are told
+       apart here rather than by presence. */
+    ULONG nx_ipv6_prefix_entry_onlink;
+
     /* Pointer to the previous entry. */
     struct NX_IPV6_PREFIX_ENTRY_STRUCT *nx_ipv6_prefix_entry_prev;
 
