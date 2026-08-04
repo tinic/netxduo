@@ -6935,21 +6935,39 @@ ULONG       value;
     }
  
     /* Overwrite the renew and rebind times with the specified values if the options are present.  */
-    if ((_nx_dhcp_get_option_value(dhcp_message, NX_DHCP_OPTION_RENEWAL, &value, length) == NX_SUCCESS) && 
-        (value <= interface_record -> nx_dhcp_lease_time))
-    {       
+    if (_nx_dhcp_get_option_value(dhcp_message, NX_DHCP_OPTION_RENEWAL, &value, length) == NX_SUCCESS)
+    {
 
-        /* Check for an infinite lease. */
+        /* Check for an infinite lease.  Only where the lease itself is
+           infinite -- a T1 of "never" against a lease that does expire is the
+           one value that must not be taken at face value.  */
         if (value == 0xFFFFFFFF)
         {
-            /* Set the 'infinite least time.  */
-            interface_record -> nx_dhcp_renewal_time = value;
+            if (interface_record -> nx_dhcp_lease_time == 0xFFFFFFFF)
+            {
+
+                /* Set the 'infinite least time.  */
+                interface_record -> nx_dhcp_renewal_time = value;
+            }
         }
-        else
+        else if (value <= (0xFFFFFFFF / (ULONG)NX_IP_PERIODIC_RATE))
         {
 
-            /* Store the renewal time in timer ticks  */
-            interface_record -> nx_dhcp_renewal_time =  value * (ULONG)NX_IP_PERIODIC_RATE;
+            /* Convert to timer ticks. */
+            value = value * (ULONG)NX_IP_PERIODIC_RATE;
+
+            /* Sanity check.  Against the lease time in the same units: the
+               option carries seconds and nx_dhcp_lease_time is ticks, so
+               comparing the two before the conversion let through a T1 up to
+               NX_IP_PERIODIC_RATE times the lease, and renewal was then
+               scheduled for after the lease had already expired.  The rebind
+               arm below has always converted first.  */
+            if (value <= interface_record -> nx_dhcp_lease_time)
+            {
+
+                /* Store the renewal time.  */
+                interface_record -> nx_dhcp_renewal_time =  value;
+            }
         }
     }
   
@@ -6964,17 +6982,17 @@ ULONG       value;
             /* Set the 'infinite least time.  */
             interface_record -> nx_dhcp_rebind_time = value;
         }
-        else
+        else if (value <= (0xFFFFFFFF / (ULONG)NX_IP_PERIODIC_RATE))
         {
 
             /* Convert to timer ticks. */
             value = value * (ULONG)NX_IP_PERIODIC_RATE;
 
             /* Sanity check*/
-            if ((value <= interface_record -> nx_dhcp_lease_time) && 
+            if ((value <= interface_record -> nx_dhcp_lease_time) &&
                 (value >= interface_record -> nx_dhcp_renewal_time))
             {
-        
+
                 /* Store the rebind time.  */
                 interface_record -> nx_dhcp_rebind_time =  value;
             }
