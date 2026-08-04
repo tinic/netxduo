@@ -251,6 +251,26 @@ ULONG         tcpip_offload;
         if (tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)
         {
 
+            /*
+             * RFC 1337 4, option 1: ignore a RST while in TIME-WAIT.
+             *
+             * Honouring it ends TIME-WAIT early, and TIME-WAIT is the only
+             * thing keeping a delayed duplicate from the connection just
+             * closed out of the next one on the same port pair -- the
+             * assassination that RFC names.  The RST costs nothing to drop:
+             * the connection is already closed and the peer is not waiting
+             * for anything.
+             */
+            if (socket_ptr -> nx_tcp_socket_state == NX_TCP_TIMED_WAIT)
+            {
+
+                /* Release the packet.  */
+                _nx_packet_release(packet_ptr);
+
+                /* Finished processing, simply return!  */
+                return;
+            }
+
 #ifndef NX_DISABLE_TCP_INFO
 
             /* Increment the resets received count.  */
