@@ -254,6 +254,61 @@ UCHAR                *signature_s;
     return NX_CRYPTO_SUCCESS;
 }
 
+/* Read one DER INTEGER out of an ECDSA signature.  DER integers are signed and
+   minimally encoded: the value is never empty, never carries a redundant
+   leading 0x00, and carries one only where the byte after it would otherwise
+   read as a sign bit.  r and s are also never negative.
+
+   Taking whatever byte happens to be at the length position, without checking
+   the tag or the encoding, accepts many spellings of one signature -- which is
+   the malleability RFC 4492 5.8's "ASN.1 DER" wording exists to remove -- and
+   accepts a length that walks off the end of the sequence. */
+static UINT _nx_crypto_ecdsa_der_integer(const UCHAR *buffer, UINT length,
+                                         const UCHAR **value, UINT *value_length,
+                                         UINT *encoded_length)
+{
+UINT content_length;
+
+    /* Tag, length, and at least one content byte. */
+    if (length < 3)
+    {
+        return(NX_CRYPTO_SIZE_ERROR);
+    }
+
+    if (buffer[0] != 0x02)
+    {
+        return(NX_CRYPTO_AUTHENTICATION_FAILED);
+    }
+
+    /* r and s are under 128 bytes on every curve here, so the length is always
+       in the short form. */
+    content_length = buffer[1];
+
+    if ((content_length & 0x80u) != 0 || content_length == 0 ||
+        content_length > (length - 2u))
+    {
+        return(NX_CRYPTO_SIZE_ERROR);
+    }
+
+    if ((buffer[2] & 0x80u) != 0)
+    {
+        /* Negative. */
+        return(NX_CRYPTO_AUTHENTICATION_FAILED);
+    }
+
+    if (content_length > 1 && buffer[2] == 0x00 && (buffer[3] & 0x80u) == 0)
+    {
+        /* Redundant leading zero. */
+        return(NX_CRYPTO_AUTHENTICATION_FAILED);
+    }
+
+    *value = &buffer[2];
+    *value_length = content_length;
+    *encoded_length = content_length + 2u;
+
+    return(NX_CRYPTO_SUCCESS);
+}
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -308,6 +363,11 @@ NX_CRYPTO_HUGE_NUMBER u2;
 NX_CRYPTO_EC_POINT    pubkey;
 NX_CRYPTO_EC_POINT    pt;
 NX_CRYPTO_EC_POINT    pt2;
+const UCHAR          *r_value;
+const UCHAR          *s_value;
+UINT                  r_value_length;
+UINT                  s_value_length;
+UINT                  der_encoded_length;
 UINT                  buffer_size = curve -> nx_crypto_ec_n.nx_crypto_huge_buffer_size;
 
     /* Signature format follows ASN1 DER encoding as per RFC 4492, section 5.8:
@@ -321,15 +381,25 @@ UINT                  buffer_size = curve -> nx_crypto_ec_n.nx_crypto_huge_buffe
     }
 
     /* Buffer should contain the signature data sequence. */
-    if (signature[0] != 0x30)
+    if (signature_length < 2 || signature[0] != 0x30)
     {
         return(NX_CRYPTO_AUTHENTICATION_FAILED);
     }
 
-    /* Check the size in SEQUENCE.  */
+    /* Check the size in SEQUENCE.  The caller's length is the signature's own
+       -- the BIT STRING contents of a certificate, or the two-byte length off
+       the wire in a ServerKeyExchange -- so the sequence fills it exactly. */
     if (signature[1] & 0x80)
     {
-        if (signature_length < (signature[2] + 3u))
+        /* One length byte, which a P-521 signature needs and nothing here
+           exceeds.  0x82 and up used to be read as if it were 0x81, taking
+           signature[2] for the whole length whatever signature[1] said. */
+        if (signature[1] != 0x81 || signature_length < 3 || signature[2] < 0x80)
+        {
+            return(NX_CRYPTO_SIZE_ERROR);
+        }
+
+        if (signature_length != (signature[2] + 3u))
         {
             return(NX_CRYPTO_SIZE_ERROR);
         }
@@ -338,12 +408,38 @@ UINT                  buffer_size = curve -> nx_crypto_ec_n.nx_crypto_huge_buffe
     }
     else
     {
-        if (signature_length < (signature[1] + 2u))
+        if (signature_length != (signature[1] + 2u))
         {
             return(NX_CRYPTO_SIZE_ERROR);
         }
         signature_length = signature[1];
         signature += 2;
+    }
+
+    /* Take r and s apart before any curve arithmetic: a malformed signature is
+       cheaper to reject than a public key is to validate, and on a 7 MHz 68000
+       that difference is most of a second. */
+    status = _nx_crypto_ecdsa_der_integer(signature, signature_length,
+                                          &r_value, &r_value_length, &der_encoded_length);
+    if (status != NX_CRYPTO_SUCCESS)
+    {
+        return(status);
+    }
+
+    signature_length -= der_encoded_length;
+    signature += der_encoded_length;
+
+    status = _nx_crypto_ecdsa_der_integer(signature, signature_length,
+                                          &s_value, &s_value_length, &der_encoded_length);
+    if (status != NX_CRYPTO_SUCCESS)
+    {
+        return(status);
+    }
+
+    /* s is the last field, so the sequence ends with it. */
+    if (signature_length != der_encoded_length)
+    {
+        return(NX_CRYPTO_SIZE_ERROR);
     }
 
     NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&r, scratch, buffer_size);
@@ -371,27 +467,14 @@ UINT                  buffer_size = curve -> nx_crypto_ec_n.nx_crypto_huge_buffe
     }
 #endif /* NX_CRYPTO_ECC_DISABLE_KEY_VALIDATION */
 
-    if (signature_length < (signature[1] + 2u))
-    {
-        return(NX_CRYPTO_SIZE_ERROR);
-    }
-
-    /* Read r value from input signature. */
-    status = _nx_crypto_huge_number_setup(&r, &signature[2], signature[1]);
+    /* Load r and s, read above. */
+    status = _nx_crypto_huge_number_setup(&r, r_value, r_value_length);
     if (status != NX_CRYPTO_SUCCESS)
     {
         return(status);
     }
-    signature_length -= (signature[1] + 2u);
-    signature += signature[1] + 2;
 
-    if (signature_length < (signature[1] + 2u))
-    {
-        return(NX_CRYPTO_SIZE_ERROR);
-    }
-
-    /* Read s value from input signature. */
-    status = _nx_crypto_huge_number_setup(&s, &signature[2], signature[1]);
+    status = _nx_crypto_huge_number_setup(&s, s_value, s_value_length);
     if (status != NX_CRYPTO_SUCCESS)
     {
         return(status);
