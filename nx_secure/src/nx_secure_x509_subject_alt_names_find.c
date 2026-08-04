@@ -66,6 +66,56 @@
 UINT _nx_secure_x509_subject_alt_names_find(NX_SECURE_X509_EXTENSION *extension, const UCHAR *name,
                                             UINT name_length, USHORT name_type)
 {
+    return(_nx_secure_x509_subject_alt_names_find_ex(extension, name, name_length, name_type, NX_NULL));
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_secure_x509_subject_alt_names_find_ex           PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Timothy Stapko, Microsoft Corporation                               */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    As _nx_secure_x509_subject_alt_names_find, and additionally reports */
+/*    whether the extension carried any name of the requested type at all.*/
+/*    RFC 6125 section 6.4.4 needs that distinction: a certificate that   */
+/*    presents dNSNames must be judged on those alone, and "none matched" */
+/*    and "there were none to match" call for opposite answers.           */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    extension                             subjectAltName extension data */
+/*    name                                  Name to search for            */
+/*    name_length                           Length of name                */
+/*    name_type                             Type of name                  */
+/*    name_type_present                     Set if any name of that type  */
+/*                                            appears.  May be NX_NULL    */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    status                                Completion status             */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_secure_x509_asn1_tlv_block_parse  Parse ASN.1 block             */
+/*    _nx_secure_x509_wildcard_compare      Wildcard compare for names    */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_secure_x509_common_name_dns_check Check Common Name by DNS      */
+/*    _nx_secure_x509_subject_alt_names_find                              */
+/*                                                                        */
+/**************************************************************************/
+UINT _nx_secure_x509_subject_alt_names_find_ex(NX_SECURE_X509_EXTENSION *extension, const UCHAR *name,
+                                               UINT name_length, USHORT name_type,
+                                               UINT *name_type_present)
+{
 USHORT       tlv_type;
 USHORT       tlv_type_class;
 ULONG        tlv_length;
@@ -77,6 +127,11 @@ UINT         status;
 const UCHAR *compare_name;
 ULONG        compare_length;
 INT          compare_value;
+
+    if (name_type_present != NX_NULL)
+    {
+        *name_type_present = NX_FALSE;
+    }
 
     /* Now, parse the subjectAltName extension. */
     /* subjectAltName ASN.1 format:
@@ -150,7 +205,15 @@ INT          compare_value;
             return(NX_SECURE_X509_ALT_NAME_NOT_FOUND);
         }
 
-        current_buffer += header_length;
+        /* Step over this entry, header and value both, whatever happens to it
+           below.  Skipping one used to advance the buffer by its header alone
+           while the parser had already taken its value out of the remaining
+           length, so pointer and counter ran out of step and every name after
+           the first one of another type was read out of the middle of its
+           predecessor.  A subjectAltName listing an rfc822Name or an
+           iPAddress ahead of its dNSName -- ordinary in a certificate that
+           covers mail as well as web -- therefore never matched.  */
+        current_buffer += header_length + tlv_length;
 
         /* If the name type we are searching for doesn't match what we just parsed,
            continue to the next entry. */
@@ -166,6 +229,13 @@ INT          compare_value;
             /* Now we have an IA5 string to compare against our name. */
             compare_name = tlv_data;
             compare_length = tlv_length;
+
+            /* Record that the certificate presented a name of this type, so
+               the caller can tell "none matched" from "there were none".  */
+            if (name_type_present != NX_NULL)
+            {
+                *name_type_present = NX_TRUE;
+            }
             break;
         case NX_SECURE_X509_SUB_ALT_NAME_TAG_OTHERNAME:
         case NX_SECURE_X509_SUB_ALT_NAME_TAG_RFC822NAME:
@@ -189,8 +259,6 @@ INT          compare_value;
             /* We found a match! */
             return(NX_SECURE_X509_SUCCESS);
         }
-
-        current_buffer += tlv_length;
     } /* End while-loop. */
 
     return(NX_SECURE_X509_ALT_NAME_NOT_FOUND);

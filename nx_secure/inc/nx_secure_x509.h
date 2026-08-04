@@ -984,6 +984,9 @@ UINT _nx_secure_x509_extension_find(NX_SECURE_X509_CERT *certificate,
 UINT _nx_secure_x509_key_usage_extension_parse(NX_SECURE_X509_CERT *certificate, USHORT *bitfield);
 UINT _nx_secure_x509_basic_constraints_extension_parse(NX_SECURE_X509_CERT *certificate,
                                                        UINT *is_ca, INT *path_length);
+UINT _nx_secure_x509_subject_alt_names_find_ex(NX_SECURE_X509_EXTENSION *extension, const UCHAR *name,
+                                               UINT name_length, USHORT name_type,
+                                               UINT *name_type_present);
 UINT _nx_secure_x509_subject_alt_names_find(NX_SECURE_X509_EXTENSION *extension, const UCHAR *name,
                                             UINT name_length, USHORT name_type);
 
