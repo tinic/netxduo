@@ -2823,6 +2823,13 @@ typedef struct NX_IP_STRUCT
     /* Define the internal IPv6 address change notification callback routine pointer, used in mDNS.  */
     VOID        (*nx_ipv6_address_change_notify_internal)(struct NX_IP_STRUCT *ip_ptr, UINT status, UINT interface_index, UINT addres_index, ULONG *ip_address);
 #endif /* NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY */
+
+#ifdef NX_ENABLE_IPV6_RDNSS
+    /* Called once per recursive DNS server in a router advertisement's RFC 8106
+       option, from the IP thread.  A lifetime of zero withdraws the server.  */
+    VOID        (*nx_ipv6_rdnss_notify)(struct NX_IP_STRUCT *ip_ptr, UINT interface_index,
+                                        ULONG *dns_address, ULONG lifetime);
+#endif /* NX_ENABLE_IPV6_RDNSS */
 #endif /* FEATURE_NX_IPV6 */
 
 #ifndef NX_DISABLE_IPV4

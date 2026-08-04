@@ -553,6 +553,52 @@ UINT                          interface_index;
 #endif
         }
 
+#ifdef NX_ENABLE_IPV6_RDNSS
+
+        /* Recursive DNS servers, RFC 8106 section 5.1.  Without this an
+           IPv6-only link hands out addresses and no way to resolve a name. */
+        else if (option_ptr -> nx_icmpv6_option_type == ICMPV6_OPTION_TYPE_RDNSS)
+        {
+
+        NX_ICMPV6_OPTION_RDNSS *rdnss_ptr;
+        ULONG                   lifetime;
+        UINT                    servers;
+        UINT                    i;
+
+            /* The header, then one 16-byte address per two length units.  An
+               option that claims fewer than the header carries no servers and
+               is not a reason to abandon the advertisement. */
+            if ((UINT)(option_ptr -> nx_icmpv6_option_length << 3) >= sizeof(NX_ICMPV6_OPTION_RDNSS))
+            {
+
+                /*lint -e{929} -e{826} -e{740} suppress cast of pointer to pointer, since it is necessary  */
+                rdnss_ptr = (NX_ICMPV6_OPTION_RDNSS *)option_ptr;
+
+                lifetime = rdnss_ptr -> nx_icmpv6_option_rdnss_lifetime;
+                NX_CHANGE_ULONG_ENDIAN(lifetime);
+
+                servers = (UINT)((option_ptr -> nx_icmpv6_option_length) - 1) >> 1;
+
+                for (i = 0; (i < servers) && (ip_ptr -> nx_ipv6_rdnss_notify); i++)
+                {
+
+                ULONG dns_address[4];
+                ULONG *wire;
+
+                    /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+                    wire = (ULONG *)NX_UCHAR_POINTER_ADD(rdnss_ptr,
+                                                         sizeof(NX_ICMPV6_OPTION_RDNSS) + (i << 4));
+
+                    COPY_IPV6_ADDRESS(wire, dns_address);
+                    NX_IPV6_ADDRESS_CHANGE_ENDIAN(dns_address);
+
+                    (ip_ptr -> nx_ipv6_rdnss_notify)(ip_ptr, if_ptr -> nx_interface_index,
+                                                     dns_address, lifetime);
+                }
+            }
+        }
+#endif /* NX_ENABLE_IPV6_RDNSS */
+
         /* Update the amount of packet option data remaining. */
         packet_length -= (option_ptr -> nx_icmpv6_option_length << 3);
 
