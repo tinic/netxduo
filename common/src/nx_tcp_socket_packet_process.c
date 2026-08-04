@@ -205,9 +205,18 @@ ULONG         tcpip_offload;
                (_nx_tcp_periodic_processing sends one built the same way, and
                _nx_tcp_socket_state_data_check already treats that sequence as a probe).
 
-               A segment further behind than that is data already acknowledged.  If the
-               last acknowledgment sent carried this sequence number and this window then
-               repeating it adds nothing, and the peer counts it as a duplicate ACK.  */
+               A segment further behind than that carrying DATA is a retransmission,
+               which the peer only made because it never saw the acknowledgment, so
+               repeating that acknowledgment is the whole point.  Withholding it leaves
+               the peer retransmitting the same segment until R2 and dropping the
+               connection, and the case that reaches is the common one: a request and
+               response exchange where the acknowledgment lost was the last one and
+               nothing else is going to travel.
+
+               A segment further behind than that carrying NOTHING is an ancient
+               acknowledgment.  If the last one sent carried this sequence number and this
+               window then repeating it adds nothing, and the peer counts it as a
+               duplicate ACK.  */
 #ifdef NX_ENABLE_TCP_SACK
 
             /* Data below the window is data this side already acknowledged, so
@@ -225,6 +234,7 @@ ULONG         tcpip_offload;
 
             if ((!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)) &&
                 ((((INT)((packet_sequence + 1) - rx_sequence)) >= 0) ||
+                 (packet_data_length > 0) ||
                  (socket_ptr -> nx_tcp_socket_dsack_left != socket_ptr -> nx_tcp_socket_dsack_right) ||
                  (socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
                  (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
