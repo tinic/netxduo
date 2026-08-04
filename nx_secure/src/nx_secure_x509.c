@@ -106,6 +106,7 @@ UINT         bytes;
 const UCHAR *tlv_data;
 ULONG        header_length;
 UINT         status;
+UINT         signature_algorithm;
 
     /* X509 Certificate structure:
      * ASN.1 sequence: Certificate
@@ -189,7 +190,18 @@ UINT         status;
 
     *bytes_processed += bytes;
 
-    /*  Following the certificate data is the signature algorithm data. */
+    /*  Following the certificate data is the signature algorithm data.
+     *
+     *  The identifier appears twice: once inside the tbsCertificate, where it
+     *  is covered by the signature, and once outside it, where it is not.  Both
+     *  calls write nx_secure_x509_signature_algorithm and the outer one lands
+     *  second, so verification picks its hash and its public-key operation from
+     *  the copy an attacker can rewrite in flight.  RFC 5280 4.1.1.2 requires
+     *  the two to be identical; comparing them is what makes the field the
+     *  signer's rather than the sender's.
+     */
+    signature_algorithm = cert -> nx_secure_x509_signature_algorithm;
+
     tlv_data = &tlv_data[bytes];
     length -= bytes;
     status = _nx_secure_x509_parse_signature_algorithm(tlv_data, length, &bytes, cert);
@@ -197,6 +209,11 @@ UINT         status;
     if (status != 0)
     {
         return(status);
+    }
+
+    if (cert -> nx_secure_x509_signature_algorithm != signature_algorithm)
+    {
+        return(NX_SECURE_X509_SIGNATURE_ALGORITHM_MISMATCH);
     }
 
     *bytes_processed += bytes;
