@@ -107,6 +107,11 @@ struct NX_TCP_LISTEN_STRUCT *listen_ptr;
     /* Set the TCP deferred cleanup check function.  */
     ip_ptr -> nx_tcp_deferred_cleanup_check =  _nx_tcp_deferred_cleanup_check;
 
+    /* Fill the challenge acknowledgment budget, RFC 5961 section 7.  The
+       one-second periodic refills it from here on; without this the first
+       second after enable has none.  */
+    ip_ptr -> nx_ip_tcp_challenge_ack_budget =  NX_TCP_CHALLENGE_ACK_LIMIT;
+
     /* Setup base timer variables.  */
     _nx_tcp_fast_timer_rate =       (NX_IP_PERIODIC_RATE + (NX_TCP_FAST_TIMER_RATE - 1)) / NX_TCP_FAST_TIMER_RATE;
     _nx_tcp_ack_timer_rate =        (NX_IP_PERIODIC_RATE + (NX_TCP_ACK_TIMER_RATE - 1)) / NX_TCP_ACK_TIMER_RATE;

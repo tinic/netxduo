@@ -121,6 +121,15 @@
 #endif /* NX_ENABLE_TCP_SACK */
 
 
+/* Challenge acknowledgments this IP instance may send in one second, RFC 5961
+   section 7.  The RFC's own suggestion is 100 for a host that carries many
+   connections; ten bounds what one spoofed stream can make a 7 MHz machine
+   build, and no legitimate exchange needs more than one.  */
+#ifndef NX_TCP_CHALLENGE_ACK_LIMIT
+#define NX_TCP_CHALLENGE_ACK_LIMIT      10
+#endif
+
+
 /* Define constants for the optional TCP keepalive Timer.  To enable this
    feature, the TCP source must be compiled with NX_ENABLE_TCP_KEEPALIVE
    defined.  */

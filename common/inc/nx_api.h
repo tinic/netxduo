@@ -2679,6 +2679,10 @@ typedef struct NX_IP_STRUCT
     ULONG       nx_ip_rarp_responses_received;
     ULONG       nx_ip_rarp_invalid_messages;
 
+    /* Challenge acknowledgments left to send this second, RFC 5961 section 7.
+       _nx_tcp_periodic_processing() refills it.  */
+    ULONG       nx_ip_tcp_challenge_ack_budget;
+
 
     /* Define the IP forwarding flag.  This is by default set to NX_NULL.
        If forwarding is desired, the nx_ip_forward_packet_process service
