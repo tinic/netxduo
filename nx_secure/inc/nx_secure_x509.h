@@ -126,6 +126,11 @@ extern   "C" {
 #define NX_SECURE_X509_MAX_VERIFY_DEPTH                           10
 #endif /* NX_SECURE_X509_MAX_VERIFY_DEPTH */
 
+/* Smallest RSA modulus a certificate may carry, in bytes.  128 is 1024 bits. */
+#ifndef NX_SECURE_X509_MIN_RSA_MODULUS_SIZE
+#define NX_SECURE_X509_MIN_RSA_MODULUS_SIZE                       128
+#endif /* NX_SECURE_X509_MIN_RSA_MODULUS_SIZE */
+
 /* Return values for X509 errors. */
 #define NX_SECURE_X509_SUCCESS                                    0     /* Successful return status. */
 #define NX_SECURE_X509_MULTIBYTE_TAG_UNSUPPORTED                  0x181 /* We encountered a multi-byte ASN.1 tag - not currently supported. */
