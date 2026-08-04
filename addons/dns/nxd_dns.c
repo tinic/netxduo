@@ -8099,7 +8099,13 @@ UINT    name_size;
     }
     else
     {
-        *rr_ttl = _nx_dns_network_to_long_convert(resource + name_size + 4);
+        /*
+         * RFC 2181 8: the TTL is a 32-bit field whose top bit must be treated
+         * as zero, and a server sending one with that bit set has the record
+         * cached for about sixty-eight years.  Masked here rather than at each
+         * use, which is the only place every caller passes through.
+         */
+        *rr_ttl = _nx_dns_network_to_long_convert(resource + name_size + 4) & 0x7FFFFFFFUL;
         return(NX_SUCCESS);
     }
 }
