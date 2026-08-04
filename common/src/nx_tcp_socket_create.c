@@ -149,6 +149,10 @@ NX_TCP_SOCKET *tail_ptr;
     socket_ptr -> nx_tcp_socket_tx_window_advertised = 0;
     socket_ptr -> nx_tcp_socket_tx_window_congestion = 0;
 
+    /* Off unless the application asks: taking a port early is a decision the
+       caller makes, not a default.  */
+    socket_ptr -> nx_tcp_socket_reuse_address = NX_FALSE;
+
 
     /* Initialize the ack_n_packet counter. */
     socket_ptr -> nx_tcp_socket_ack_n_packet_counter = 1;

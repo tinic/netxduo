@@ -260,6 +260,8 @@ UINT _nx_tcp_socket_mss_set(NX_TCP_SOCKET *socket_ptr, ULONG mss);
 UINT _nx_tcp_socket_receive(NX_TCP_SOCKET *socket_ptr, NX_PACKET **packet_ptr, ULONG wait_option);
 UINT _nx_tcp_socket_receive_notify(NX_TCP_SOCKET *socket_ptr,
                                    VOID (*tcp_receive_notify)(NX_TCP_SOCKET *socket_ptr));
+UINT _nx_tcp_socket_reuse_address_set(NX_TCP_SOCKET *socket_ptr, UINT enable);
+UINT _nxe_tcp_socket_reuse_address_set(NX_TCP_SOCKET *socket_ptr, UINT enable);
 UINT _nx_tcp_socket_window_update_notify_set(NX_TCP_SOCKET *socket_ptr,
                                              VOID (*tcp_windows_update_notify)(NX_TCP_SOCKET *socket_ptr));
 UINT _nx_tcp_socket_send(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr, ULONG wait_option);

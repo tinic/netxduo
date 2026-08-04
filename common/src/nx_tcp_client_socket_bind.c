@@ -176,6 +176,46 @@ NX_TCP_SOCKET *end_ptr;
         } while (search_ptr != end_ptr);
     }
 
+    /*
+     * SO_REUSEADDR: a port whose only holders are in TIMED WAIT is available
+     * to a socket that asked for it.  Walk what is on this port and see.
+     *
+     * The rule is BSD's: TIMED WAIT sockets may be stepped over, and nothing
+     * else may.  A live listener or an established connection still refuses
+     * the bind, so this cannot displace a running server -- it only removes
+     * the up-to-2MSL wait a server hits when it restarts after its last
+     * client disconnected.
+     */
+    if ((search_ptr) && (search_ptr -> nx_tcp_socket_port == port) &&
+        (socket_ptr -> nx_tcp_socket_reuse_address == NX_TRUE))
+    {
+
+    NX_TCP_SOCKET *probe_ptr = search_ptr;
+    NX_TCP_SOCKET *probe_end = search_ptr;
+    UINT           all_timed_wait = NX_TRUE;
+
+        do
+        {
+
+            if ((probe_ptr -> nx_tcp_socket_port == port) &&
+                (probe_ptr -> nx_tcp_socket_state != NX_TCP_TIMED_WAIT))
+            {
+                all_timed_wait = NX_FALSE;
+                break;
+            }
+
+            probe_ptr = probe_ptr -> nx_tcp_socket_bound_next;
+        } while (probe_ptr != probe_end);
+
+        if (all_timed_wait == NX_TRUE)
+        {
+
+            /* Nothing on this port is doing anything but waiting out 2MSL.
+               Treat it as free; the list append below handles the rest.  */
+            search_ptr = NX_NULL;
+        }
+    }
+
     /* Now determine if the port is available.  */
     if ((search_ptr == NX_NULL) || (search_ptr -> nx_tcp_socket_port != port))
     {

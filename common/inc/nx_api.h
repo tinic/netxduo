@@ -1989,12 +1989,20 @@ typedef struct NX_TCP_SOCKET_STRUCT
     /* Defined the vlan priority for this TCP socket. */
     UCHAR       nx_tcp_socket_vlan_priority;
 
-    /*It is reserved for future use. */
-    UCHAR       nx_tcp_socket_reserved2[2];
-#else
+    /* Bind may take a port whose only holders are in TIME-WAIT.  Set through
+       nx_tcp_socket_reuse_address_set(); that function says what it does and
+       does not permit.  */
+    UCHAR       nx_tcp_socket_reuse_address;
 
     /*It is reserved for future use. */
-    UCHAR       nx_tcp_socket_reserved2[3];
+    UCHAR       nx_tcp_socket_reserved2[1];
+#else
+
+    /* See above. */
+    UCHAR       nx_tcp_socket_reuse_address;
+
+    /*It is reserved for future use. */
+    UCHAR       nx_tcp_socket_reserved2[2];
 #endif /* NX_ENABLE_VLAN */
 
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
@@ -3285,6 +3293,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_tcp_socket_queue_depth_notify_set            _nx_tcp_socket_queue_depth_notify_set
 #define nx_tcp_socket_receive                           _nx_tcp_socket_receive
 #define nx_tcp_socket_receive_notify                    _nx_tcp_socket_receive_notify
+#define nx_tcp_socket_reuse_address_set                 _nx_tcp_socket_reuse_address_set
 #define nx_tcp_socket_receive_queue_max_set             _nx_tcp_socket_receive_queue_max_set
 #define nx_tcp_socket_send                              _nx_tcp_socket_send
 #define nx_tcp_socket_state_wait                        _nx_tcp_socket_state_wait
@@ -3477,6 +3486,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_tcp_socket_queue_depth_notify_set            _nxe_tcp_socket_queue_depth_notify_set
 #define nx_tcp_socket_receive                           _nxe_tcp_socket_receive
 #define nx_tcp_socket_receive_notify                    _nxe_tcp_socket_receive_notify
+#define nx_tcp_socket_reuse_address_set                 _nxe_tcp_socket_reuse_address_set
 #define nx_tcp_socket_receive_queue_max_set             _nxe_tcp_socket_receive_queue_max_set
 #define nx_tcp_socket_send(s, p, t)                     _nxe_tcp_socket_send(s, &p, t)
 #define nx_tcp_socket_state_wait                        _nxe_tcp_socket_state_wait
@@ -3775,6 +3785,7 @@ UINT nx_tcp_socket_receive(NX_TCP_SOCKET *socket_ptr, NX_PACKET **packet_ptr, UL
 UINT nx_tcp_socket_receive_notify(NX_TCP_SOCKET *socket_ptr,
                                   VOID (*tcp_receive_notify)(NX_TCP_SOCKET *));
 UINT nx_tcp_socket_receive_queue_max_set(NX_TCP_SOCKET *socket_ptr, UINT receive_queue_maximum);
+UINT nx_tcp_socket_reuse_address_set(NX_TCP_SOCKET *socket_ptr, UINT enable);
 #ifndef NX_DISABLE_ERROR_CHECKING
 UINT _nxe_tcp_socket_send(NX_TCP_SOCKET *socket_ptr, NX_PACKET **packet_ptr_ptr, ULONG wait_option);
 #else
