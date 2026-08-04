@@ -74,10 +74,10 @@ NX_SECURE_X509_CERT *current_certificate;
 NX_SECURE_X509_CERT *issuer_certificate;
 UINT                 issuer_location = NX_SECURE_X509_CERT_LOCATION_NONE;
 INT                  compare_result;
+UINT                 depth = 0;
 #ifndef NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK
 UINT                 issuer_is_ca;
 INT                  issuer_path_length;
-UINT                 depth = 0;
 #endif
 
     /* Process, following X509 basic certificate authentication (RFC 5280):
@@ -92,6 +92,14 @@ UINT                 depth = 0;
 
     while (current_certificate != NX_CRYPTO_NULL)
     {
+
+        /* The walk follows issuer links, and those can form a cycle: a pair of
+           cross-signed CAs name each other, so nothing below ever reaches the
+           trusted store and nothing else ends the loop. */
+        if (depth > NX_SECURE_X509_MAX_VERIFY_DEPTH)
+        {
+            return(NX_SECURE_X509_CHAIN_TOO_LONG);
+        }
 
         /* Check the certificate expiration against the current time. */
         if (current_time != 0)
@@ -193,9 +201,7 @@ UINT                 depth = 0;
 
         /* Advance our working pointer to the next entry in the list. */
         current_certificate = issuer_certificate;
-#ifndef NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK
         depth++;
-#endif
     } /* End while. */
 
     /* Certificate is invalid. */

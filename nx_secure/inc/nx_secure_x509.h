@@ -117,6 +117,15 @@ extern   "C" {
 #define NX_SECURE_X509_CERTIFICATE_INITIALIZE_EXTENSION
 #endif /* NX_SECURE_X509_CERTIFICATE_INITIALIZE_EXTENSION */
 
+/* How many issuer links the chain walk will follow before giving up.  Two
+   cross-signed CAs each name the other as issuer, so the walk has a cycle in
+   it and nothing else terminates it -- pathLenConstraint is optional and a
+   certificate that omits it imposes no bound.  Ten is past any chain a public
+   CA issues; each extra link is one RSA verification, which is seconds here. */
+#ifndef NX_SECURE_X509_MAX_VERIFY_DEPTH
+#define NX_SECURE_X509_MAX_VERIFY_DEPTH                           10
+#endif /* NX_SECURE_X509_MAX_VERIFY_DEPTH */
+
 /* Return values for X509 errors. */
 #define NX_SECURE_X509_SUCCESS                                    0     /* Successful return status. */
 #define NX_SECURE_X509_MULTIBYTE_TAG_UNSUPPORTED                  0x181 /* We encountered a multi-byte ASN.1 tag - not currently supported. */
@@ -164,6 +173,8 @@ extern   "C" {
 #define NX_SECURE_X509_CERT_ID_DUPLICATE                          0x1A9 /* Tried to add a certificate with a numeric ID that was already used - needs to be unique. */
 #define NX_SECURE_X509_MISSING_CRYPTO_ROUTINE                     0x1AA /* In attempting to perform a cryptographic operation, an entry in the ciphersuite table (or one of its function pointers) was NULL. */
 #define NX_SECURE_X509_INVALID_CA_CERTIFICATE                     0x1AB /* A certificate used to issue another one is not a CA: basicConstraints is absent, has cA FALSE, or its pathLenConstraint is exceeded. */
+#define NX_SECURE_X509_CHAIN_TOO_LONG                             0x1AC /* The issuer walk passed NX_SECURE_X509_MAX_VERIFY_DEPTH links without reaching the trusted store. */
+#define NX_SECURE_X509_SIGNATURE_ALGORITHM_MISMATCH               0x1AD /* The signatureAlgorithm outside the certificate body does not match the one inside it (RFC 5280 4.1.1.2). */
 
 /* Defines for working with private key types. */
 #define NX_SECURE_X509_KEY_TYPE_USER_DEFINED_MASK                 (0xFFFF0000)
