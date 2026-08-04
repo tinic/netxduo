@@ -230,7 +230,7 @@ UINT  _nx_ipv6_multicast_leave(NX_IP *, ULONG *, NX_INTERFACE *);
 UINT  _nx_ipv6_option_error(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UCHAR option_type, UINT offset);
 VOID  _nx_ipv6_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 VOID  _nx_ipv6_packet_send(NX_IP *ip_ptr, NX_PACKET *packet_ptr, ULONG protocol, ULONG payload_size, ULONG hop_limit, ULONG traffic_class, ULONG *src_address, ULONG *dest_address);
-UINT  _nx_ipv6_prefix_list_add_entry(NX_IP *ip_ptr, ULONG *prefix, ULONG prefix_length, ULONG valid_lifetime);
+UINT  _nx_ipv6_prefix_list_add_entry(NX_IP *ip_ptr, ULONG *prefix, ULONG prefix_length, ULONG valid_lifetime, ULONG onlink);
 VOID  _nx_ipv6_prefix_list_delete(NX_IP *ip_ptr, ULONG *prefix, INT prefix_length);
 VOID  _nx_ipv6_prefix_list_delete_entry(NX_IP *ip_ptr, NX_IPV6_PREFIX_ENTRY *entry);
 UINT  _nx_ipv6_process_hop_by_hop_option(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
