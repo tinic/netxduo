@@ -338,9 +338,31 @@ NX_SECURE_EC_PUBLIC_KEY *ec_pubkey;
         /* The modulus has a 0 byte at the front we need to skip.
          * This is due to the modulus being encoded as an ASN.1 bit string, which may
          * require padding bits to get to a multiple of 8 for byte alignment. The byte
-         * represents the number of padding bits, but in X509 it should always be 0. */
+         * represents the number of padding bits, but in X509 it should always be 0.
+         *
+         * That byte has to be there and has to be zero: an RSA modulus has its
+         * top bit set, so DER always writes it, and skipping a byte that is
+         * something else reads the modulus one byte out of place. A zero-length
+         * INTEGER would also take the length below through zero. */
+        if (tlv_length < 2 || tlv_data[0] != 0x00)
+        {
+            return(NX_SECURE_X509_INVALID_PUBLIC_KEY);
+        }
+
         cert -> nx_secure_x509_public_key.rsa_public_key.nx_secure_rsa_public_modulus = tlv_data + 1;
         cert -> nx_secure_x509_public_key.rsa_public_key.nx_secure_rsa_public_modulus_length = (USHORT)(tlv_length - 1);
+
+        /* A modulus small enough to factor is not a key. 512 bits has been
+           within reach of ordinary hardware for years, and 768 was factored in
+           2009. The floor here is 1024 rather than the 2048 a public CA has
+           issued since 2013, because a self-signed device certificate on
+           somebody's own network may still be 1024 and refusing it would break
+           a connection that works today. */
+        if (cert -> nx_secure_x509_public_key.rsa_public_key.nx_secure_rsa_public_modulus_length <
+            NX_SECURE_X509_MIN_RSA_MODULUS_SIZE)
+        {
+            return(NX_SECURE_X509_INVALID_PUBLIC_KEY);
+        }
 
         /* Finally the public exponent. */
         status = _nx_secure_x509_asn1_tlv_block_parse(&sequence_data[header_length + tlv_length], &length, &tlv_type, &tlv_type_class, &tlv_length, &tlv_data, &header_length);
