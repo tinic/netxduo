@@ -373,6 +373,25 @@ ULONG      window_size;
             /* Yes, identical packet, update the identification flag.  */
             packet_ptr -> nx_packet_identical_copy = NX_TRUE;
         }
+        else
+        {
+
+            /* No.  The flag has to be cleared as well as set: a packet on the
+               retransmit queue is retransmitted more than once, and only
+               nx_packet_allocate() and nx_packet_release() ever cleared this.
+               A packet that went out identical once kept the flag, so when a
+               later retransmission of the same packet carried a moved ACK or
+               window -- which is the usual case, not a corner one --
+               _nx_ip_header_add() still took the early exit and re-sent the
+               original IPv4 identification on a datagram whose bytes had
+               changed.  RFC 6864 4.1 forbids repeating an ID within the
+               maximum datagram lifetime for a source/destination/protocol
+               tuple unless the datagram is atomic, and these are not: every
+               socket here is created with NX_FRAGMENT_OKAY, so DF is clear.
+               Two unlike datagrams sharing an ID is what makes a downstream
+               reassembly join the wrong fragments.  */
+            packet_ptr -> nx_packet_identical_copy = NX_FALSE;
+        }
 
 
 #ifndef NX_DISABLE_TCP_INFO
