@@ -84,6 +84,22 @@ ULONG *temp_ptr;
     /* Pickup the source port from the UDP header.  */
     *port =  (UINT)(*(temp_ptr - 2) >> NX_SHIFT_BY_16);
 
+    /*
+     * The source address is read out of the IP header, and a packet is not
+     * required to have one: nx_packet_ip_header is set by the receive path as
+     * it hands the packet up, and is NX_NULL on a packet that did not come
+     * from there.  Dereferencing it wrote the caller a source address read
+     * from address zero, or faulted, depending on the target.
+     *
+     * The port above is taken from the UDP header, which every caller of this
+     * function has by construction, so it is left alone; only the address
+     * needs the header.
+     */
+    if (packet_ptr -> nx_packet_ip_header == NX_NULL)
+    {
+        return(NX_INVALID_PACKET);
+    }
+
     /* Determine IPv4 or IPv6 connectivity. */
     ip_address -> nxd_ip_version = packet_ptr -> nx_packet_ip_version;
 
