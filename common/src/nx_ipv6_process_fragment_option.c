@@ -97,6 +97,13 @@ NX_IPV6_HEADER_FRAGMENT_OPTION *fragment_option;
         return(NX_OPTION_HEADER_ERROR);
     }
 
+    /* Reassembly may not take the pool past its reserve. */
+    if (packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_available <=
+        NX_IP_FRAGMENT_POOL_RESERVE(packet_ptr -> nx_packet_pool_owner))
+    {
+        return(NX_POOL_ERROR);
+    }
+
     /* Check packet length is at least sizeof(NX_IPV6_HEADER_FRAGMENT_OPTION). */
     if (packet_ptr -> nx_packet_length < sizeof(NX_IPV6_HEADER_FRAGMENT_OPTION))
     {
