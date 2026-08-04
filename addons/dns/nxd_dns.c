@@ -3833,8 +3833,20 @@ ULONG       rr_ttl;
             /* Yes, set a point to the start of the question to find the response record.  */
             data_ptr =  receive_packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDSECT_OFFSET;
 
-            /* Determine if there is a question still in the server's response.  */
-            if (_nx_dns_network_to_short_convert(receive_packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDCOUNT_OFFSET) == 1)
+            /* Same requirement as the other response path: without a question
+               section there is nothing to check the answer against.  */
+            if (_nx_dns_network_to_short_convert(receive_packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDCOUNT_OFFSET) != 1)
+            {
+
+                /* Release the packet. */
+                nx_packet_release(receive_packet_ptr);
+
+                /* NULL-terminate the host name string.  */
+                *host_name_ptr =  NX_NULL;
+
+                return(NX_DNS_MALFORMED_PACKET);
+            }
+
             {
 
                 /* Get name size */
@@ -4493,8 +4505,25 @@ UINT                host_name_size;
         /* Point at the start of the question.  */
         data_ptr =  packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDSECT_OFFSET; 
 
-        /* Determine if there is a question still in the server's response.  */
-        if (_nx_dns_network_to_short_convert(packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDCOUNT_OFFSET) == 1)
+        /*
+         * Determine if there is a question still in the server's response.
+         *
+         * RFC 1035 4.1.2 has a server echo the question it answered, and the
+         * checks inside this block are what tie the answer to the name, type
+         * and class that were asked.  A response carrying QDCOUNT 0 skipped
+         * all of them and was accepted on its header ID alone, so an answer
+         * for one name could be cached against another.  A question section
+         * is now required.
+         */
+        if (_nx_dns_network_to_short_convert(packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDCOUNT_OFFSET) != 1)
+        {
+
+            /* Release the source packet.  */
+            nx_packet_release(packet_ptr);
+
+            return NX_DNS_MALFORMED_PACKET;
+        }
+
         {
 
             /* Get name size */
