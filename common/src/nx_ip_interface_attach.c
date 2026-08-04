@@ -214,6 +214,30 @@ ULONG         address[4];
         status = _nx_ipv6_multicast_join(ip_ptr, address, &ip_ptr -> nx_ip_interface[i]);
 
 #endif
+
+#ifndef NX_DISABLE_IPV4
+        /* And the IPv4 all-hosts group, if IGMP is running.  The
+           NX_IP_IGMP_ENABLE_EVENT that _nx_igmp_enable() raises walks the
+           interface table once, so it covers only what was attached when the
+           IP thread got to it: an interface arriving later carried no
+           all-hosts MAC filter and never saw a router's membership query,
+           which stops a querying switch forwarding any group it has joined
+           once its own timeout runs out.  */
+        if (ip_ptr -> nx_ip_igmp_packet_receive != NX_NULL)
+        {
+            driver_request.nx_ip_driver_ptr =                    ip_ptr;
+            driver_request.nx_ip_driver_command =                NX_LINK_MULTICAST_JOIN;
+            driver_request.nx_ip_driver_physical_address_msw =   NX_IP_MULTICAST_UPPER;
+            /*lint -e{835} -e{845} suppress operating on zero. */
+            driver_request.nx_ip_driver_physical_address_lsw =   NX_IP_MULTICAST_LOWER | (NX_ALL_HOSTS_ADDRESS & NX_IP_MULTICAST_MASK);
+            driver_request.nx_ip_driver_interface            =   &(ip_ptr -> nx_ip_interface[i]);
+
+            /* If trace is enabled, insert this event into the trace buffer.  */
+            NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_IO_DRIVER_MULTICAST_JOIN, ip_ptr, 0, 0, 0, NX_TRACE_INTERNAL_EVENTS, 0, 0);
+
+            (ip_ptr -> nx_ip_interface[i].nx_interface_link_driver_entry)(&driver_request);
+        }
+#endif /* !NX_DISABLE_IPV4 */
     }
 
     /* Release the IP internal mutex.  */
