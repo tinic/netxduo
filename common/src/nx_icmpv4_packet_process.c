@@ -150,6 +150,17 @@ NX_IPV4_HEADER   *ip_header_ptr;
     {
         _nx_icmpv4_process_echo_request(ip_ptr, packet_ptr);
     }
+    else if ((header_ptr -> nx_icmpv4_header_type == NX_ICMP_DEST_UNREACHABLE_TYPE) ||
+             (header_ptr -> nx_icmpv4_header_type == NX_ICMP_TIME_EXCEEDED_TYPE))
+    {
+
+        /* An error message naming one of this node's own datagrams.  RFC 1122
+           Section 3.2.2.1: it MUST be reported to the transport layer.  */
+        _nx_icmpv4_process_error(ip_ptr, packet_ptr);
+
+        /* Release the packet.  */
+        _nx_packet_release(packet_ptr);
+    }
     else
     {
 

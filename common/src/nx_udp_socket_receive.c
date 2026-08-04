@@ -120,6 +120,23 @@ ULONG                  trace_timestamp;
             return(NX_NOT_BOUND);
         }
 
+        /* Determine if an ICMP message reported an error for this socket.  It
+           is reported ahead of any queued datagram and cleared, so the error
+           surfaces once and the queue is still there on the next call.  */
+        if (socket_ptr -> nx_udp_socket_icmp_error != NX_SUCCESS)
+        {
+
+        UINT icmp_error;
+
+            icmp_error = socket_ptr -> nx_udp_socket_icmp_error;
+            socket_ptr -> nx_udp_socket_icmp_error = NX_SUCCESS;
+
+            /* Restore interrupts.  */
+            TX_RESTORE
+
+            return(icmp_error);
+        }
+
         /* Determine if there is a packet already queued up for this socket.  */
         if (socket_ptr -> nx_udp_socket_receive_head)
         {

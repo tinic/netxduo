@@ -251,6 +251,9 @@ NX_PACKET     *next_packet_ptr;
         socket_ptr -> nx_udp_socket_bound_next =  NX_NULL;
     }
 
+    /* An ICMP error nobody collected belongs to the port being given up.  */
+    socket_ptr -> nx_udp_socket_icmp_error =  NX_SUCCESS;
+
     /* Restore interrupts.  */
     TX_RESTORE
 

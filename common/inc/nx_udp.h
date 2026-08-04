@@ -103,6 +103,11 @@ UINT _nx_udp_socket_receive(NX_UDP_SOCKET *socket_ptr, NX_PACKET **packet_ptr,
                             ULONG wait_option);
 UINT _nx_udp_socket_receive_notify(NX_UDP_SOCKET *socket_ptr,
                                    VOID (*udp_receive_notify)(NX_UDP_SOCKET *socket_ptr));
+UINT _nx_udp_socket_icmp_error_notify(NX_UDP_SOCKET *socket_ptr,
+                                      UINT (*udp_icmp_error_notify)(NX_UDP_SOCKET *socket_ptr, UINT error_code,
+                                                                    NXD_ADDRESS *peer_address, UINT peer_port));
+VOID _nx_udp_socket_icmp_error_process(NX_IP *ip_ptr, UINT local_port, UINT error_code,
+                                       NXD_ADDRESS *peer_address, UINT peer_port);
 
 UINT _nx_udp_socket_send(NX_UDP_SOCKET *socket_ptr, NX_PACKET *packet_ptr,
                          ULONG ip_address, UINT port);
@@ -145,6 +150,9 @@ UINT _nxe_udp_socket_receive(NX_UDP_SOCKET *socket_ptr, NX_PACKET **packet_ptr,
                              ULONG wait_option);
 UINT _nxe_udp_socket_receive_notify(NX_UDP_SOCKET *socket_ptr,
                                     VOID (*udp_receive_notify)(NX_UDP_SOCKET *socket_ptr));
+UINT _nxe_udp_socket_icmp_error_notify(NX_UDP_SOCKET *socket_ptr,
+                                       UINT (*udp_icmp_error_notify)(NX_UDP_SOCKET *socket_ptr, UINT error_code,
+                                                                     NXD_ADDRESS *peer_address, UINT peer_port));
 UINT _nx_udp_socket_source_send(NX_UDP_SOCKET *socket_ptr, NX_PACKET *packet_ptr,
                                 ULONG ip_address, UINT port, UINT address_index);
 UINT _nxe_udp_socket_source_send(NX_UDP_SOCKET *socket_ptr, NX_PACKET **packet_ptr,

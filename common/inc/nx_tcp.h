@@ -391,6 +391,9 @@ VOID _nx_tcp_queue_process(NX_IP *ip_ptr);
 VOID _nx_tcp_receive_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 UINT _nx_tcp_socket_bytes_available(NX_TCP_SOCKET *socket_ptr, ULONG *bytes_available);
 VOID _nx_tcp_socket_connection_reset(NX_TCP_SOCKET *socket_ptr);
+VOID _nx_tcp_socket_icmp_error_process(NX_IP *ip_ptr, UINT local_port, UINT peer_port,
+                                       NXD_ADDRESS *peer_address, ULONG sequence,
+                                       UINT error_code, UINT fatal);
 VOID _nx_tcp_socket_packet_process(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr);
 UINT _nx_tcp_socket_peer_info_get(NX_TCP_SOCKET *socket_ptr, ULONG *peer_ip_address, ULONG *peer_port);
 
