@@ -98,6 +98,7 @@ UINT             bytes_to_copy, i;
 ULONG           *src_ip, *dest_ip;
 ULONG           *src_packet, *dest_packet;
 UINT             payload;
+ULONG            elapsed;
 #ifdef NX_IPSEC_ENABLE
 VOID            *sa = NX_NULL;
 UINT             ret = 0;
@@ -132,6 +133,44 @@ NXD_ADDRESS      dest_addr;
          */
         return;
     }
+
+    /* RFC 4443 Section 2.4 (f): "an IPv6 node MUST limit the rate of ICMPv6
+       error messages it originates".  Every message costs a packet out of the
+       default pool, so without a limit anything that provokes errors faster
+       than the pool refills empties it, and the whole stack stops -- not only
+       ICMPv6.  The token bucket is the form the section recommends and its
+       parameters are configurable, as it also asks: see
+       NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE in nx_api.h.
+
+       Refill first, one whole interval at a time.  There is no division: the
+       loop cannot run more times than the bucket holds, and a long idle period
+       is absorbed by the level cap and the timestamp reset below.  */
+    elapsed = tx_time_get() - ip_ptr -> nx_ip_icmpv6_error_message_timestamp;
+
+    if (elapsed >= NX_ICMPV6_ERROR_MESSAGE_TOKEN_INTERVAL)
+    {
+
+        while ((elapsed >= NX_ICMPV6_ERROR_MESSAGE_TOKEN_INTERVAL) &&
+               (ip_ptr -> nx_ip_icmpv6_error_message_tokens < NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE))
+        {
+            ip_ptr -> nx_ip_icmpv6_error_message_tokens++;
+            ip_ptr -> nx_ip_icmpv6_error_message_timestamp += NX_ICMPV6_ERROR_MESSAGE_TOKEN_INTERVAL;
+            elapsed -= NX_ICMPV6_ERROR_MESSAGE_TOKEN_INTERVAL;
+        }
+
+        /* A full bucket keeps no credit for the time it stayed full.  */
+        if (ip_ptr -> nx_ip_icmpv6_error_message_tokens >= NX_ICMPV6_ERROR_MESSAGE_BUCKET_SIZE)
+        {
+            ip_ptr -> nx_ip_icmpv6_error_message_timestamp = tx_time_get();
+        }
+    }
+
+    if (ip_ptr -> nx_ip_icmpv6_error_message_tokens == 0)
+    {
+        return;
+    }
+
+    ip_ptr -> nx_ip_icmpv6_error_message_tokens--;
 
     /* Allocate a packet to build the ICMPv6 error message in.  */
     if (_nx_packet_allocate(ip_ptr -> nx_ip_default_packet_pool, &pkt_ptr, NX_IPv6_ICMP_PACKET, NX_NO_WAIT))
