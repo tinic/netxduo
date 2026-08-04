@@ -78,8 +78,11 @@ static UINT        _nx_dns_process_srv_type(NX_DNS *dns_ptr, NX_PACKET *packet_p
 static UINT        _nx_dns_process_soa_type(NX_DNS *dns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UCHAR *record_buffer, UINT buffer_size, UINT *record_count);
 #endif                
 
-#ifdef NX_DNS_CACHE_ENABLE   
+/* Not under NX_DNS_CACHE_ENABLE: the question-section comparison in
+   _nx_dns_response_process() uses it whether or not the cache is built.  */
 static UINT        _nx_dns_name_match(UCHAR *src, UCHAR *dst, UINT length);
+
+#ifdef NX_DNS_CACHE_ENABLE   
 static UINT        _nx_dns_cache_add_rr(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr, NX_DNS_RR **insert_ptr);     
 static UINT        _nx_dns_cache_find_answer(NX_DNS *dns_ptr, VOID *cache_ptr, UCHAR *query_name, USHORT query_type, UCHAR *buffer, UINT buffer_size, UINT *record_count);
 static UINT        _nx_dns_cache_delete_rr(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr);   
@@ -4623,10 +4626,19 @@ UINT                host_name_size;
                 return NX_DNS_MALFORMED_PACKET;
             }
 
-            /* Check for name.  */
+            /* Check for name.
+
+               Case-insensitively, per RFC 4343: "www.example.com" and
+               "WWW.Example.COM" are the same name, and a server is free to
+               echo the question in whichever case it holds it in.  memcmp()
+               here meant a caller who spelled a name with any capital in it
+               got NX_DNS_MISMATCHED_RESPONSE from every server that
+               normalises, and the name did not resolve at all.  The cache
+               path has always folded case (_nx_dns_cache_find_answer()), so
+               the two halves of the client disagreed about what a name is.  */
             if (_nx_utility_string_length_check((CHAR *)host_name, &host_name_size, name_size) ||
                 (name_size != host_name_size) ||
-                (memcmp(host_name, temp_string_buffer, name_size) != 0))
+                (_nx_dns_name_match(temp_string_buffer, host_name, name_size) != NX_DNS_SUCCESS))
             {
                 
                 /* Release the source packet.  */
@@ -10017,7 +10029,6 @@ USHORT      cnt;
 #endif /* NX_DNS_CACHE_ENABLE  */
     
 
-#ifdef NX_DNS_CACHE_ENABLE
 /**************************************************************************/ 
 /*                                                                        */ 
 /*  FUNCTION                                               RELEASE        */ 
@@ -10085,5 +10096,4 @@ UINT    index = 0;
 
     /* Return success.  */
     return(NX_DNS_SUCCESS);
-}
-#endif /* NX_DNS_CACHE_ENABLE  */       
+}       
