@@ -9264,8 +9264,15 @@ UINT                 mname_string_length;
         if (_nx_dns_name_match(p -> nx_dns_rr_name, query_name, query_name_length))
             continue;      
 
-        /* Update the elasped time and ttl.  */
-        p -> nx_dns_rr_last_used_time = current_time;
+        /* Update the elasped time and ttl.
+
+           last_used moves on by the whole seconds that were charged, not to
+           the current tick: the division above throws away the part of a
+           second that has not completed, and moving to current_time threw it
+           away for good.  A record looked up more often than once a second --
+           a name a transfer keeps resolving -- charged 0 every time and never
+           expired.  */
+        p -> nx_dns_rr_last_used_time += elasped_ttl * (ULONG)NX_IP_PERIODIC_RATE;
         p -> nx_dns_rr_ttl -= elasped_ttl;
         
         /* Yes, get the answer.  */
