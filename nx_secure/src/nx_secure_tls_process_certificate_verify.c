@@ -677,8 +677,22 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
            then pad with 0xFF bytes (for signing) followed with a single 0 byte right before the payload,
            which comes at the end of the RSA block. */
 
-        /* Block type is 0x00, 0x01 for signatures */
-        if (_nx_secure_decrypted_signature[0] != 0x0 && _nx_secure_decrypted_signature[1] != 0x1)
+        /* The block has to be long enough to hold 0x00 0x01, eight padding
+           bytes, the terminator and the DigestInfo; the loop bound below is
+           unsigned and would wrap if it were not. */
+        if (data_size < (signature_length + 11))
+        {
+#ifdef NX_SECURE_KEY_CLEAR
+            NX_SECURE_MEMSET(handshake_hash, 0, sizeof(handshake_hash));
+            NX_SECURE_MEMSET(_nx_secure_decrypted_signature, 0, sizeof(_nx_secure_decrypted_signature));
+#endif /* NX_SECURE_KEY_CLEAR  */
+            return(NX_SECURE_TLS_PADDING_CHECK_FAILED);
+        }
+
+        /* Block type is 0x00, 0x01 for signatures.  Both bytes, not either:
+           with && a block whose second byte is anything at all passes as long
+           as the first is 0x00, and the loop below starts at index 2. */
+        if (_nx_secure_decrypted_signature[0] != 0x0 || _nx_secure_decrypted_signature[1] != 0x1)
         {
 #ifdef NX_SECURE_KEY_CLEAR
             NX_SECURE_MEMSET(handshake_hash, 0, sizeof(handshake_hash));
@@ -700,6 +714,17 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
                 /* Bad padding value. */
                 return(NX_SECURE_TLS_PADDING_CHECK_FAILED);
             }
+        }
+
+        /* The byte between the padding and the DigestInfo is the terminator,
+           and the loop above stops one short of it. */
+        if (_nx_secure_decrypted_signature[i] != 0x00)
+        {
+#ifdef NX_SECURE_KEY_CLEAR
+            NX_SECURE_MEMSET(handshake_hash, 0, sizeof(handshake_hash));
+            NX_SECURE_MEMSET(_nx_secure_decrypted_signature, 0, sizeof(_nx_secure_decrypted_signature));
+#endif /* NX_SECURE_KEY_CLEAR  */
+            return(NX_SECURE_TLS_PADDING_CHECK_FAILED);
         }
 
         /* Check the received handshake hash against what we generated above. */

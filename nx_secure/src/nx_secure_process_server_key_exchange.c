@@ -814,8 +814,11 @@ UINT                                  i;
         					return(NX_SECURE_TLS_SIGNATURE_VERIFICATION_ERROR);
         				}
 
-        				/* Block type is 0x00, 0x01 for signatures */
-        				if (decrypted_signature[0] != 0x0 && decrypted_signature[1] != 0x1)
+        				/* Block type is 0x00, 0x01 for signatures.  Both bytes,
+        				   not either: with && the second byte is unchecked
+        				   whenever the first is 0x00, and the loop below starts
+        				   at index 2. */
+        				if (decrypted_signature[0] != 0x0 || decrypted_signature[1] != 0x1)
         				{
         					/* Unknown block type. */
         					return(NX_SECURE_TLS_PADDING_CHECK_FAILED);
