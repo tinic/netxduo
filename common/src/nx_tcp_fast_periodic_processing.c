@@ -237,3 +237,65 @@ ULONG          retry_shift;
     }
 }
 
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_socket_window_update_step                   PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function returns how far the receive window must have reopened */
+/*    before it is worth telling the sender, which RFC 1122 4.2.3.3 puts  */
+/*    at min(MSS, RCV.BUFF/2).                                            */
+/*                                                                        */
+/*    Only RCV.BUFF/2 used to be applied, and only on the receive path.   */
+/*    On the 33 KB window this stack advertises that made the smallest    */
+/*    update it would ever send about 16 KB, so a peer whose window had   */
+/*    run down to a few hundred bytes stayed there until the application  */
+/*    had read half the buffer -- when one segment's worth of room was    */
+/*    enough to let it carry on.                                          */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    socket_ptr                            Pointer to socket             */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    step                                  Bytes the window must reopen  */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_socket_receive                                              */
+/*    _nx_tcp_fast_periodic_processing                                    */
+/*                                                                        */
+/*  NOTE                                                                  */
+/*                                                                        */
+/*    Defined here rather than beside its first caller because the host   */
+/*    test harnesses in tests/netstack pick NetX Duo sources by hand and  */
+/*    take this file without nx_tcp_socket_receive.c.                     */
+/*                                                                        */
+/**************************************************************************/
+ULONG  _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr)
+{
+ULONG  step;
+
+    step = socket_ptr -> nx_tcp_socket_rx_window_default / 2;
+
+    if ((socket_ptr -> nx_tcp_socket_connect_mss != 0) &&
+        (socket_ptr -> nx_tcp_socket_connect_mss < step))
+    {
+        step = socket_ptr -> nx_tcp_socket_connect_mss;
+    }
+
+    return(step);
+}
