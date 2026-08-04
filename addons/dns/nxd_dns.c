@@ -62,7 +62,8 @@ static UINT        _nx_dns_number_to_ascii_convert(UINT number, CHAR *buffstring
 #endif /* NX_DISABLE_IPV4 */
 static UINT        _nx_dns_host_resource_data_by_name_get(NX_DNS *dns_ptr, UCHAR *host_name, UCHAR *record_buffer, UINT buffer_size, 
                                                           UINT *record_count, UINT lookup_type, ULONG wait_option);
-static UINT        _nx_dns_response_receive(NX_DNS *dns_ptr, NX_PACKET **packet_ptr, ULONG wait_option);
+static UINT        _nx_dns_response_receive(NX_DNS *dns_ptr, NX_PACKET **packet_ptr, NXD_ADDRESS *dns_server, ULONG wait_option);
+static UINT        _nx_dns_response_from_server(NX_PACKET *packet_ptr, NXD_ADDRESS *dns_server);
 static UINT        _nx_dns_response_process(NX_DNS *dns_ptr, UCHAR *host_name, NX_PACKET *packet_ptr, UCHAR *record_buffer, UINT buffer_size, UINT *record_count);
 static UINT        _nx_dns_process_a_type(NX_DNS *dns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UCHAR **buffer_prepend_ptr, UCHAR **buffer_append_ptr, UINT *record_count, UINT rr_location);
 static UINT        _nx_dns_process_aaaa_type(NX_DNS *dns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UCHAR **buffer_prepend_ptr, UCHAR **buffer_append_ptr, UINT *record_count, UINT rr_location);
@@ -3770,7 +3771,7 @@ ULONG       rr_ttl;
     }
 
     /* Wait for a DNS response.  */
-    status = _nx_dns_response_receive(dns_ptr, &receive_packet_ptr, wait_option);
+    status = _nx_dns_response_receive(dns_ptr, &receive_packet_ptr, dns_server, wait_option);
 
     /* Check status.  */
     if (status == NX_SUCCESS)
@@ -4199,7 +4200,7 @@ NX_PACKET  *packet_ptr;
 
 
     /* Wait for a DNS response.  */
-    status = _nx_dns_response_receive(dns_ptr, &packet_ptr, wait_option);
+    status = _nx_dns_response_receive(dns_ptr, &packet_ptr, NX_NULL, wait_option);
 
     /* Check status.  */
     if (status == NX_SUCCESS)
@@ -4276,7 +4277,90 @@ NX_PACKET  *packet_ptr;
 /*    _nx_dns_send_query_get_rdata_by_name  Get the resource data by name */ 
 /*                                                                        */ 
 /**************************************************************************/
-static UINT _nx_dns_response_receive(NX_DNS *dns_ptr, NX_PACKET **packet_ptr, ULONG wait_option)
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_dns_response_from_server                        PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function checks that a response came from the server the query */
+/*    was sent to.  The DNS header ID is sixteen bits, so it is the only  */
+/*    thing an off-path sender has to guess; every other UDP user in this */
+/*    stack (TFTP, SNMP, the BSD layer) already extracts the source and   */
+/*    compares it, and this brings DNS into line.                         */
+/*                                                                        */
+/*    A NX_NULL server means the caller does not know which server it is  */
+/*    waiting for -- _nx_dns_response_get() is the public "take whatever  */
+/*    arrives" entry -- and the check is skipped rather than failed.      */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    packet_ptr                            Received packet               */
+/*    dns_server                            Server the query went to      */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    NX_TRUE                               Response may be accepted      */
+/*    NX_FALSE                              Response is from someone else */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_dns_response_from_server(NX_PACKET *packet_ptr, NXD_ADDRESS *dns_server)
+{
+
+NXD_ADDRESS source_address;
+UINT        source_port;
+
+
+    /* No server named: nothing to compare against.  */
+    if (dns_server == NX_NULL)
+    {
+        return(NX_TRUE);
+    }
+
+    /* Pick up where this packet came from.  */
+    if (nxd_udp_source_extract(packet_ptr, &source_address, &source_port) != NX_SUCCESS)
+    {
+        return(NX_FALSE);
+    }
+
+    /* The server answers from the port it was asked on.  */
+    if (source_port != NX_DNS_PORT)
+    {
+        return(NX_FALSE);
+    }
+
+    if (source_address.nxd_ip_version != dns_server -> nxd_ip_version)
+    {
+        return(NX_FALSE);
+    }
+
+#ifndef NX_DISABLE_IPV4
+    if (source_address.nxd_ip_version == NX_IP_VERSION_V4)
+    {
+        if (source_address.nxd_ip_address.v4 != dns_server -> nxd_ip_address.v4)
+        {
+            return(NX_FALSE);
+        }
+    }
+#endif /* NX_DISABLE_IPV4 */
+
+#ifdef FEATURE_NX_IPV6
+    if (source_address.nxd_ip_version == NX_IP_VERSION_V6)
+    {
+        if (CHECK_IPV6_ADDRESSES_SAME(source_address.nxd_ip_address.v6, dns_server -> nxd_ip_address.v6) == 0)
+        {
+            return(NX_FALSE);
+        }
+    }
+#endif /* FEATURE_NX_IPV6 */
+
+    return(NX_TRUE);
+}
+
+
+/**************************************************************************/
+static UINT _nx_dns_response_receive(NX_DNS *dns_ptr, NX_PACKET **packet_ptr, NXD_ADDRESS *dns_server, ULONG wait_option)
 {
 
 UINT                status;
@@ -4303,7 +4387,8 @@ ULONG               time_remaining;
    
             /* Check the IDs in the DNS header match.  */
             if (((*packet_ptr) -> nx_packet_length >= sizeof(USHORT)) &&
-                (_nx_dns_network_to_short_convert((*packet_ptr) -> nx_packet_prepend_ptr + NX_DNS_ID_OFFSET) == dns_ptr -> nx_dns_transmit_id))
+                (_nx_dns_network_to_short_convert((*packet_ptr) -> nx_packet_prepend_ptr + NX_DNS_ID_OFFSET) == dns_ptr -> nx_dns_transmit_id) &&
+                (_nx_dns_response_from_server(*packet_ptr, dns_server) == NX_TRUE))
             {
 
                 /* They do. We can stop receiving packets and process this one. */
