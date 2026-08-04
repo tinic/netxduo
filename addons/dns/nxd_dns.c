@@ -4779,8 +4779,13 @@ UINT                host_name_size;
             else
             {
 
-                /* Did we get a correct answer?  */
+                /* Did we get a correct answer?  The section decides as much as
+                   the type does: the record processors above store nothing for
+                   an authority or additional record of the type asked for, so
+                   counting one as an answer reported success over an empty
+                   record buffer.  */
                 if ((answer_found == NX_FALSE) &&
+                    (rr_location == NX_DNS_RR_ANSWER_SECTION) &&
                     (response_type == dns_ptr -> nx_dns_lookup_type))
                 {
                     answer_found = NX_TRUE;
@@ -4913,9 +4918,15 @@ ULONG           rr_ttl;
         return(NX_DNS_MALFORMED_PACKET);
     }
 
-    /* Process the A type message in the answer section.*/
-    if((rr_location == NX_DNS_RR_ANSWER_SECTION)||
-       (rr_location == NX_DNS_RR_AUTHORITY_SECTION))
+    /* Process the A type message in the answer section.
+
+       The authority section used to be read here as well.  RFC 1035 4.1.1
+       gives it a different job -- it carries the name servers a resolver
+       should ask next, not the data it asked for -- so an A record placed
+       there was never an answer, and taking it as one let a server return an
+       address for one name while being asked about another.  The record was
+       stored under its own owner name, so the cache took it too.  */
+    if (rr_location == NX_DNS_RR_ANSWER_SECTION)
     {
 
         /* Verify this is what the DNS Client was requesting. */
@@ -5393,9 +5404,9 @@ ULONG                   rr_ttl;
         return(NX_DNS_MALFORMED_PACKET);
     }
     
-    /* Process the A type message in the answer section.*/
-    if((rr_location == NX_DNS_RR_ANSWER_SECTION)||
-       (rr_location == NX_DNS_RR_AUTHORITY_SECTION))
+    /* Process the AAAA type message in the answer section.  The authority
+       section is not an answer -- see _nx_dns_process_a_type().  */
+    if (rr_location == NX_DNS_RR_ANSWER_SECTION)
     {
 
         /* Verify this is what the DNS Client was requesting. */
