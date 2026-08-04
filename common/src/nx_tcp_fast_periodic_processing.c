@@ -97,9 +97,16 @@ ULONG          retry_shift;
 
         /* Determine if the socket is in an established or disconnect state and has delayed sending an ACK
            from a previous receive packet event.  */
+        /* The window-update arm carries the same RFC 1122 4.2.3.3 floor the
+           receive path applies.  Without it the floor was worth nothing: any
+           read at all left rx_window_last_sent behind rx_window_current, and
+           this timer then announced the difference however small, which is the
+           silly-window advertisement the floor exists to suppress.  The
+           unacknowledged-data arm has no floor and must not have one.  */
         if ((socket_ptr -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED) &&
             ((socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
-             (socket_ptr -> nx_tcp_socket_rx_window_last_sent < socket_ptr -> nx_tcp_socket_rx_window_current)))
+             ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
+              _nx_tcp_socket_window_update_step(socket_ptr))))
         {
 
             /* Determine if the ACK has expired.  */
