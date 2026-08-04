@@ -78,8 +78,11 @@ static UINT        _nx_dns_process_srv_type(NX_DNS *dns_ptr, NX_PACKET *packet_p
 static UINT        _nx_dns_process_soa_type(NX_DNS *dns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UCHAR *record_buffer, UINT buffer_size, UINT *record_count);
 #endif                
 
-#ifdef NX_DNS_CACHE_ENABLE   
+/* Not under NX_DNS_CACHE_ENABLE: the question-section comparison in
+   _nx_dns_response_process() uses it whether or not the cache is built.  */
 static UINT        _nx_dns_name_match(UCHAR *src, UCHAR *dst, UINT length);
+
+#ifdef NX_DNS_CACHE_ENABLE   
 static UINT        _nx_dns_cache_add_rr(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr, NX_DNS_RR **insert_ptr);     
 static UINT        _nx_dns_cache_find_answer(NX_DNS *dns_ptr, VOID *cache_ptr, UCHAR *query_name, USHORT query_type, UCHAR *buffer, UINT buffer_size, UINT *record_count);
 static UINT        _nx_dns_cache_delete_rr(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr);   
@@ -3850,6 +3853,29 @@ ULONG       rr_ttl;
 
             {
 
+                /* Read the question back and check it is the one that was
+                   asked.  The forward path does this; here the question was
+                   only skipped, so a response was tied to the query by its
+                   header ID and the address it came from and by nothing else.
+                   The address asked about is in the question and nowhere else
+                   in the message, so a server -- or anything that guessed the
+                   ID -- could answer about one address with the PTR record of
+                   another, and it was cached under the address asked for.  */
+                name_size = _nx_dns_name_string_unencode(receive_packet_ptr, data_ptr, temp_string_buffer, NX_DNS_NAME_MAX);
+
+                if ((!name_size) || (name_size != ip_question_size) ||
+                    (_nx_dns_name_match(temp_string_buffer, ip_question, name_size) != NX_DNS_SUCCESS))
+                {
+
+                    /* Release the packet. */
+                    nx_packet_release(receive_packet_ptr);
+
+                    /* NULL-terminate the host name string.  */
+                    *host_name_ptr =  NX_NULL;
+
+                    return(NX_DNS_MISMATCHED_RESPONSE);
+                }
+
                 /* Get name size */
                 name_size = _nx_dns_name_size_calculate(data_ptr, receive_packet_ptr);
 
@@ -3864,6 +3890,34 @@ ULONG       rr_ttl;
 
                     /* Return an error!  */
                     return(NX_DNS_MALFORMED_PACKET);
+                }
+
+                /* Check if the data pointer is valid.  */
+                if (data_ptr + name_size + 4 >= receive_packet_ptr -> nx_packet_append_ptr)
+                {
+
+                    /* Release the packet. */
+                    nx_packet_release(receive_packet_ptr);
+
+                    /* NULL-terminate the host name string.  */
+                    *host_name_ptr =  NX_NULL;
+
+                    return(NX_DNS_MALFORMED_PACKET);
+                }
+
+                /* And that it is the question this path asks: a PTR record in
+                   the internet class.  */
+                if ((_nx_dns_network_to_short_convert(data_ptr + name_size) != NX_DNS_RR_TYPE_PTR) ||
+                    (_nx_dns_network_to_short_convert(data_ptr + name_size + 2) != NX_DNS_RR_CLASS_IN))
+                {
+
+                    /* Release the packet. */
+                    nx_packet_release(receive_packet_ptr);
+
+                    /* NULL-terminate the host name string.  */
+                    *host_name_ptr =  NX_NULL;
+
+                    return(NX_DNS_MISMATCHED_RESPONSE);
                 }
 
                 /* Yes, the question is present in the response, skip it!  */
@@ -10035,7 +10089,6 @@ USHORT      cnt;
 #endif /* NX_DNS_CACHE_ENABLE  */
     
 
-#ifdef NX_DNS_CACHE_ENABLE
 /**************************************************************************/ 
 /*                                                                        */ 
 /*  FUNCTION                                               RELEASE        */ 
@@ -10103,5 +10156,4 @@ UINT    index = 0;
 
     /* Return success.  */
     return(NX_DNS_SUCCESS);
-}
-#endif /* NX_DNS_CACHE_ENABLE  */       
+}       
