@@ -374,6 +374,31 @@ ULONG         tcpip_offload;
             /* TCP MUST be prepared to handle an illegal option length (e.g., zero) without crashing;
                a suggested procedure is to reset the connection and log the reason, outlined in RFC 1122, Section 4.2.2.5, Page85. */
 
+            /* A RESET is never answered with a RESET, RFC 1122 Section 4.2.2.13
+               and RFC 793 Section 3.4 Page 36.  A segment carrying both the RST
+               bit and a malformed option reaches here from the states below
+               SYN_RECEIVED only -- from SYN_RECEIVED up, step 2 above has
+               already dealt with the RST bit and returned -- so this is the
+               SYN_SENT and CLOSED cases, where two machines both holding a
+               half-open socket would otherwise reset each other until one of
+               them gave up.  Discard it: the connection is not torn down from
+               here either, because nothing has checked the sequence number of a
+               segment that arrived in SYN_SENT and an attacker would not have
+               to.  */
+            if (tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)
+            {
+
+#ifndef NX_DISABLE_TCP_INFO
+                /* Increment the TCP invalid packet error count.  */
+                socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_invalid_packets++;
+#endif /* NX_DISABLE_TCP_INFO */
+
+                /* Release the packet.  */
+                _nx_packet_release(packet_ptr);
+
+                return;
+            }
+
             /* Preprocess the sequence number if the incoming segment does not have an ACK field.
                Reset Generation, RFC793, Section3.4, Page37. */
             if (!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_ACK_BIT))

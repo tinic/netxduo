@@ -478,7 +478,14 @@ ULONG                        sack_permitted = NX_FALSE;
         /* Send RST message.
            TCP MUST be prepared to handle an illegal option length (e.g., zero) without crashing;
            a suggested procedure is to reset the connection and log the reason, outlined in RFC 1122, Section 4.2.2.5, Page85. */
-        _nx_tcp_no_connection_reset(ip_ptr, packet_ptr, tcp_header_ptr);
+
+        /* A RESET is never answered with a RESET, RFC 793 Section 3.4 Page 36.
+           The no-connection path at the end of this function already tests for
+           it; a malformed option arrives here first and must not skip it.  */
+        if (!(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT))
+        {
+            _nx_tcp_no_connection_reset(ip_ptr, packet_ptr, tcp_header_ptr);
+        }
 
 #ifndef NX_DISABLE_TCP_INFO
         /* Increment the TCP invalid packet error count.  */
