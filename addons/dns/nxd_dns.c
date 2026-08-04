@@ -4677,10 +4677,19 @@ UINT                host_name_size;
                 return NX_DNS_MALFORMED_PACKET;
             }
 
-            /* Check for name.  */
+            /* Check for name.
+
+               Case-insensitively, per RFC 4343: "www.example.com" and
+               "WWW.Example.COM" are the same name, and a server is free to
+               echo the question in whichever case it holds it in.  memcmp()
+               here meant a caller who spelled a name with any capital in it
+               got NX_DNS_MISMATCHED_RESPONSE from every server that
+               normalises, and the name did not resolve at all.  The cache
+               path has always folded case (_nx_dns_cache_find_answer()), so
+               the two halves of the client disagreed about what a name is.  */
             if (_nx_utility_string_length_check((CHAR *)host_name, &host_name_size, name_size) ||
                 (name_size != host_name_size) ||
-                (memcmp(host_name, temp_string_buffer, name_size) != 0))
+                (_nx_dns_name_match(temp_string_buffer, host_name, name_size) != NX_DNS_SUCCESS))
             {
                 
                 /* Release the source packet.  */
