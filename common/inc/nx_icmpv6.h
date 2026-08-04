@@ -72,6 +72,7 @@
 #define ICMPV6_OPTION_REDIRECTED_HEADER       4
  */
 #define ICMPV6_OPTION_TYPE_MTU                5
+#define ICMPV6_OPTION_TYPE_RDNSS              25
 
 /* Flag indicicatting that the option field should not contain
    source link layer address. */
@@ -261,6 +262,25 @@ typedef struct NX_ICMPV6_OPTION_MTU_STRUCT
     ULONG nx_icmpv6_option_mtu_path_mtu;
 
 } NX_ICMPV6_OPTION_MTU;
+
+#ifdef NX_ENABLE_IPV6_RDNSS
+/* Define the Recursive DNS Server option, RFC 8106 section 5.1.  The addresses
+   follow this header, one to a 16 bytes, and the option length in 8-byte units
+   is 1 + twice their number.  */
+
+typedef struct NX_ICMPV6_OPTION_RDNSS_STRUCT
+{
+    /* Option type and length, in 8-byte units. */
+    UCHAR  nx_icmpv6_option_rdnss_type;
+    UCHAR  nx_icmpv6_option_rdnss_length;
+
+    /* Unused; reserved for future use. */
+    USHORT nx_icmpv6_option_rdnss_reserved;
+
+    /* Seconds the servers may be used for; 0 withdraws them. */
+    ULONG  nx_icmpv6_option_rdnss_lifetime;
+} NX_ICMPV6_OPTION_RDNSS;
+#endif /* NX_ENABLE_IPV6_RDNSS */
 
 /* Define the Router solicitation message type.  */
 
