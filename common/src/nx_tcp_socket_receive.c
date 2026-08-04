@@ -78,6 +78,7 @@ NX_IP                 *ip_ptr;
 NX_TCP_HEADER         *header_ptr;
 NX_PACKET             *head_packet_ptr;
 ULONG                  header_length;
+ULONG                  window_step;
 
 #ifdef TX_ENABLE_EVENT_TRACE
 TX_TRACE_BUFFER_ENTRY *trace_event;
@@ -209,7 +210,21 @@ ULONG                  trace_timestamp;
 
         /* Determine if an ACK should be forced out for window update, SWS avoidance algorithm.
            RFC1122, Section4.2.3.3, Page97-98. */
-        if (((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= (socket_ptr -> nx_tcp_socket_rx_window_default / 2)) &&
+
+        /* The rule is min(MSS, RCV.BUFF/2), and only RCV.BUFF/2 was here.  On
+           the 33 KB window this stack can advertise that made the smallest
+           window update it would ever send about 16 KB: a peer whose window had
+           run down to a few hundred bytes stayed there until the application
+           had read half the buffer, when one segment's worth of room was enough
+           to let it carry on.  The MSS term is what puts the floor under it.  */
+        window_step = socket_ptr -> nx_tcp_socket_rx_window_default / 2;
+        if ((socket_ptr -> nx_tcp_socket_connect_mss != 0) &&
+            (socket_ptr -> nx_tcp_socket_connect_mss < window_step))
+        {
+            window_step = socket_ptr -> nx_tcp_socket_connect_mss;
+        }
+
+        if (((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= window_step) &&
             ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_2)))
         {
 
