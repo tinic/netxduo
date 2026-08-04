@@ -78,6 +78,8 @@ VOID  _nx_tcp_fast_periodic_processing(NX_IP *ip_ptr)
 NX_TCP_SOCKET *socket_ptr;
 ULONG          sockets;
 ULONG          timer_rate;
+ULONG          max_retries;
+ULONG          retry_shift;
 
 
     /* Pickup this timer's periodic rate.  */
@@ -115,6 +117,21 @@ ULONG          timer_rate;
             }
         }
 
+        /* R2, RFC 1122 4.2.3.5.  A connection request has its own, because
+           MUST-23 asks for three minutes of retransmission on a SYN and the
+           same section asks only a hundred seconds on data.  */
+        max_retries =  socket_ptr -> nx_tcp_socket_timeout_max_retries;
+
+        if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT) ||
+            (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_RECEIVED))
+        {
+
+            if (max_retries < NX_TCP_SYN_MAXIMUM_RETRIES)
+            {
+                max_retries =  NX_TCP_SYN_MAXIMUM_RETRIES;
+            }
+        }
+
         /* Determine if a timeout is active.  */
         if (socket_ptr -> nx_tcp_socket_timeout)
         {
@@ -126,7 +143,7 @@ ULONG          timer_rate;
                 /* No, it hasn't expired yet.  Just decrement the timeout value.  */
                 socket_ptr -> nx_tcp_socket_timeout -= timer_rate;
             }
-            else if (((socket_ptr -> nx_tcp_socket_timeout_retries >= socket_ptr -> nx_tcp_socket_timeout_max_retries) &&
+            else if (((socket_ptr -> nx_tcp_socket_timeout_retries >= max_retries) &&
                       (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_FALSE)) ||
                      ((socket_ptr -> nx_tcp_socket_zero_window_probe_failure >= socket_ptr -> nx_tcp_socket_timeout_max_retries) &&
                       (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_TRUE))
@@ -148,9 +165,19 @@ ULONG          timer_rate;
                 /* Increment the retry counter.  */
                 socket_ptr -> nx_tcp_socket_timeout_retries++;
 
-                /* Setup the next timeout.  */
-                socket_ptr -> nx_tcp_socket_timeout = socket_ptr -> nx_tcp_socket_timeout_rate <<
-                    (socket_ptr -> nx_tcp_socket_timeout_retries * socket_ptr -> nx_tcp_socket_timeout_shift);
+                /* Setup the next timeout.  The shift is capped, so the ladder
+                   spends its extra retries at the ceiling rather than doubling
+                   past it -- the difference between R2 landing on 191 seconds
+                   and on 255.  */
+                retry_shift = socket_ptr -> nx_tcp_socket_timeout_retries *
+                              socket_ptr -> nx_tcp_socket_timeout_shift;
+
+                if (retry_shift > NX_TCP_SYN_RETRY_SHIFT_MAX)
+                {
+                    retry_shift = NX_TCP_SYN_RETRY_SHIFT_MAX;
+                }
+
+                socket_ptr -> nx_tcp_socket_timeout = socket_ptr -> nx_tcp_socket_timeout_rate << retry_shift;
 
                 /* Send the initial SYN message again.  Adjust the sequence number before and
                    after to ensure the same sequence as the initial SYN.  */
