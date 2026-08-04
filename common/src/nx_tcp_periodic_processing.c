@@ -75,7 +75,14 @@ VOID  _nx_tcp_periodic_processing(NX_IP *ip_ptr)
 NX_TCP_SOCKET *socket_ptr;
 ULONG          sockets;
 UINT           keepalive_enabled = NX_FALSE;
+#endif
 
+
+    /* Refill the challenge acknowledgment budget, RFC 5961 section 7.  This is
+       the one-second periodic, so the budget is a rate per second.  */
+    ip_ptr -> nx_ip_tcp_challenge_ack_budget =  NX_TCP_CHALLENGE_ACK_LIMIT;
+
+#ifdef NX_ENABLE_TCP_KEEPALIVE
 
     /* Pickup the number of created TCP sockets.  */
     sockets =  ip_ptr -> nx_ip_tcp_created_sockets_count;
@@ -142,8 +149,6 @@ UINT           keepalive_enabled = NX_FALSE;
         /* Get the socket's keep alive status. */
         keepalive_enabled = socket_ptr -> nx_tcp_socket_keepalive_enabled;
     }
-#else
-    NX_PARAMETER_NOT_USED(ip_ptr);
 #endif
 }
 

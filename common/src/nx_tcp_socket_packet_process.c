@@ -271,6 +271,35 @@ ULONG         tcpip_offload;
                 return;
             }
 
+            /* RFC 5961 section 3: only a reset whose sequence number is exactly
+               RCV.NXT tears the connection down.  One anywhere else in the
+               window earns a challenge acknowledgment instead -- an off-path
+               attacker has to guess the one number rather than land anywhere in
+               a window that can be tens of kilobytes wide, and a peer that
+               really did send it answers the challenge with a reset at the
+               right number.
+
+               The zero window case is what makes this worth having here: the
+               acceptability test above admits a reset at ANY sequence number
+               while RCV.WND is 0, which is precisely when a connection has
+               stalled and an attacker has all the time it needs.  */
+            if (packet_sequence != rx_sequence)
+            {
+
+                if (socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_challenge_ack_budget)
+                {
+                    socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_challenge_ack_budget--;
+
+                    _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+                }
+
+                /* Release the packet.  */
+                _nx_packet_release(packet_ptr);
+
+                /* Finished processing, simply return!  */
+                return;
+            }
+
 #ifndef NX_DISABLE_TCP_INFO
 
             /* Increment the resets received count.  */
@@ -294,17 +323,19 @@ ULONG         tcpip_offload;
         if (tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_SYN_BIT)
         {
 
-            /* The SYN is in the window it is an error, send a reset.  */
+            /* RFC 5961 section 4 replaces RFC 793's reset-and-tear-down with a
+               challenge acknowledgment.  RFC 793 hands an off-path attacker the
+               whole receive window to aim at: one SYN landing anywhere in it
+               killed the connection.  The challenge costs the attacker nothing
+               and the connection nothing, and a peer that really did restart
+               answers it with a reset carrying RCV.NXT, which step 2 above then
+               honours.  */
+            if (socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_challenge_ack_budget)
+            {
+                socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_challenge_ack_budget--;
 
-            /* Adjust the SEQ for the SYN bit. */
-            /* The reset logic uses the sequence number in tcp_header_ptr as its ACK number. */
-            tcp_header_copy.nx_tcp_sequence_number++;
-
-            /* Send RST message.  */
-            _nx_tcp_packet_send_rst(socket_ptr, &tcp_header_copy);
-
-            /* Reset the connection. */
-            _nx_tcp_socket_connection_reset(socket_ptr);
+                _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+            }
 
             /* Release the packet.  */
             _nx_packet_release(packet_ptr);
