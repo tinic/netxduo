@@ -200,6 +200,84 @@ NX_TCP_HEADER  *header_ptr;
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
+/*    _nx_tcp_socket_zero_window_probe_arm                PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function enters the persist state for data that cannot be sent */
+/*    because the receiver advertised a zero window (RFC 1122 4.2.2.17).  */
+/*    Both paths that refuse a send call it, so that a blocking caller and */
+/*    a non-blocking one leave the socket in the same state.              */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    socket_ptr                            Pointer to socket             */
+/*    packet_ptr                            Packet that cannot be sent    */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_socket_send_internal                                        */
+/*                                                                        */
+/**************************************************************************/
+static VOID _nx_tcp_socket_zero_window_probe_arm(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr)
+{
+
+    /* Only a receiver that advertised a zero window is probed.  This data
+       cannot be sent for one of three reasons -- the receiver's window, the
+       congestion window, or the transmit queue depth -- and only the first of
+       them is a zero window.  Setting the flag for the other two describes the
+       socket as being in the persist state when it is not, which moves the
+       retransmission retry limit onto the probe failure count (see
+       nx_tcp_fast_periodic_processing.c) and stops it being reached.  */
+    if (socket_ptr -> nx_tcp_socket_tx_window_advertised != 0)
+    {
+        return;
+    }
+
+    /* Remember the byte to probe with.  A probe already armed keeps its own
+       byte and its own failure count: the caller will be told
+       NX_WINDOW_OVERFLOW or NX_TX_QUEUE_DEPTH and will try again, and each of
+       those attempts would otherwise restart the count that gives up on a
+       receiver that has stopped answering.  */
+    if (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_FALSE)
+    {
+        socket_ptr -> nx_tcp_socket_zero_window_probe_has_data = NX_TRUE;
+        socket_ptr -> nx_tcp_socket_zero_window_probe_data = *(packet_ptr -> nx_packet_prepend_ptr);
+        socket_ptr -> nx_tcp_socket_zero_window_probe_sequence = socket_ptr -> nx_tcp_socket_tx_sequence;
+        socket_ptr -> nx_tcp_socket_zero_window_probe_failure = 0;
+    }
+
+    /* Start the persist timer if nothing else is already driving one.  The
+       byte on its own probes nothing: _nx_tcp_fast_periodic_processing() only
+       looks at a socket whose timeout is running, and the timeout is cleared
+       whenever the transmit queue drains under a non-zero window
+       (nx_tcp_socket_state_ack_check.c).  A receiver that acknowledges
+       everything and then advertises zero therefore leaves no timer behind,
+       and without this the connection waits for a window update that a single
+       lost segment means never arrives.  */
+    if (socket_ptr -> nx_tcp_socket_timeout == 0)
+    {
+        socket_ptr -> nx_tcp_socket_timeout = socket_ptr -> nx_tcp_socket_timeout_rate;
+        socket_ptr -> nx_tcp_socket_timeout_retries = 0;
+    }
+}
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
 /*    _nx_tcp_socket_send_internal                        PORTABLE C      */
 /*                                                           6.1.10       */
 /*  AUTHOR                                                                */
@@ -1017,24 +1095,8 @@ UINT            compute_checksum = 1;
             /* Increment the suspended thread count.  */
             socket_ptr -> nx_tcp_socket_transmit_suspended_count++;
 
-            /* Only a receiver that advertised a zero window is probed.  This
-               data cannot be sent for one of three reasons -- the receiver's
-               window, the congestion window, or the transmit queue depth --
-               and only the first of them is a zero window.  Setting the flag
-               for the other two describes the socket as being in the persist
-               state when it is not, which moves the retransmission retry
-               limit onto the probe failure count (see
-               nx_tcp_fast_periodic_processing.c) and stops it being reached.  */
-            if ((socket_ptr -> nx_tcp_socket_tx_window_advertised == 0) &&
-                (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_FALSE))
-            {
-
-                /* Set data for zero window probe. */
-                socket_ptr -> nx_tcp_socket_zero_window_probe_has_data = NX_TRUE;
-                socket_ptr -> nx_tcp_socket_zero_window_probe_data = *(packet_ptr -> nx_packet_prepend_ptr);
-                socket_ptr -> nx_tcp_socket_zero_window_probe_sequence = socket_ptr -> nx_tcp_socket_tx_sequence;
-                socket_ptr -> nx_tcp_socket_zero_window_probe_failure = 0;
-            }
+            /* Enter the persist state if this is a zero window.  */
+            _nx_tcp_socket_zero_window_probe_arm(socket_ptr, packet_ptr);
 
             /* Need preemption? */
             if (preempted == NX_FALSE)
@@ -1070,21 +1132,8 @@ UINT            compute_checksum = 1;
         else
         {
 
-            /* Check advertised window.  As above, a probe belongs to a zero
-               window and to nothing else: the caller is about to be told
-               NX_WINDOW_OVERFLOW or NX_TX_QUEUE_DEPTH and will try again, and
-               each of those attempts would otherwise re-declare a persist
-               state that hides the retransmission retry limit.  */
-            if ((socket_ptr -> nx_tcp_socket_tx_window_advertised == 0) &&
-                (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_FALSE))
-            {
-
-                /* Set data for zero window probe. */
-                socket_ptr -> nx_tcp_socket_zero_window_probe_has_data = NX_TRUE;
-                socket_ptr -> nx_tcp_socket_zero_window_probe_data = *(packet_ptr -> nx_packet_prepend_ptr);
-                socket_ptr -> nx_tcp_socket_zero_window_probe_sequence = socket_ptr -> nx_tcp_socket_tx_sequence;
-                socket_ptr -> nx_tcp_socket_zero_window_probe_failure = 0;
-            }
+            /* Enter the persist state if this is a zero window.  */
+            _nx_tcp_socket_zero_window_probe_arm(socket_ptr, packet_ptr);
 
             /* Determine which transmit error is present.  */
             if (socket_ptr -> nx_tcp_socket_transmit_sent_count < socket_ptr -> nx_tcp_socket_transmit_queue_maximum)
