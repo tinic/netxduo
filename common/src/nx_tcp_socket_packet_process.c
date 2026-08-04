@@ -442,6 +442,30 @@ ULONG         tcpip_offload;
 
     case  NX_TCP_TIMED_WAIT:
 
+        /*
+         * RFC 9293 3.10.7.4, TIME-WAIT: a FIN arriving here is the peer
+         * retransmitting because the ACK that closed the connection was lost.
+         * The requirement is to acknowledge it and restart the 2MSL timer.
+         *
+         * Neither was done, so the peer got nothing back and retransmitted
+         * until its own R2 expired -- and our TIME-WAIT ran out from when the
+         * first FIN arrived rather than the last, which is the interval that
+         * is supposed to keep a stale segment out of the next connection on
+         * the same port pair.
+         *
+         * The sequence number is not advanced: it was advanced when the first
+         * FIN was accepted, and this is that same FIN again.
+         */
+        if (tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_FIN_BIT)
+        {
+
+            /* Restart 2MSL, measured from this FIN.  */
+            socket_ptr -> nx_tcp_socket_timeout = _nx_tcp_2MSL_timer_rate;
+
+            /* Acknowledge it again.  */
+            _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+        }
+
         /* State processing is complete.  */
         break;
 
