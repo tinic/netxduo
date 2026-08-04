@@ -153,6 +153,26 @@
                                                     /*   of 1 causes each successive */
                                                     /*   be multiplied by two, etc.  */
 
+/* R2 for a connection request, RFC 1122 4.2.3.5 MUST-23: a SYN is
+   retransmitted for at least 3 minutes.  Separate from NX_TCP_MAXIMUM_RETRIES
+   because the same section asks only "at least 100 seconds" of R2 for data, and
+   running data out to three minutes would make every broken transfer take that
+   long to report.  Defaults to the data budget, so nothing moves until a port
+   sets it.  */
+#ifndef NX_TCP_SYN_MAXIMUM_RETRIES
+#define NX_TCP_SYN_MAXIMUM_RETRIES      NX_TCP_MAXIMUM_RETRIES
+#endif
+
+/* Ceiling on the shift NX_TCP_RETRY_SHIFT applies to one connection-request
+   interval.  The ladder has no clamp of its own, so the last interval is longer
+   than everything before it put together: at a shift of one the eighth retry
+   alone waits 128 seconds and R2 lands on 255 rather than 191.  RFC 6298 2.5's
+   maximum RTO need only be at least 60 seconds, and six shifts of a one-second
+   base is 64.  */
+#ifndef NX_TCP_SYN_RETRY_SHIFT_MAX
+#define NX_TCP_SYN_RETRY_SHIFT_MAX      6
+#endif
+
 #ifndef NX_TCP_MAXIMUM_SEGMENT_LIFETIME
 #define NX_TCP_MAXIMUM_SEGMENT_LIFETIME 120         /* Number of seconds for maximum */
 #endif                                              /* segment lifetime, the         */
