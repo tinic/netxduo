@@ -289,13 +289,19 @@ ULONG  _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr)
 {
 ULONG  step;
 
+    /* RCV.BUFF/2 alone, without RFC 1122 4.2.3.3's min(MSS, ...) term.  The
+       MSS term made this stack announce at the earliest moment the RFC
+       permits, and on a receiver slower than its peer that is an oscillator:
+       over a 1 MB transfer every one of 84 window reopenings advertised
+       exactly one segment, the peer filled it, the window fell straight back
+       to zero, and 574 of 1057 acknowledgments carried nothing new.  Half the
+       buffer instead is 18 reopenings of 17520 bytes each and a 640 -> 1221
+       KB/s file-server read on the same 68020.  A sender parked at zero is
+       released by its own persist timer, which this fork arms
+       (nx_tcp_socket_send_internal.c), so the fine-grained announcement is
+       not what gets it moving again and costs the read path four fifths of
+       its acknowledgment traffic.  */
     step = socket_ptr -> nx_tcp_socket_rx_window_default / 2;
-
-    if ((socket_ptr -> nx_tcp_socket_connect_mss != 0) &&
-        (socket_ptr -> nx_tcp_socket_connect_mss < step))
-    {
-        step = socket_ptr -> nx_tcp_socket_connect_mss;
-    }
 
     return(step);
 }
