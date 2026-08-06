@@ -22,6 +22,24 @@
 
 #include "nx_crypto_ec.h"
 
+#ifdef NX_CRYPTO_AMIGA_YIELD_HOOK
+/* Defined in src/crypto68k.  On this hardware one scalar multiplication runs
+   for tens of seconds, and the AmigaOS ThreadX port does not preempt a thread
+   that makes no ThreadX call, so without handing the machine back here the IP
+   thread cannot answer the network for the length of the operation. */
+extern VOID (*c68k_yield_hook)(VOID);
+
+#define NX_CRYPTO_AMIGA_YIELD()                                 \
+    do {                                                        \
+        if (c68k_yield_hook != (VOID (*)(VOID))0)               \
+        {                                                       \
+            c68k_yield_hook();                                  \
+        }                                                       \
+    } while (0)
+#else
+#define NX_CRYPTO_AMIGA_YIELD()  do { } while (0)
+#endif
+
 /* secp192r1 */
 static NX_CRYPTO_CONST HN_UBASE _nx_crypto_ec_secp192r1_p[] =
 {
@@ -2716,6 +2734,8 @@ UINT               bit;
 
         for (; bit < HN_SHIFT - 1; bit += 2)
         {
+            NX_CRYPTO_AMIGA_YIELD();
+
             _nx_crypto_ec_fp_projective_double(curve, &projective_point, scratch);
 
             value = (digit >> (HN_SHIFT - bit - 2)) & 3;
@@ -2823,6 +2843,8 @@ UINT                       j;
 
     for (i = (INT)(fixed_points -> nx_crypto_ec_fixed_points_e - 1); i >= 0; i--)
     {
+        NX_CRYPTO_AMIGA_YIELD();
+
         _nx_crypto_ec_fp_projective_double(curve, &projective_point, scratch);
 
         transpose_d = 0;
