@@ -173,6 +173,58 @@ USHORT result;
 /*    _nx_crypto_gcm_ghash_update           Compute GHASH                 */
 /*                                                                        */
 /**************************************************************************/
+#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+/*
+ * The same bit-serial GF(2^128) multiply, over 32-bit words instead of bytes.
+ * The vendored loop below shifts sixteen bytes one at a time and calls
+ * _nx_crypto_gcm_xor for the conditional add, 128 times per block; this does
+ * four longword shifts and four longword XORs inline.  Same algorithm, same
+ * result, a quarter of the memory traffic.
+ *
+ * The operands are copied through aligned ULONG[4] rather than cast, so this
+ * needs no alignment guarantee from the caller.  A GCM block is big-endian and
+ * so is the 68000 family, which is what makes the copy a plain reinterpretation
+ * here; the guard keeps it off every other target.
+ */
+NX_CRYPTO_KEEP static VOID _nx_crypto_gcm_multi(UCHAR *x, UCHAR *y, UCHAR *output)
+{
+ULONG v[4];
+ULONG o[4];
+ULONG xw[4];
+UINT  i;
+ULONG lsb;
+
+    NX_CRYPTO_MEMCPY(v,  y, NX_CRYPTO_GCM_BLOCK_SIZE);
+    NX_CRYPTO_MEMCPY(xw, x, NX_CRYPTO_GCM_BLOCK_SIZE);
+    o[0] = 0UL; o[1] = 0UL; o[2] = 0UL; o[3] = 0UL;
+
+    for (i = 0; i < NX_CRYPTO_GCM_BLOCK_SIZE_BITS; i++)
+    {
+        if (xw[i >> 5] & (0x80000000UL >> (i & 31u)))
+        {
+            o[0] ^= v[0];
+            o[1] ^= v[1];
+            o[2] ^= v[2];
+            o[3] ^= v[3];
+        }
+
+        lsb  = v[3] & 1UL;
+
+        v[3] = (v[3] >> 1) | (v[2] << 31);
+        v[2] = (v[2] >> 1) | (v[1] << 31);
+        v[1] = (v[1] >> 1) | (v[0] << 31);
+        v[0] = (v[0] >> 1);
+
+        /* v = v xor R when the LSB was set; R is 0xe1 in the first byte. */
+        if (lsb != 0UL)
+        {
+            v[0] ^= 0xE1000000UL;
+        }
+    }
+
+    NX_CRYPTO_MEMCPY(output, o, NX_CRYPTO_GCM_BLOCK_SIZE);
+}
+#else
 NX_CRYPTO_KEEP static VOID _nx_crypto_gcm_multi(UCHAR *x, UCHAR *y, UCHAR *output)
 {
 UINT i;
@@ -219,6 +271,7 @@ UCHAR mask;
         }
     }
 }
+#endif
 
 /**************************************************************************/
 /*                                                                        */
