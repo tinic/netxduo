@@ -173,7 +173,7 @@ USHORT result;
 /*    _nx_crypto_gcm_ghash_update           Compute GHASH                 */
 /*                                                                        */
 /**************************************************************************/
-#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+#ifdef NX_CRYPTO_AMIGA_C68K_GCM
 /*
  * The same bit-serial GF(2^128) multiply, over 32-bit words instead of bytes.
  * The vendored loop below shifts sixteen bytes one at a time and calls
