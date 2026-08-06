@@ -288,7 +288,8 @@ UINT            packet_consumed;
 #endif
 
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
-    if (if_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_IPV4_RX_CHECKSUM)
+    if ((if_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_IPV4_RX_CHECKSUM) &&
+        (packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_IPV4_RX_CHECKSUM))
     {
         compute_checksum = 0;
     }

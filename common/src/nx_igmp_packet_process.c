@@ -89,7 +89,8 @@ ULONG           checksum;
     header_ptr =  (NX_IGMP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
 
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
-    if (!(packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_IGMP_RX_CHECKSUM))
+    if ((!(packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_IGMP_RX_CHECKSUM) &&
+        (packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_IGMP_RX_CHECKSUM)))
 #endif /* FEATURE_LINK_CAPABILITY */
     {
 

@@ -265,7 +265,8 @@ ULONG                  trace_timestamp;
         }
 #endif /* FEATURE_NX_IPV6 */
 
-        if (interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_UDP_RX_CHECKSUM)
+        if ((interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_UDP_RX_CHECKSUM) &&
+            ((*packet_ptr) -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_UDP_RX_CHECKSUM))
         {
             compute_checksum = 0;
         }
