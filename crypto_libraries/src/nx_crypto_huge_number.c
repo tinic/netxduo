@@ -34,6 +34,10 @@
 extern HN_UBASE c68k_addmul_1(HN_UBASE *r, const HN_UBASE *b, UINT n, HN_UBASE a);
 extern HN_UBASE c68k_add(HN_UBASE *r, const HN_UBASE *b, UINT n);
 extern HN_UBASE c68k_sub(HN_UBASE *r, const HN_UBASE *b, UINT n);
+extern void     c68k_mod(HN_UBASE *rem, const HN_UBASE *u, UINT u_len,
+                         const HN_UBASE *m, UINT m_len, HN_UBASE *scratch);
+#define C68K_MOD_REM_CAP      136u   /* RSA-4096 is 128 limbs */
+#define C68K_MOD_SCRATCH_CAP  400u   /* u_len + m_len + 2, ~1.6 KB of stack */
 extern HN_UBASE c68k_add_carry(HN_UBASE *dst, const HN_UBASE *src, UINT n, HN_UBASE carry);
 #endif
 
@@ -1423,6 +1427,41 @@ NX_CRYPTO_HUGE_NUMBER *result;
         }
         return;
     }
+
+#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+    /*
+     * Knuth D over 32-bit limbs instead of the 16-bit half-limb division
+     * below, which runs twice the outer iterations over twice as many inner
+     * limbs.  Guarded rather than unconditional: c68k_mod wants a non-negative
+     * dividend no smaller than the divisor, a non-zero top divisor limb, and
+     * scratch that does not alias, and the caps keep the scratch on the stack
+     * at ~2 KB.  Anything outside that falls through to the vendored routine.
+     */
+    {
+        UINT ulen = result -> nx_crypto_huge_number_size;
+        UINT mlen = divisor -> nx_crypto_huge_number_size;
+
+        if ((result -> nx_crypto_huge_number_is_negative == NX_CRYPTO_FALSE) &&
+            (mlen > 0) && (ulen >= mlen) &&
+            (divisor -> nx_crypto_huge_number_data[mlen - 1] != 0) &&
+            (mlen <= C68K_MOD_REM_CAP) &&
+            ((ulen + mlen + 2u) <= C68K_MOD_SCRATCH_CAP))
+        {
+            HN_UBASE c68k_scratch[C68K_MOD_SCRATCH_CAP];
+            HN_UBASE c68k_rem[C68K_MOD_REM_CAP];
+
+            c68k_mod(c68k_rem, result -> nx_crypto_huge_number_data, ulen,
+                     divisor -> nx_crypto_huge_number_data, mlen,
+                     c68k_scratch);
+
+            NX_CRYPTO_MEMCPY(result -> nx_crypto_huge_number_data, c68k_rem,
+                             mlen << HN_SIZE_SHIFT);
+            result -> nx_crypto_huge_number_size = mlen;
+            _nx_crypto_huge_number_adjust_size(result);
+            return;
+        }
+    }
+#endif
 
     /* Get divisor_length and result_legnth, which are converted to number of USHORT */
     divisor_length = divisor -> nx_crypto_huge_number_size - 1;
