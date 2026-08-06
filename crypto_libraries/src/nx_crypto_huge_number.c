@@ -28,6 +28,15 @@
 #include "nx_crypto.h"
 #include "nx_crypto_huge_number.h"
 
+#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+/* src/crypto68k/c68k_prim.S.  Declared rather than included so nx_crypto
+   keeps no include path into our tree. */
+extern HN_UBASE c68k_addmul_1(HN_UBASE *r, const HN_UBASE *b, UINT n, HN_UBASE a);
+extern HN_UBASE c68k_add(HN_UBASE *r, const HN_UBASE *b, UINT n);
+extern HN_UBASE c68k_sub(HN_UBASE *r, const HN_UBASE *b, UINT n);
+extern HN_UBASE c68k_add_carry(HN_UBASE *dst, const HN_UBASE *src, UINT n, HN_UBASE carry);
+#endif
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -340,6 +349,27 @@ UINT      right_size;
         right_size = right -> nx_crypto_huge_number_size;
     }
 
+#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+    /*
+     * result_buffer is left->data, which aliases whichever of the two source
+     * arrays came from `left`; the addend is the other one, and the tail is
+     * c68k_add_carry, which copies when dst does not alias src.  Both loops
+     * below are exactly that, so this is a substitution of the same operation
+     * in 68020 assembly, not a different algorithm.
+     */
+    {
+        HN_UBASE *addend = (result_buffer == left_buffer) ? right_buffer
+                                                          : left_buffer;
+        HN_UBASE  carry;
+
+        carry = c68k_add(result_buffer, addend, right_size);
+        carry = c68k_add_carry(result_buffer + right_size,
+                               left_buffer + right_size,
+                               left_size - right_size, carry);
+        i = left_size;
+        product = ((HN_UBASE2)carry) << HN_SHIFT;
+    }
+#else
     /* Calculate the result for common length. */
     for (i = 0; i < right_size; i++)
     {
@@ -353,6 +383,7 @@ UINT      right_size;
         product = (product >> HN_SHIFT) + left_buffer[i];
         result_buffer[i] = product & HN_MASK;
     }
+#endif
 
     /* Save or drop the carry? */
     if ((product >> HN_SHIFT) &&
@@ -423,6 +454,31 @@ HN_UBASE *result_buffer = result -> nx_crypto_huge_number_data;
      * borrow = 1 - (product >> HN_SHIFT) */
     product = HN_RADIX;
 
+#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+    /*
+     * c68k_sub is r -= b, so it applies only when the result aliases the left
+     * operand, which is the common call shape.  When it does not, the generic
+     * loops also COPY left into result, which no two-operand primitive does,
+     * so they stay for that case.
+     */
+    if (result_buffer == left_buffer)
+    {
+        UINT     rsize = right -> nx_crypto_huge_number_size;
+        UINT     lsize = left -> nx_crypto_huge_number_size;
+        HN_UBASE borrow = c68k_sub(result_buffer, right_buffer, rsize);
+
+        for (i = rsize; (borrow != 0) && (i < lsize); i++)
+        {
+            HN_UBASE v = result_buffer[i];
+
+            result_buffer[i] = (HN_UBASE)(v - 1);
+            borrow = (HN_UBASE)(v == 0);
+        }
+    }
+    else
+#endif
+    {
+
     /* Calculate the result for common length. */
     for (i = 0; i < right -> nx_crypto_huge_number_size; i++)
     {
@@ -437,6 +493,7 @@ HN_UBASE *result_buffer = result -> nx_crypto_huge_number_data;
         product >>= HN_SHIFT;
         product += (HN_UBASE2)((HN_RADIX - 1) + left_buffer[i]);
         result_buffer[i] = (product & HN_MASK);
+    }
     }
 
     result -> nx_crypto_huge_number_size = left -> nx_crypto_huge_number_size;
@@ -1014,8 +1071,20 @@ HN_UBASE *temp_ptr;
             continue;
         }
 
-        product = 0;
         temp_ptr = result_buffer + index;
+
+#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+        /*
+         * The loop below IS addmul_1: result[index..] += right[] * left[index],
+         * carry out at the top.  src/crypto68k has that in 68020 assembly and
+         * HN_UBASE is its limb type, so this is a type-exact substitution
+         * rather than a reimplementation.  It was 19.4% of a profiled TLS 1.3
+         * transfer, the largest single entry.
+         */
+        temp_ptr[right_size] = c68k_addmul_1(temp_ptr, right_buffer,
+                                             right_size, left_buffer[index]);
+#else
+        product = 0;
         for (right_index = 0; right_index < right_size; ++right_index, ++temp_ptr)
         {
             /* Multiple "digit" from the left with the one the left. */
@@ -1027,6 +1096,7 @@ HN_UBASE *temp_ptr;
             *temp_ptr = (product & HN_MASK);
         }
         *temp_ptr = (HN_UBASE)((product >> HN_SHIFT));
+#endif
     }
 
     /* Set is_negative. */
@@ -1183,6 +1253,23 @@ UINT      i, j;
 
     for (i = 0; i < value_size; i++)
     {
+#ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
+        /*
+         * The off-diagonal pass is addmul_1 over a subrange:
+         * result[2i+1 ..] += value[i+1 ..] * value[i], carry out at
+         * (2i+1) + n, which is i + value_size, the same slot the loop below
+         * writes.  n is zero on the last i, where the loop body never runs.
+         */
+        {
+            UINT n = value_size - i - 1;
+
+            result_buffer[i + value_size] =
+                (n != 0) ? c68k_addmul_1(result_buffer + (i << 1) + 1,
+                                         value_buffer + i + 1, n,
+                                         value_buffer[i])
+                         : (HN_UBASE)0;
+        }
+#else
         product = 0;
         for (j = i + 1; j < value_size; j++)
         {
@@ -1191,6 +1278,7 @@ UINT      i, j;
             result_buffer[i + j] = product & HN_MASK;
         }
         result_buffer[i + j] = (HN_UBASE)(product >> HN_SHIFT);
+#endif
     }
 
     for (i = result_size - 1; i > 0; i--)
