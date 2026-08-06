@@ -84,6 +84,7 @@ UINT       error_status;
 USHORT     header_length;
 UCHAR      header_data[NX_SECURE_TLS_RECORD_HEADER_SIZE] = {0}; /* DTLS record header is larger than TLS. Allocate enough space for both. */
 USHORT     message_type;
+UCHAR      inner_content_type;
 UINT       message_length;
 ULONG      bytes_copied;
 UCHAR     *packet_data = NX_NULL;
@@ -279,13 +280,25 @@ NX_PACKET *decrypted_packet;
                     /* In TLS 1.3, encrypted records have a single byte at the
                     record that contains the message type (e.g. application data,
                     ect.), which is now the ACTUAL message type. */
+
+                    /* Extracted through a UCHAR, not into message_type directly.
+                       message_type is a USHORT and this copies ONE byte into it:
+                       on a little-endian host that byte lands in the low half and
+                       the result is the content type, but on a big-endian one it
+                       lands in the HIGH half and keeps whatever was in the low
+                       half, so a handshake record after an application-data
+                       record read back as 0x1617 rather than 0x16 and every TLS
+                       1.3 handshake died in the default case below with
+                       NX_SECURE_TLS_UNRECOGNIZED_MESSAGE_TYPE. */
+                    inner_content_type = 0;
                     status = nx_packet_data_extract_offset(decrypted_packet,
                                                            decrypted_packet -> nx_packet_length - 1,
-                                                           &message_type, 1, &bytes_copied);
+                                                           &inner_content_type, 1, &bytes_copied);
                     if (status || (bytes_copied != 1))
                     {
                         error_status = NX_SECURE_TLS_INVALID_PACKET;
                     }
+                    message_type = (USHORT)inner_content_type;
 
                     /* Remove the content type byte from the data length to process. */
                     message_length = message_length - 1;
