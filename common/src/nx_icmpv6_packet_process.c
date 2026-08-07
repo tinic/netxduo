@@ -126,7 +126,8 @@ NX_IPV6_HEADER   *ipv6_header;
 #endif /* NX_DISABLE_ICMPV6_RX_CHECKSUM */
 
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
-    if (packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_attached -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_ICMPV6_RX_CHECKSUM)
+    if ((packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_attached -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_ICMPV6_RX_CHECKSUM) &&
+        (packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_ICMPV6_RX_CHECKSUM))
     {
         compute_checksum = 0;
     }

@@ -97,7 +97,8 @@ NX_IPV4_HEADER   *ip_header_ptr;
 #endif /* NX_DISABLE_ICMPV4_RX_CHECKSUM */
 
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
-    if (packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_ICMPV4_RX_CHECKSUM)
+    if ((packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_ICMPV4_RX_CHECKSUM) &&
+        (packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_ICMPV4_RX_CHECKSUM))
     {
         compute_checksum = 0;
     }
