@@ -96,6 +96,11 @@ ULONG         rx_sequence;
 ULONG         rx_window;
 UINT          outside_of_window;
 ULONG         mss = 0;
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+ULONG         timestamp_present = NX_FALSE;
+ULONG         timestamp_value = 0;
+ULONG         timestamp_echo = 0;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 #ifdef NX_ENABLE_TCPIP_OFFLOAD
 ULONG         tcpip_offload; 
 
@@ -133,6 +138,62 @@ ULONG         tcpip_offload;
 
         /* Pickup the rx sequence.  */
         rx_sequence = socket_ptr -> nx_tcp_socket_rx_sequence;
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+        /* RFC 1323 section 3.2: once both SYNs carried the option every segment
+           of the connection carries it, so this is the only place the option
+           area has to be walked for a connection that negotiated one.  */
+        socket_ptr -> nx_tcp_socket_ts_echo_valid = NX_FALSE;
+
+        if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
+            (header_length > sizeof(NX_TCP_HEADER)) &&
+            (header_length <= packet_ptr -> nx_packet_length))
+        {
+            timestamp_present = (ULONG)_nx_tcp_timestamp_option_get(packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER),
+                                                                    header_length - (ULONG)sizeof(NX_TCP_HEADER),
+                                                                    &timestamp_value, &timestamp_echo);
+
+            if (timestamp_present == NX_TRUE)
+            {
+
+                /* Keep TSecr for the round-trip measurement in
+                   _nx_tcp_socket_state_ack_check, which sees the header but not
+                   the option area.  */
+                socket_ptr -> nx_tcp_socket_ts_echo = timestamp_echo;
+                socket_ptr -> nx_tcp_socket_ts_echo_valid = NX_TRUE;
+
+                /* PAWS, RFC 1323 section 4.2.1 R1.  A segment whose timestamp
+                   is older than the one held cannot belong to this incarnation
+                   of the connection at this point in the sequence space, so it
+                   is not acceptable however plausible its sequence number is.
+                   Answer it as section 3.9 of RFC 793 answers any unacceptable
+                   segment, so the peer learns where the window is, and drop it.
+
+                   Never for a reset: a reset carries no useful timestamp on
+                   some stacks and dropping it would leave a connection the peer
+                   has already forgotten alive until it timed out.  */
+                if ((!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)) &&
+                    ((INT)(timestamp_value - socket_ptr -> nx_tcp_socket_ts_recent) < 0))
+                {
+
+                    _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+
+#ifndef NX_DISABLE_TCP_INFO
+
+                    /* Increment the TCP dropped packet count.  */
+                    socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
+#endif
+
+                    /* Release the packet.  */
+                    _nx_packet_release(packet_ptr);
+
+                    /* Finished processing, simply return!  */
+                    return;
+                }
+            }
+        }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 
 #ifdef NX_ENABLE_LOW_WATERMARK
         if ((socket_ptr -> nx_tcp_socket_rx_window_current == 0) &&
@@ -256,6 +317,22 @@ ULONG         tcpip_offload;
             /* Finished processing, simply return!  */
             return;
         }
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+        /* RFC 1323 section 4.2.1 R3: replace TS.Recent from a segment that is
+           at least as recent as the one held AND whose sequence number covers
+           the last acknowledgment this side sent.  The second test is what
+           makes the echo honest across reordering -- a segment that arrived
+           out of order is ahead of Last.ACK.sent and must not become the
+           timestamp echoed for data the peer has not yet had acknowledged.  */
+        if ((timestamp_present == NX_TRUE) &&
+            ((INT)(timestamp_value - socket_ptr -> nx_tcp_socket_ts_recent) >= 0) &&
+            ((INT)(packet_sequence - socket_ptr -> nx_tcp_socket_last_ack_sent) <= 0))
+        {
+            socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
+        }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 
         /* Step2: Check the RST bit. According to RFC 793, Section 3.9, Page 70.  */
         if (tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)

@@ -22,10 +22,30 @@
 
 #define NX_SOURCE_CODE
 
+/* Include necessary system files.  */
+
+#include "nx_api.h"
+#include "nx_ip.h"
+#ifdef FEATURE_NX_IPV6
+#include "nx_ipv6.h"
+#endif /* FEATURE_NX_IPV6 */
+#include "nx_packet.h"
+
+#include "nx_tcp.h"
+#include "tx_thread.h"
+#ifdef NX_IPSEC_ENABLE
+#include "nx_ipsec.h"
+#endif /* NX_IPSEC_ENABLE */
+
 /* The payload is what nx_packet_length carries beyond the segment's own header,
    and that header grows by the timestamp option when one is being sent.  Every
    byte count below derives from this and not from the fixed header, or the
-   sequence space advances by the option as well as by the data.  */
+   sequence space advances by the option as well as by the data.
+
+   Below the includes, not above them: NX_ENABLE_TCP_TIMESTAMP comes from
+   nx_user.h by way of nx_api.h, so an #ifdef placed before them is false
+   whatever the build asked for, and the fixed-header arm is taken while the
+   option is on the wire.  */
 #ifdef NX_ENABLE_TCP_TIMESTAMP
 
 /* Read from the socket at each use rather than carried in a local, so it cannot
@@ -37,21 +57,6 @@
 #else
 #define NX_TCP_SEGMENT_HEADER_LENGTH    ((ULONG)sizeof(NX_TCP_HEADER))
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
-
-
-/* Include necessary system files.  */
-
-#include "nx_api.h"
-#include "nx_ip.h"
-#ifdef FEATURE_NX_IPV6
-#include "nx_ipv6.h"
-#endif /* FEATURE_NX_IPV6 */
-#include "nx_packet.h"
-#include "nx_tcp.h"
-#include "tx_thread.h"
-#ifdef NX_IPSEC_ENABLE
-#include "nx_ipsec.h"
-#endif /* NX_IPSEC_ENABLE */
 
 
 #ifdef NX_ENABLE_TCPIP_OFFLOAD
@@ -444,6 +449,13 @@ UINT            compute_checksum = 1;
 
         /* Calculate the data offset required by fragmented TCP packet. */
         data_offset = NX_PHYSICAL_HEADER + sizeof(NX_IPV4_HEADER) + sizeof(NX_TCP_HEADER);
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+        /* A timestamped segment has an eight word header, and the header is
+           placed by moving prepend_ptr back over it, so the room has to be
+           reserved before the data is copied in.  */
+        data_offset += NX_TCP_TIMESTAMP_OPTION_SIZE;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
     }
 #endif /* !NX_DISABLE_IPV4  */
 
@@ -474,6 +486,9 @@ UINT            compute_checksum = 1;
 
         /* Calculate the data offset required by fragmented TCP packet. */
         data_offset = NX_PHYSICAL_HEADER + sizeof(NX_IPV6_HEADER) + sizeof(NX_TCP_HEADER);
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+        data_offset += NX_TCP_TIMESTAMP_OPTION_SIZE;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
     }
 #endif /* FEATURE_NX_IPV6 */
 
@@ -949,8 +964,8 @@ UINT            compute_checksum = 1;
                 }
                 else
                 {
-                    send_packet -> nx_packet_prepend_ptr += sizeof(NX_TCP_HEADER);
-                    send_packet -> nx_packet_length -= (ULONG)sizeof(NX_TCP_HEADER);
+                    send_packet -> nx_packet_prepend_ptr += NX_TCP_SEGMENT_HEADER_LENGTH;
+                    send_packet -> nx_packet_length -= NX_TCP_SEGMENT_HEADER_LENGTH;
                 }
 
                 /* Regain exclusive access to IP instance. */

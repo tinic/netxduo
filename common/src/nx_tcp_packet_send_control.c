@@ -102,6 +102,9 @@ UINT           compute_checksum = 1;
 #endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
 ULONG          header_size;
 ULONG          window_size;
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+UINT           timestamp_size = 0;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 
 #ifdef NX_DISABLE_TCP_TX_CHECKSUM
     compute_checksum = 0;
@@ -154,6 +157,25 @@ ULONG          window_size;
         header_size += ((ULONG)(option_size >> 2)) << NX_TCP_HEADER_SHIFT;
     }
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* RFC 1323 section 3.2: once negotiated the option belongs on every segment
+       of the connection, not only the ones carrying data, or the peer's own
+       round-trip estimate stops working across an exchange this side only
+       acknowledges.
+
+       Not on a SYN, which _nx_tcp_packet_send_syn builds its own option words
+       for, and not on a reset, which is answering a connection this side may
+       no longer have state for.  */
+    if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
+        (!(control_bits & NX_TCP_SYN_BIT)) &&
+        (!(control_bits & NX_TCP_RST_BIT)))
+    {
+        timestamp_size = (UINT)NX_TCP_TIMESTAMP_OPTION_SIZE;
+        header_size += ((ULONG)(timestamp_size >> 2)) << NX_TCP_HEADER_SHIFT;
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
 #ifdef NX_IPSEC_ENABLE
     /* Get data offset from socket directly. */
     data_offset = socket_ptr -> nx_tcp_socket_egress_sa_data_offset;
@@ -194,7 +216,11 @@ ULONG          window_size;
 #endif /* NX_ENABLE_VLAN */
 
     /* Check to see if the packet has enough room to fill with the max TCP header (SYN + appended options + probe data).  */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+    if ((UINT)(packet_ptr -> nx_packet_data_end - packet_ptr -> nx_packet_prepend_ptr) < (NX_TCP_SYN_SIZE + option_size + timestamp_size + 1))
+#else
     if ((UINT)(packet_ptr -> nx_packet_data_end - packet_ptr -> nx_packet_prepend_ptr) < (NX_TCP_SYN_SIZE + option_size + 1))
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
     {
 
         /* Error getting packet, so just get out!  */
@@ -243,6 +269,17 @@ ULONG          window_size;
     socket_ptr -> nx_tcp_socket_rx_sequence_acked =    ack_number;
     socket_ptr -> nx_tcp_socket_rx_window_last_sent =  socket_ptr -> nx_tcp_socket_rx_window_current;
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* Last.ACK.sent, RFC 1323 section 4.2.1: the sequence number this segment
+       acknowledges, which is what a later segment's own sequence is measured
+       against before it may replace TS.Recent.  */
+    if (control_bits & NX_TCP_ACK_BIT)
+    {
+        socket_ptr -> nx_tcp_socket_last_ack_sent = ack_number;
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
     /* Endian swapping logic.  If NX_LITTLE_ENDIAN is specified, these macros will
        swap the endian of the TCP header.  */
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_0);
@@ -272,6 +309,21 @@ ULONG          window_size;
         packet_ptr -> nx_packet_append_ptr += (sizeof(ULONG) << 1);
         packet_ptr -> nx_packet_length += (ULONG)(sizeof(ULONG) << 1);
     }
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* Before any appended option, so a SACK-carrying acknowledgment comes out
+       [nop,nop,TS,nop,nop,sack ...], the order every stack sends.  */
+    if (timestamp_size)
+    {
+        _nx_tcp_timestamp_option_add(packet_ptr -> nx_packet_append_ptr,
+                                     (ULONG)tx_time_get(),
+                                     socket_ptr -> nx_tcp_socket_ts_recent);
+
+        packet_ptr -> nx_packet_append_ptr += NX_TCP_TIMESTAMP_OPTION_SIZE;
+        packet_ptr -> nx_packet_length += (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE;
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 
     /* Appended options, already in network byte order and copied a byte at a
        time because the append pointer carries no alignment guarantee.  */

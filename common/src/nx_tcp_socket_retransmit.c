@@ -36,6 +36,17 @@
 #include "nx_ipsec.h"
 #endif /* NX_IPSEC_ENABLE */
 
+/* What a queued segment carries beyond its payload.  Below the includes:
+   NX_ENABLE_TCP_TIMESTAMP comes from nx_user.h by way of nx_api.h.  */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+#define NX_TCP_SEGMENT_HEADER_LENGTH                                          \
+    ((ULONG)sizeof(NX_TCP_HEADER) +                                           \
+     (((socket_ptr -> nx_tcp_socket_timestamp_enabled) == NX_TRUE) ?          \
+      (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE : (ULONG)0))
+#else
+#define NX_TCP_SEGMENT_HEADER_LENGTH    ((ULONG)sizeof(NX_TCP_HEADER))
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -236,7 +247,7 @@ ULONG      window_size;
         compute_checksum = 0;
 #endif /* NX_DISABLE_TCP_TX_CHECKSUM */
 
-        if (packet_ptr -> nx_packet_length > (available + sizeof(NX_TCP_HEADER)))
+        if (packet_ptr -> nx_packet_length > (available + NX_TCP_SEGMENT_HEADER_LENGTH))
         {
 
             /* This packet can not be sent. */
@@ -244,7 +255,7 @@ ULONG      window_size;
         }
 
         /* Decrease the available size. */
-        available -= (packet_ptr -> nx_packet_length - (ULONG)sizeof(NX_TCP_HEADER));
+        available -= (packet_ptr -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH);
 
         /* Pickup next packet. */
         next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
@@ -303,7 +314,32 @@ ULONG      window_size;
         window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
-        header_ptr -> nx_tcp_header_word_3 =        NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+        if (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE)
+        {
+
+            /* The queued segment was built with an eight word header and the
+               option still sits behind this one, so the data offset has to say
+               eight.  Writing five here would hand the peer the twelve option
+               bytes as payload and corrupt the stream from the first
+               retransmission onwards.  */
+            header_ptr -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE_TIMESTAMP | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+
+            /* RFC 1323 section 4.1: the retransmission carries the current
+               clock, not the clock of the transmission it replaces, so the
+               peer's own estimate measures what actually crossed the wire.
+               TSecr is refreshed for the same reason the ACK number above is.  */
+            _nx_tcp_timestamp_option_add(((UCHAR *)header_ptr) + sizeof(NX_TCP_HEADER),
+                                         (ULONG)tx_time_get(),
+                                         socket_ptr -> nx_tcp_socket_ts_recent);
+
+            socket_ptr -> nx_tcp_socket_last_ack_sent = socket_ptr -> nx_tcp_socket_rx_sequence;
+        }
+        else
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+        {
+            header_ptr -> nx_tcp_header_word_3 =        NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+        }
 
         /* Swap the content to network byte order. */
         NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);

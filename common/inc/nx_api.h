@@ -2122,8 +2122,13 @@ typedef struct NX_TCP_SOCKET_STRUCT
        SYN offered them, so the flag is the whole negotiation.  */
     UCHAR       nx_tcp_socket_timestamp_enabled;
 
+    /* NX_TRUE when the segment being processed carried a TSecr, which is the
+       clock value this side put on the segment the peer is acknowledging.
+       Set once per received segment, in _nx_tcp_socket_packet_process. */
+    UCHAR       nx_tcp_socket_ts_echo_valid;
+
     /* It is reserved for future use. */
-    UCHAR       nx_tcp_socket_timestamp_reserved[3];
+    UCHAR       nx_tcp_socket_timestamp_reserved[2];
 
     /* TS.Recent, RFC 1323 section 3.4: the timestamp to echo back.  Updated
        from a segment that is in sequence and not older than the one held. */
@@ -2133,6 +2138,11 @@ typedef struct NX_TCP_SOCKET_STRUCT
        whose sequence covers this, which is what keeps the echo honest across
        reordering. */
     ULONG       nx_tcp_socket_last_ack_sent;
+
+    /* SEG.TSecr of the segment being processed.  RFC 1323 section 4: an
+       acknowledgment that advances the window measures a round trip against
+       this, one sample per acknowledgment rather than one per window. */
+    ULONG       nx_tcp_socket_ts_echo;
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
 
 #ifdef NX_ENABLE_TCP_SACK

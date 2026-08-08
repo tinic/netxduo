@@ -97,6 +97,22 @@ NX_IP *ip_ptr;
 
         /* Pickup SMSS value.  */
         *mss =  socket_ptr -> nx_tcp_socket_connect_mss;
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+        /* What a caller sizing a write off this can actually put in one
+           segment.  RFC 1323 section 3.2 puts the option on every segment of
+           the connection, so the twelve bytes are part of the segment and not
+           part of what fits inside it.  A caller handing down the peer's number
+           instead would leave a twelve byte tail behind every full segment, and
+           a stream of alternating full and twelve byte segments costs about
+           forty per cent of the write rate measured on an A1200.  */
+        if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
+            (*mss > (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE))
+        {
+            *mss -= (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE;
+        }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
     }
 
     /* Release protection.  */

@@ -186,6 +186,29 @@ UINT           wrapped_flag = NX_FALSE;
         }
 #endif
 
+#if defined(NX_ENABLE_TCP_RTT_ESTIMATOR) && defined(NX_ENABLE_TCP_TIMESTAMP)
+
+        /* RFC 1323 section 4: with the option in use, every acknowledgment
+           that advances the window measures a round trip, because the segment
+           it acknowledges carried the clock value being echoed back.  That is
+           a sample per acknowledgment rather than the one per window Karn's
+           algorithm allows, and it needs no Karn exception: the echo names
+           which transmission is being answered, so a retransmitted segment is
+           measurable too.  */
+        if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
+            (socket_ptr -> nx_tcp_socket_ts_echo_valid == NX_TRUE) &&
+            ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) > 0) &&
+            ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - ending_tx_sequence) <= 0))
+        {
+
+            /* The one-per-window measurement in progress is superseded. */
+            socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
+
+            _nx_tcp_socket_rtt_sample(socket_ptr,
+                                      tx_time_get() - socket_ptr -> nx_tcp_socket_ts_echo);
+        }
+        else
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR && NX_ENABLE_TCP_TIMESTAMP */
 #ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
 
         /* An acknowledgment that covers the segment being timed measures the
