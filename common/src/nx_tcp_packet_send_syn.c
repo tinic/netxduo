@@ -95,6 +95,15 @@ UINT         scale_factor;
 #if defined(NX_ENABLE_TCP_SACK) && defined(NX_ENABLE_TCP_WINDOW_SCALING)
 UCHAR        sack_permitted_option[4];
 #endif /* NX_ENABLE_TCP_SACK && NX_ENABLE_TCP_WINDOW_SCALING */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+/* Whatever trails the two option words shares one buffer, because
+   _nx_tcp_packet_send_control takes a single trailing block: SACK-Permitted is
+   four bytes and the timestamp twelve.  Declared independently of the other
+   two options, which are guarded on each other.  */
+UCHAR        trailing_options[16];
+UINT         trailing_length = 0;
+ULONG        timestamp_value;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 ULONG        mss = 0;
 
 #ifdef NX_IPSEC_ENABLE
@@ -348,6 +357,59 @@ ULONG        mss = 0;
         }
     }
 #endif /* NX_ENABLE_TCP_SACK */
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* RFC 1323 section 3.2: offer timestamps on a SYN of our own, and on a
+       SYN+ACK only when the peer's SYN carried the option.  Anything SACK
+       already put in the trailing block is carried over first, so the two
+       options coexist.  */
+    if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT) ||
+        (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE))
+    {
+
+        if ((option_size != 0) && (option_ptr != NX_NULL))
+        {
+            for (trailing_length = 0; trailing_length < option_size; trailing_length++)
+            {
+                trailing_options[trailing_length] = option_ptr[trailing_length];
+            }
+        }
+
+        /* NOP, NOP, kind, length: the two pads put TSval and TSecr on word
+           boundaries, which is the layout every other stack sends.  */
+        trailing_options[trailing_length++] = NX_TCP_NOP_KIND;
+        trailing_options[trailing_length++] = NX_TCP_NOP_KIND;
+        trailing_options[trailing_length++] = NX_TCP_TIMESTAMP_KIND;
+        trailing_options[trailing_length++] = (UCHAR)NX_TCP_TIMESTAMP_LENGTH;
+
+        timestamp_value = (ULONG)tx_time_get();
+
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value >> 24);
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value >> 16);
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value >> 8);
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value);
+
+        /* TSecr is zero on a SYN this side originates -- there is nothing to
+           echo yet -- and the peer's TSval on a SYN+ACK.  */
+        if (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT)
+        {
+            timestamp_value = 0;
+        }
+        else
+        {
+            timestamp_value = socket_ptr -> nx_tcp_socket_ts_recent;
+        }
+
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value >> 24);
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value >> 16);
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value >> 8);
+        trailing_options[trailing_length++] = (UCHAR)(timestamp_value);
+
+        option_ptr  = trailing_options;
+        option_size = trailing_length;
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 
     /* Send SYN or SYN+ACK packet according to socket state. */
     if (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT)

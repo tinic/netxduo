@@ -121,6 +121,11 @@ ULONG                        rwin_scale = 0xFF;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 #ifdef NX_ENABLE_TCP_SACK
 ULONG                        sack_permitted = NX_FALSE;
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+ULONG                        timestamp_present = NX_FALSE;
+ULONG                        timestamp_value = 0;
+ULONG                        timestamp_echo = 0;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 #endif /* NX_ENABLE_TCP_SACK */
 
 #ifdef NX_DISABLE_TCP_RX_CHECKSUM
@@ -340,6 +345,16 @@ ULONG                        sack_permitted = NX_FALSE;
         }
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+        /* RFC 1323 section 3.2.  A SYN carrying the option is the offer; both
+           SYNs have to carry it before either side may send timestamps on
+           anything else.  */
+        timestamp_present = (ULONG)_nx_tcp_timestamp_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)),
+                                                                option_words * (ULONG)sizeof(ULONG),
+                                                                &timestamp_value, &timestamp_echo);
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
 #ifdef NX_ENABLE_TCP_SACK
         status = _nx_tcp_sack_permitted_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)), option_words * (ULONG)sizeof(ULONG), &sack_permitted);
 
@@ -455,6 +470,16 @@ ULONG                        sack_permitted = NX_FALSE;
                            holes in blocks.  */
                         socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
 #endif /* NX_ENABLE_TCP_SACK */
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+                        /* RFC 1323 section 3.2, the same rule for the same reason. */
+                        socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
+                        if (timestamp_present == NX_TRUE)
+                        {
+                            socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
+                        }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
                     }
 
                     /* Process the packet within an existing TCP connection.  */
@@ -762,6 +787,16 @@ ULONG                        sack_permitted = NX_FALSE;
                        holes in blocks.  */
                     socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
 #endif /* NX_ENABLE_TCP_SACK */
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+                    /* RFC 1323 section 3.2, the same rule for the same reason. */
+                    socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
+                    if (timestamp_present == NX_TRUE)
+                    {
+                        socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
+                    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 
                     /* Set the initial slow start threshold to be the advertised window size. */
                     socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = socket_ptr -> nx_tcp_socket_tx_window_advertised;

@@ -2106,6 +2106,26 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_snd_win_scale_value;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* NX_TRUE once both SYNs carried the timestamps option.  RFC 1323 section
+       3.2: this side may only send timestamps on later segments if the peer's
+       SYN offered them, so the flag is the whole negotiation.  */
+    UCHAR       nx_tcp_socket_timestamp_enabled;
+
+    /* It is reserved for future use. */
+    UCHAR       nx_tcp_socket_timestamp_reserved[3];
+
+    /* TS.Recent, RFC 1323 section 3.4: the timestamp to echo back.  Updated
+       from a segment that is in sequence and not older than the one held. */
+    ULONG       nx_tcp_socket_ts_recent;
+
+    /* Last.ACK.sent, the same section: TS.Recent is only replaced by a segment
+       whose sequence covers this, which is what keeps the echo honest across
+       reordering. */
+    ULONG       nx_tcp_socket_last_ack_sent;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
 #ifdef NX_ENABLE_TCP_SACK
 
     /* NX_TRUE when the peer's SYN carried SACK-Permitted, which is what allows

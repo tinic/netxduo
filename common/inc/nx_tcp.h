@@ -85,6 +85,25 @@
 #define NX_TCP_RWIN_KIND                0x03                /* RWIN option kind             */
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+/* Define the timestamps option, RFC 1323 section 3.  */
+
+#define NX_TCP_TIMESTAMP_KIND           0x08                /* Timestamps option kind       */
+#define NX_TCP_TIMESTAMP_LENGTH         10                  /* Kind, length, TSval, TSecr   */
+
+/* NOP, NOP, kind 8, length 10.  The option itself is ten bytes and TCP options
+   are laid out a word at a time here, so two NOPs pad it to twelve and leave
+   TSval and TSecr each on a word boundary.  This is the layout every other
+   stack sends for the same reason.  */
+#define NX_TCP_TIMESTAMP_OPTION         ((ULONG)0x0101080A)
+
+/* Twelve bytes off every segment that carries data, which is what takes the
+   MSS from 1460 to 1448 on a 1500-byte link.  */
+#define NX_TCP_TIMESTAMP_OPTION_SIZE    12
+
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
 #ifdef NX_ENABLE_TCP_SACK
 
 /* Define the selective acknowledgment options, RFC 2018.  */
@@ -403,6 +422,10 @@ UINT _nx_tcp_mss_option_get(UCHAR *option_ptr, ULONG option_area_size, ULONG *ms
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
 UINT _nx_tcp_window_scaling_option_get(UCHAR *option_ptr, ULONG option_area_size, ULONG *window_scale);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+UINT _nx_tcp_timestamp_option_get(UCHAR *option_ptr, ULONG option_area_size,
+                                  ULONG *timestamp_value, ULONG *timestamp_echo);
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 VOID _nx_tcp_no_connection_reset(NX_IP *ip_ptr, NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr);
 VOID _nx_tcp_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 VOID _nx_tcp_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
