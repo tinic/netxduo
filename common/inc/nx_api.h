@@ -558,7 +558,16 @@ VOID _nx_trace_event_update(TX_TRACE_BUFFER_ENTRY *event, ULONG timestamp, ULONG
 #endif /* NX_IPV6_HOST_ID_LENGTH */
 
 #define NX_IPv4_PACKET              (NX_PHYSICAL_HEADER + 20)   /* 20 bytes of IP header          */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+/* Twelve more, because a timestamped segment carries eight header words rather
+   than five and the header is placed by moving prepend_ptr back over it.  The
+   room has to exist before the application's data is positioned, so it is
+   reserved for every TCP packet in a build that has the option compiled in,
+   used or not.  */
+#define NX_IPv4_TCP_PACKET          (NX_IPv4_PACKET + 32)       /* IP header plus 20 bytes and room for timestamps */
+#else
 #define NX_IPv4_TCP_PACKET          (NX_IPv4_PACKET + 20)       /* IP header plus 20 bytes        */
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 #define NX_IPv4_UDP_PACKET          (NX_IPv4_PACKET + 8)        /* IP header plus 8 bytes         */
 #define NX_IPv4_ICMP_PACKET         (NX_IPv4_PACKET)
 #define NX_IPv4_IGMP_PACKET         (NX_IPv4_PACKET)

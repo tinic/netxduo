@@ -22,6 +22,22 @@
 
 #define NX_SOURCE_CODE
 
+/* The payload is what nx_packet_length carries beyond the segment's own header,
+   and that header grows by the timestamp option when one is being sent.  Every
+   byte count below derives from this and not from the fixed header, or the
+   sequence space advances by the option as well as by the data.  */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+/* Read from the socket at each use rather than carried in a local, so it cannot
+   depend on which branch set it or on the order the send path takes.  */
+#define NX_TCP_SEGMENT_HEADER_LENGTH                                          \
+    ((ULONG)sizeof(NX_TCP_HEADER) +                                           \
+     (((socket_ptr -> nx_tcp_socket_timestamp_enabled) == NX_TRUE) ?          \
+      (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE : (ULONG)0))
+#else
+#define NX_TCP_SEGMENT_HEADER_LENGTH    ((ULONG)sizeof(NX_TCP_HEADER))
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
 
 /* Include necessary system files.  */
 
@@ -488,6 +504,20 @@ UINT            compute_checksum = 1;
     /* Get the max mss this socket could send  */
     send_mss = socket_ptr -> nx_tcp_socket_connect_mss;
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* The option is twelve bytes of the segment, so it comes out of what the
+       payload may be, not out of the MSS the peer announced.  Subtracting it
+       here rather than at nx_tcp_socket_connect_mss keeps that field the
+       number the peer actually sent, and keeps the carve below and the header
+       built later agreeing about how much fits.  */
+    if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
+        (send_mss > (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE))
+    {
+        send_mss = send_mss - (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE;
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
     /* Get original pool. */
     pool_ptr = packet_ptr -> nx_packet_pool_owner;
 
@@ -778,10 +808,27 @@ UINT            compute_checksum = 1;
 #endif /* NX_IPSEC_ENABLE */
 
             /* Prepend the TCP header to the packet.  First, make room for the TCP header.  */
-            send_packet -> nx_packet_prepend_ptr =  send_packet -> nx_packet_prepend_ptr - sizeof(NX_TCP_HEADER);
+#ifdef NX_ENABLE_TCP_TIMESTAMP
 
-            /* Add the length of the TCP header.  */
-            send_packet -> nx_packet_length =  send_packet -> nx_packet_length + (ULONG)sizeof(NX_TCP_HEADER);
+            /* RFC 1323 section 3.2: once both SYNs carried the option every
+               segment carries it, so the header is eight words rather than
+               five and prepend_ptr moves back over the extra twelve bytes.
+               NX_IPv4_TCP_PACKET reserved them.  */
+            if (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE)
+            {
+                send_packet -> nx_packet_prepend_ptr =  send_packet -> nx_packet_prepend_ptr -
+                                                        (sizeof(NX_TCP_HEADER) + NX_TCP_TIMESTAMP_OPTION_SIZE);
+                send_packet -> nx_packet_length =  send_packet -> nx_packet_length +
+                                                   (ULONG)sizeof(NX_TCP_HEADER) + NX_TCP_TIMESTAMP_OPTION_SIZE;
+            }
+            else
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+            {
+                send_packet -> nx_packet_prepend_ptr =  send_packet -> nx_packet_prepend_ptr - sizeof(NX_TCP_HEADER);
+
+                /* Add the length of the TCP header.  */
+                send_packet -> nx_packet_length =  send_packet -> nx_packet_length + (ULONG)sizeof(NX_TCP_HEADER);
+            }
 
             /* Pickup the pointer to the head of the TCP packet.  */
             /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
@@ -804,7 +851,28 @@ UINT            compute_checksum = 1;
             window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
-            header_ptr -> nx_tcp_header_word_3 =        NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+            if (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE)
+            {
+
+                /* Eight words, and the option itself goes in the three that
+                   follow the fixed header.  Written before the checksum, which
+                   covers whatever nx_packet_length now says.  */
+                header_ptr -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE_TIMESTAMP | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+
+                _nx_tcp_timestamp_option_add(((UCHAR *)header_ptr) + sizeof(NX_TCP_HEADER),
+                                             (ULONG)tx_time_get(),
+                                             socket_ptr -> nx_tcp_socket_ts_recent);
+
+                /* RFC 1323 section 3.4 keeps TS.Recent honest against what has
+                   actually been acknowledged.  */
+                socket_ptr -> nx_tcp_socket_last_ack_sent = socket_ptr -> nx_tcp_socket_rx_sequence;
+            }
+            else
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+            {
+                header_ptr -> nx_tcp_header_word_3 =        NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+            }
             header_ptr -> nx_tcp_header_word_4 =        0;
 
             /* Remember the last ACKed sequence and the last reported window size.  */
@@ -922,7 +990,7 @@ UINT            compute_checksum = 1;
 
             /* Adjust the transmit sequence number to reflect the output data.  */
             socket_ptr -> nx_tcp_socket_tx_sequence = socket_ptr -> nx_tcp_socket_tx_sequence +
-                (send_packet -> nx_packet_length - (ULONG)sizeof(NX_TCP_HEADER));
+                (send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH);
 
             /* Restore interrupts.  */
             TX_RESTORE
@@ -952,7 +1020,7 @@ UINT            compute_checksum = 1;
             NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
 
             /* Place the packet on the sent list.  */
-            data_left -= (send_packet -> nx_packet_length - (ULONG)sizeof(NX_TCP_HEADER));
+            data_left -= (send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH);
             if (socket_ptr -> nx_tcp_socket_transmit_sent_head)
             {
 
@@ -982,15 +1050,15 @@ UINT            compute_checksum = 1;
 
             /* Increase the transmit outstanding byte count. */
             socket_ptr -> nx_tcp_socket_tx_outstanding_bytes +=
-                (send_packet -> nx_packet_length - (ULONG)sizeof(NX_TCP_HEADER));
+                (send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH);
 #ifndef NX_DISABLE_TCP_INFO
             /* Increment the TCP packet sent count and bytes sent count.  */
             ip_ptr -> nx_ip_tcp_packets_sent++;
-            ip_ptr -> nx_ip_tcp_bytes_sent += send_packet -> nx_packet_length - (ULONG)sizeof(NX_TCP_HEADER);
+            ip_ptr -> nx_ip_tcp_bytes_sent += send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH;
 
             /* Increment the TCP packet sent count and bytes sent count for the socket.  */
             socket_ptr -> nx_tcp_socket_packets_sent++;
-            socket_ptr -> nx_tcp_socket_bytes_sent += send_packet -> nx_packet_length - (ULONG)sizeof(NX_TCP_HEADER);
+            socket_ptr -> nx_tcp_socket_bytes_sent += send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH;
 #endif /* NX_DISABLE_TCP_INFO */
 
 #ifdef NX_ENABLE_VLAN
@@ -1001,7 +1069,7 @@ UINT            compute_checksum = 1;
 #endif /* NX_ENABLE_VLAN */
 
             /* If trace is enabled, insert this event into the trace buffer.  */
-            NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_DATA_SEND, ip_ptr, socket_ptr, send_packet, socket_ptr -> nx_tcp_socket_tx_sequence - (send_packet -> nx_packet_length - (ULONG)sizeof(NX_TCP_HEADER)), NX_TRACE_INTERNAL_EVENTS, 0, 0);
+            NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_DATA_SEND, ip_ptr, socket_ptr, send_packet, socket_ptr -> nx_tcp_socket_tx_sequence - (send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH), NX_TRACE_INTERNAL_EVENTS, 0, 0);
 
             /* Send the TCP packet to the IP component.  */
 #ifndef NX_DISABLE_IPV4

@@ -130,3 +130,42 @@ UINT  _nx_tcp_timestamp_option_get(UCHAR *option_ptr, ULONG option_area_size,
     return(NX_FALSE);
 }
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_timestamp_option_add                        PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function writes the twelve bytes of an RFC 1323 timestamps     */
+/*    option at option_ptr: two NOPs, the kind and length, then TSval and  */
+/*    TSecr. The pads are what put both values on a word boundary, and    */
+/*    every other stack sends the same layout for the same reason.        */
+/*                                                                        */
+/*    The caller has already moved the packet's prepend pointer back far  */
+/*    enough for a header of eight words rather than five, so this only   */
+/*    fills the twelve bytes that follow the fixed header.                */
+/*                                                                        */
+/**************************************************************************/
+VOID  _nx_tcp_timestamp_option_add(UCHAR *option_ptr, ULONG timestamp_value, ULONG timestamp_echo)
+{
+
+    *option_ptr++ = NX_TCP_NOP_KIND;
+    *option_ptr++ = NX_TCP_NOP_KIND;
+    *option_ptr++ = NX_TCP_TIMESTAMP_KIND;
+    *option_ptr++ = (UCHAR)NX_TCP_TIMESTAMP_LENGTH;
+
+    *option_ptr++ = (UCHAR)(timestamp_value >> 24);
+    *option_ptr++ = (UCHAR)(timestamp_value >> 16);
+    *option_ptr++ = (UCHAR)(timestamp_value >> 8);
+    *option_ptr++ = (UCHAR)(timestamp_value);
+
+    *option_ptr++ = (UCHAR)(timestamp_echo >> 24);
+    *option_ptr++ = (UCHAR)(timestamp_echo >> 16);
+    *option_ptr++ = (UCHAR)(timestamp_echo >> 8);
+    *option_ptr   = (UCHAR)(timestamp_echo);
+}
+#endif /* NX_ENABLE_TCP_TIMESTAMP */

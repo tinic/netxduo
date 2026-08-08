@@ -102,6 +102,10 @@
    MSS from 1460 to 1448 on a 1500-byte link.  */
 #define NX_TCP_TIMESTAMP_OPTION_SIZE    12
 
+/* Eight header words rather than five, which is what the data offset has to
+   say once the twelve bytes are there.  */
+#define NX_TCP_HEADER_SIZE_TIMESTAMP    ((ULONG)0x80000000)
+
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
 
 #ifdef NX_ENABLE_TCP_SACK
@@ -425,6 +429,7 @@ UINT _nx_tcp_window_scaling_option_get(UCHAR *option_ptr, ULONG option_area_size
 #ifdef NX_ENABLE_TCP_TIMESTAMP
 UINT _nx_tcp_timestamp_option_get(UCHAR *option_ptr, ULONG option_area_size,
                                   ULONG *timestamp_value, ULONG *timestamp_echo);
+VOID _nx_tcp_timestamp_option_add(UCHAR *option_ptr, ULONG timestamp_value, ULONG timestamp_echo);
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
 VOID _nx_tcp_no_connection_reset(NX_IP *ip_ptr, NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr);
 VOID _nx_tcp_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
