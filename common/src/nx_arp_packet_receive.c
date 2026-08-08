@@ -193,8 +193,14 @@ NX_INTERFACE *interface_ptr;
             (sender_physical_lsw != packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_physical_address_lsw))
         {
 
-            /* Yes it is.  */
-            if (packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_arp_defend_timeout == 0)
+            /* Yes it is.  Defend it, unless a probe for this same address is still
+               outstanding: an address that is configured but not yet proven is one this
+               host has no standing to announce, and defending it would put our MAC into
+               the neighbours' caches for an address we are about to give up
+               (RFC 5227 2.1 against 2.4).  A probe address that is not the configured
+               one, or zero, means no probe is in flight.  */
+            if ((packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_arp_defend_timeout == 0) &&
+                (interface_ptr -> nx_interface_ip_probe_address != interface_ptr -> nx_interface_ip_address))
             {
 
                 /* Set defend timeout. */
@@ -208,8 +214,11 @@ NX_INTERFACE *interface_ptr;
             if (interface_ptr -> nx_interface_ip_conflict_notify_handler)
             {
 
-                /* A IP address conflict is present, call the notification handler.  */
-                (interface_ptr -> nx_interface_ip_conflict_notify_handler)(ip_ptr, interface_ptr -> nx_interface_index, interface_ptr -> nx_interface_ip_probe_address,
+                /* A IP address conflict is present, call the notification handler.  The
+                   address reported is the configured one, which is the address in
+                   conflict; the probe address is zero once a probe sequence has finished
+                   and naming it here left an application logging 0.0.0.0.  */
+                (interface_ptr -> nx_interface_ip_conflict_notify_handler)(ip_ptr, interface_ptr -> nx_interface_index, interface_ptr -> nx_interface_ip_address,
                                                                            sender_physical_msw, sender_physical_lsw);
             }
 

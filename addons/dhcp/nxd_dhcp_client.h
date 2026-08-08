@@ -421,6 +421,9 @@ typedef struct NX_DHCP_INTERFACE_RECORD_STRUCT
     ULONG           nx_dhcp_rebind_remain_time; /* Time remaining to rebind (before lease expires)          */
 #ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
     UINT            nx_dhcp_probe_count;        /* Number of ARP probes to send to prove IP address unique  */
+    ULONG           nx_dhcp_probe_timeout;      /* Countdown to the next ARP probe, run alongside the state
+                                                   machine's own timeout because the Client is BOUND and
+                                                   using the address while the probes go out               */
 #endif
     UINT            nx_dhcp_clear_broadcast;    /* Client sends messages with unicast reply requested       */
     UINT            nx_dhcp_skip_discovery;     /* Indicate if host should skip the discovery message       */

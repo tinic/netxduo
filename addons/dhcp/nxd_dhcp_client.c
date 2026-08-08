@@ -1170,6 +1170,17 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
     interface_record -> nx_dhcp_timeout = 0;
     interface_record -> nx_dhcp_rtr_interval = 0;
 
+#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
+
+    /* Cancel any outstanding ARP probe.  The address it was probing for has just been
+       taken off the interface, by a DECLINE, a NAK, a lease that ran out or a stop, so
+       a probe that went out now would be asking about somebody else's address.  */
+    interface_record -> nx_dhcp_probe_timeout = 0;
+    interface_record -> nx_dhcp_probe_count = 0;
+    dhcp_ptr -> nx_dhcp_ip_ptr -> nx_ip_interface[iface_index].nx_interface_ip_probe_address = 0;
+
+#endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE  */
+
     /* Set the DHCP state to the initial state.  */
     interface_record -> nx_dhcp_state =  NX_DHCP_STATE_NOT_STARTED;
 
@@ -4975,32 +4986,20 @@ ULONG       probing_delay;
                     if (_nx_dhcp_extract_information(dhcp_ptr, interface_record, buffer, new_packet_ptr -> nx_packet_length))
                         break;
 
-                    /* If the host is configured to send an ARP probe to verify Client address is
-                       not in use, do so now. */
+                    /* Take the address.  The ARP probe, if it is compiled in, runs alongside
+                       the address rather than in front of it: it is armed here and serviced
+                       from _nx_dhcp_timeout_process() on its own countdown, so the Client is
+                       BOUND as soon as the ACK is in and the caller waiting for an address
+                       gets one after the four packets instead of after PROBE_WAIT plus
+                       PROBE_NUM intervals of PROBE_MIN..PROBE_MAX.  What that trades is
+                       RFC 5227 2.1's "probe before use": the address is answered for while
+                       the probes are outstanding.  A conflict still reaches
+                       _nx_dhcp_ip_conflict() -- through the second test in
+                       nx_arp_packet_receive.c, the one for an address already configured,
+                       since the first only looks at interfaces whose address is still zero --
+                       and still produces the DHCPDECLINE that RFC 2131 4.4.1 asks for.  */
 
-#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
-
-                    /* Change to the Address Probing state.  */
-                    interface_record -> nx_dhcp_state =  NX_DHCP_STATE_ADDRESS_PROBING;
-
-                    /* Initalize the time for probing.  */        
-                    probing_delay = (ULONG)NX_RAND() % (NX_DHCP_ARP_PROBE_WAIT);
-
-                    /* Check the probing_delay for timer interval.  */
-                    if (probing_delay)
-                        interface_record -> nx_dhcp_timeout = probing_delay;
-                    else
-                        interface_record -> nx_dhcp_timeout = 1;
-
-                    /* Set the probing count.  */
-                    interface_record -> nx_dhcp_probe_count = NX_DHCP_ARP_PROBE_NUM;
-
-                    /* Setup the handler to indicate the we want collision notification.  */
-                    ip_ptr -> nx_ip_interface[iface_index].nx_interface_ip_conflict_notify_handler = _nx_dhcp_ip_conflict;
-
-#else    /* NX_DHCP_CLIENT_SEND_ARP_PROBE not defined: */
-
-                    nx_ip_interface_address_set(ip_ptr, iface_index, 
+                    nx_ip_interface_address_set(ip_ptr, iface_index,
                                                 interface_record -> nx_dhcp_ip_address,
                                                 interface_record -> nx_dhcp_network_mask);
 
@@ -5012,16 +5011,36 @@ ULONG       probing_delay;
                         nx_ip_gateway_address_set(dhcp_ptr -> nx_dhcp_ip_ptr, interface_record -> nx_dhcp_gateway_address);
                     }
 
-                    /* No ARP probe performed. OK to change to the Bound state.  */
+                    /* Change to the Bound state.  */
                     interface_record -> nx_dhcp_state =  NX_DHCP_STATE_BOUND;
 
 #ifdef NX_DHCP_ENABLE_BOOTP
                     /* BOOTP does not use timeouts.  For the life of this DHCP Client application, keep the same IP address. */
-                    interface_record -> nx_dhcp_timeout = NX_WAIT_FOREVER; 
+                    interface_record -> nx_dhcp_timeout = NX_WAIT_FOREVER;
 #else
                     /* Set the renewal time received from the server.  */
                     interface_record -> nx_dhcp_timeout = interface_record -> nx_dhcp_renewal_time;
 #endif /* NX_DHCP_ENABLE_BOOTP  */
+
+#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
+
+                    /* Initalize the time for probing.  */
+                    probing_delay = (ULONG)NX_RAND() % (NX_DHCP_ARP_PROBE_WAIT);
+
+                    /* Check the probing_delay for timer interval.  */
+                    if (probing_delay)
+                        interface_record -> nx_dhcp_probe_timeout = probing_delay;
+                    else
+                        interface_record -> nx_dhcp_probe_timeout = 1;
+
+                    /* Set the probing count.  */
+                    interface_record -> nx_dhcp_probe_count = NX_DHCP_ARP_PROBE_NUM;
+
+                    /* Setup the handler to indicate the we want collision notification.  This
+                       is left in place once the probes are done rather than cleared, so that
+                       a duplicate that appears later in the lease is declined too
+                       (RFC 5227 2.4).  */
+                    ip_ptr -> nx_ip_interface[iface_index].nx_interface_ip_conflict_notify_handler = _nx_dhcp_ip_conflict;
 
 #endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE*/
 
@@ -5309,6 +5328,66 @@ NX_IP           *ip_ptr;
          /* Update the count.  */
          interface_record -> nx_dhcp_seconds ++;
 
+#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
+
+        /* The ARP probe sequence has a countdown of its own, separate from the state
+           machine's, because the Client is BOUND and using the address while the probes
+           are going out.  Nothing else claims nx_dhcp_timeout in the meantime: BOUND
+           holds the renewal time in it, and a lease that renews before the probes are
+           finished is a lease shorter than a few seconds.  */
+        if (interface_record -> nx_dhcp_probe_timeout != 0)
+        {
+
+            /* Apply the timer interval to the probe countdown.  */
+            if (interface_record -> nx_dhcp_probe_timeout > NX_DHCP_TIME_INTERVAL)
+            {
+                interface_record -> nx_dhcp_probe_timeout -= (ULONG)NX_DHCP_TIME_INTERVAL;
+            }
+            else
+            {
+
+                interface_record -> nx_dhcp_probe_timeout = 0;
+
+                /* Send the ARP probe.  Sender protocol address zero, so this is an
+                   RFC 5227 2.1 probe and not an announcement, whether or not the
+                   interface already carries the address.  */
+                _nx_arp_probe_send(ip_ptr, interface_record -> nx_dhcp_interface_index,
+                                   interface_record -> nx_dhcp_ip_address);
+
+                /* Decrease the probe count.  */
+                interface_record -> nx_dhcp_probe_count--;
+
+                /* Check the probe count.  */
+                if (interface_record -> nx_dhcp_probe_count)
+                {
+
+                    /* Calculate the delay time.  */
+                    probing_delay = (ULONG)NX_RAND() % (NX_DHCP_ARP_PROBE_MAX);
+
+                    /* Determine if this is less than the minimum.  */
+                    if (probing_delay < NX_DHCP_ARP_PROBE_MIN)
+                    {
+
+                        /* Set the delay to the minimum.  */
+                        probing_delay = NX_DHCP_ARP_PROBE_MIN;
+                    }
+
+                    interface_record -> nx_dhcp_probe_timeout = probing_delay;
+                }
+                else
+                {
+
+                    /* Nobody answered.  Clear the probe address: it is what tells
+                       nx_arp_packet_receive.c that this address is still being probed
+                       for and so must not be defended, and leaving it set would keep
+                       the defence off for the life of the lease.  */
+                    ip_ptr -> nx_ip_interface[interface_record -> nx_dhcp_interface_index].nx_interface_ip_probe_address = 0;
+                }
+            }
+        }
+
+#endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE  */
+
         /* Check the timer.  */
         if (interface_record -> nx_dhcp_timeout != 0)
         {
@@ -5436,73 +5515,6 @@ NX_IP           *ip_ptr;
 
                         /* This will modify the timeout by up to +/- 1 second as recommended by RFC 2131, Section 4.1, Page 24. */
                         interface_record -> nx_dhcp_timeout = _nx_dhcp_add_randomize(interface_record -> nx_dhcp_timeout);
-
-                        break;
-                    }
-
-                    case NX_DHCP_STATE_ADDRESS_PROBING:
-                    {
-
-#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
-
-                        /* Send the ARP probe.  */
-                        _nx_arp_probe_send(ip_ptr, interface_record -> nx_dhcp_interface_index, interface_record -> nx_dhcp_ip_address);
-
-                        /* Decrease the probe count.  */
-                        interface_record -> nx_dhcp_probe_count--;
-
-                        /* Check the probe count.  */
-                        if (interface_record -> nx_dhcp_probe_count)
-                        {
-
-                            /* Calculate the delay time.  */
-                            probing_delay = (ULONG)NX_RAND() % (NX_DHCP_ARP_PROBE_MAX);
-
-                            /* Determine if this is less than the minimum.  */
-                            if (probing_delay < NX_DHCP_ARP_PROBE_MIN)
-                            {
-
-                                /* Set the delay to the minimum.  */
-                                probing_delay = NX_DHCP_ARP_PROBE_MIN;
-                            }
-
-                            /* Check the probing_delay for timer interval.  */
-                            if (probing_delay)
-                                interface_record -> nx_dhcp_timeout = probing_delay;
-                            else
-                                interface_record -> nx_dhcp_timeout = 1;
-                        }
-                        else
-                        {
-
-                            /* No address conflict.  */
-                            ip_ptr -> nx_ip_interface[interface_record -> nx_dhcp_interface_index].nx_interface_ip_conflict_notify_handler = NX_NULL;
-
-                            /* Set the IP address.  */
-                            nx_ip_interface_address_set(ip_ptr, interface_record -> nx_dhcp_interface_index,
-                                                        interface_record -> nx_dhcp_ip_address, interface_record -> nx_dhcp_network_mask);
-
-                            /* Check if the gateway address is valid.  */
-                            if (interface_record -> nx_dhcp_gateway_address)
-                            {
-
-                                /* Set the gateway address.  */
-                                nx_ip_gateway_address_set(dhcp_ptr -> nx_dhcp_ip_ptr, interface_record -> nx_dhcp_gateway_address);
-                            }
-
-                            /* Change to the Bound state.  */
-                            interface_record -> nx_dhcp_state = NX_DHCP_STATE_BOUND;
-
- #ifdef NX_DHCP_ENABLE_BOOTP
-                            /* BOOTP does not use timeouts.  For the life of this DHCP Client application, keep the same IP address. */
-                            interface_record -> nx_dhcp_timeout = NX_WAIT_FOREVER; 
-#else
-                            /* Set the renewal time received from the server.  */
-                            interface_record -> nx_dhcp_timeout = interface_record -> nx_dhcp_renewal_time;
-#endif /* NX_DHCP_ENABLE_BOOTP  */
-                        }
-
-#endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE */
 
                         break;
                     }
