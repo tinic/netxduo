@@ -447,7 +447,14 @@ UINT                          interface_index;
                     ipv6_address -> nxd_ipv6_address_prefix_length = (UCHAR)prefix_length;
                     ipv6_address -> nxd_ipv6_address_ConfigurationMethod = NX_IPV6_ADDRESS_BASED_ON_INTERFACE;
 #ifndef NX_DISABLE_IPV6_DAD
-                    ipv6_address -> nxd_ipv6_address_DupAddrDetectTransmit = NX_IPV6_DAD_TRANSMITS - 1;
+
+                    /* The full count, not one less.  Nothing here sends a
+                       solicitation -- _nx_icmpv6_perform_DAD() sends every one
+                       of them off the periodic tick -- so a minus one is a
+                       probe short of RFC 4862 5.4's DupAddrDetectTransmits,
+                       and at the RFC's own default of 1 it is an address that
+                       goes valid having probed for nothing at all. */
+                    ipv6_address -> nxd_ipv6_address_DupAddrDetectTransmit = NX_IPV6_DAD_TRANSMITS;
 #endif /* NX_DISABLE_IPV6_DAD */
 
 #ifdef NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY

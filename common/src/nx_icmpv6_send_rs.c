@@ -31,6 +31,7 @@
 #ifdef FEATURE_NX_IPV6
 #ifndef NX_DISABLE_ICMPV6_ROUTER_SOLICITATION
 static const ULONG _nx_ipv6_all_router_address[4] = {0xff020000, 0, 0, 2};
+static const ULONG _nx_ipv6_unspecified_address[4] = {0, 0, 0, 0};
 
 /**************************************************************************/
 /*                                                                        */
@@ -81,6 +82,9 @@ UINT              compute_checksum = 1;
 #endif /* defined(NX_DISABLE_ICMPV6_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
 NX_ICMPV6_RS     *rs_ptr;
 NX_ICMPV6_OPTION *rs_options;
+NXD_IPV6_ADDRESS *outgoing_address;
+ULONG            *src_address;
+UINT              option_size;
 
 
     /* Do not send RS packet if ICMPv6 is not enabled. */
@@ -121,19 +125,50 @@ NX_ICMPV6_OPTION *rs_options;
 
     /* Find a valid IPv6 address. */
     if (_nxd_ipv6_interface_find(ip_ptr, (ULONG *)_nx_ipv6_all_router_address,
-                                 &pkt_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr,
-                                 &ip_ptr -> nx_ip_interface[if_index]))
+                                 &outgoing_address,
+                                 &ip_ptr -> nx_ip_interface[if_index]) == NX_SUCCESS)
     {
-        _nx_packet_release(pkt_ptr);
-        return(NX_NOT_SUCCESSFUL);
+        src_address = outgoing_address -> nxd_ipv6_address;
+
+        /* The source link-layer address option, 8 bytes. */
+        option_size = 8;
     }
+    else
+    {
+
+        /*
+         * No VALID address on this interface, which at boot means every
+         * address on it is still TENTATIVE and duplicate address detection has
+         * not finished.  RFC 4861 4.1 allows the unspecified address as the
+         * source of a solicitation for exactly this case, so the solicitation
+         * goes out now rather than after DAD: the advertisement, the global
+         * address it forms and that address's own DAD all used to queue behind
+         * the link-local's, and the two runs of DAD were serial where they can
+         * be concurrent.  4.1 also forbids the source link-layer address
+         * option with an unspecified source, and 6.2.6 has the router answer
+         * one with a multicast advertisement rather than a unicast, so nothing
+         * is lost but the unicast reply.
+         */
+        outgoing_address = ip_ptr -> nx_ip_interface[if_index].nxd_interface_ipv6_address_list_head;
+
+        if (outgoing_address == NX_NULL)
+        {
+            _nx_packet_release(pkt_ptr);
+            return(NX_NOT_SUCCESSFUL);
+        }
+
+        /*lint -e{929} suppress cast of pointer to pointer, since it is necessary  */
+        src_address = (ULONG *)_nx_ipv6_unspecified_address;
+        option_size = 0;
+    }
+
+    pkt_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = outgoing_address;
 
     /*lint -e{644} suppress variable might not be initialized, since "pkt_ptr" was initialized in _nx_packet_allocate. */
     pkt_ptr -> nx_packet_ip_version = NX_IP_VERSION_V6;
 
     /* Set the size of the ICMPv6 router solicitation message. */
-    /* Size of the message is ICMPv6 + options, which is 8 bytes. */
-    pkt_ptr -> nx_packet_length = (sizeof(NX_ICMPV6_RS) + 8);
+    pkt_ptr -> nx_packet_length = (sizeof(NX_ICMPV6_RS) + option_size);
 
     /* Set the prepend pointer. */
     pkt_ptr -> nx_packet_prepend_ptr -= pkt_ptr -> nx_packet_length;
@@ -145,24 +180,28 @@ NX_ICMPV6_OPTION *rs_options;
     rs_ptr -> nx_icmpv6_rs_icmpv6_header.nx_icmpv6_header_checksum = 0;
     rs_ptr -> nx_icmpv6_rs_reserved = 0;
 
-    /* Get a pointer to the Option header in the ICMPv6 header. */
-    /*lint -e{923} suppress cast between pointer and ULONG, since it is necessary  */
-    rs_options = (NX_ICMPV6_OPTION *)NX_UCHAR_POINTER_ADD(rs_ptr, sizeof(NX_ICMPV6_RS));
+    if (option_size)
+    {
 
-    /* Fill in the options field */
-    rs_options -> nx_icmpv6_option_type = ICMPV6_OPTION_TYPE_SRC_LINK_ADDR;
-    rs_options -> nx_icmpv6_option_length = 1;
+        /* Get a pointer to the Option header in the ICMPv6 header. */
+        /*lint -e{923} suppress cast between pointer and ULONG, since it is necessary  */
+        rs_options = (NX_ICMPV6_OPTION *)NX_UCHAR_POINTER_ADD(rs_ptr, sizeof(NX_ICMPV6_RS));
 
-    /* Fill in the source mac address. */
-    mac_addr = &rs_options -> nx_icmpv6_option_data;
-    mac_addr[0] = (USHORT)(ip_ptr -> nx_ip_interface[if_index].nx_interface_physical_address_msw);
-    mac_addr[1] = (USHORT)((ip_ptr -> nx_ip_interface[if_index].nx_interface_physical_address_lsw & 0xFFFF0000) >> 16); /* lgtm[cpp/overflow-buffer] */
-    mac_addr[2] = (USHORT)(ip_ptr -> nx_ip_interface[if_index].nx_interface_physical_address_lsw & 0x0000FFFF); /* lgtm[cpp/overflow-buffer] */
+        /* Fill in the options field */
+        rs_options -> nx_icmpv6_option_type = ICMPV6_OPTION_TYPE_SRC_LINK_ADDR;
+        rs_options -> nx_icmpv6_option_length = 1;
 
-    /* Byte swapping. */
-    NX_CHANGE_USHORT_ENDIAN(mac_addr[0]);
-    NX_CHANGE_USHORT_ENDIAN(mac_addr[1]); /* lgtm[cpp/overflow-buffer] */
-    NX_CHANGE_USHORT_ENDIAN(mac_addr[2]); /* lgtm[cpp/overflow-buffer] */
+        /* Fill in the source mac address. */
+        mac_addr = &rs_options -> nx_icmpv6_option_data;
+        mac_addr[0] = (USHORT)(ip_ptr -> nx_ip_interface[if_index].nx_interface_physical_address_msw);
+        mac_addr[1] = (USHORT)((ip_ptr -> nx_ip_interface[if_index].nx_interface_physical_address_lsw & 0xFFFF0000) >> 16); /* lgtm[cpp/overflow-buffer] */
+        mac_addr[2] = (USHORT)(ip_ptr -> nx_ip_interface[if_index].nx_interface_physical_address_lsw & 0x0000FFFF); /* lgtm[cpp/overflow-buffer] */
+
+        /* Byte swapping. */
+        NX_CHANGE_USHORT_ENDIAN(mac_addr[0]);
+        NX_CHANGE_USHORT_ENDIAN(mac_addr[1]); /* lgtm[cpp/overflow-buffer] */
+        NX_CHANGE_USHORT_ENDIAN(mac_addr[2]); /* lgtm[cpp/overflow-buffer] */
+    }
 
 #ifdef NX_DISABLE_ICMPV6_TX_CHECKSUM
     compute_checksum = 0;
@@ -184,7 +223,7 @@ NX_ICMPV6_OPTION *rs_options;
         /*lint -e{929} suppress cast of pointer to pointer, since it is necessary  */
         checksum = _nx_ip_checksum_compute(pkt_ptr, NX_PROTOCOL_ICMPV6,
                                            (UINT)pkt_ptr -> nx_packet_length,
-                                           pkt_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address,
+                                           src_address,
                                            (ULONG *)_nx_ipv6_all_router_address);
 
         checksum = (USHORT)(~checksum);
@@ -203,8 +242,7 @@ NX_ICMPV6_OPTION *rs_options;
 
     /*lint -e{929} suppress cast of pointer to pointer, since it is necessary  */
     _nx_ipv6_packet_send(ip_ptr, pkt_ptr, NX_PROTOCOL_ICMPV6, pkt_ptr -> nx_packet_length, 255, 0,
-                         pkt_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address,
-                         (ULONG *)_nx_ipv6_all_router_address);
+                         src_address, (ULONG *)_nx_ipv6_all_router_address);
 
     return(NX_SUCCESS);
 }
