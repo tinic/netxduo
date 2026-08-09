@@ -122,8 +122,10 @@
 
 /* Blocks carried by one SACK option.  Four is what fits: two NOPs, the kind and
    length bytes, and eight bytes per block come to 36 of the 40 bytes a TCP
-   header has for options.  Three is the right value for a build that also sends
-   RFC 7323 timestamps, which this stack does not.  */
+   header has for options.  A connection also sending RFC 7323 timestamps has
+   only 28 of those bytes left and is held to three at run time, in
+   _nx_tcp_sack_option_build; the buffers stay sized for four, which is what a
+   connection without the option still reports.  */
 #ifndef NX_TCP_SACK_MAX_BLOCKS
 #define NX_TCP_SACK_MAX_BLOCKS          4
 #endif
