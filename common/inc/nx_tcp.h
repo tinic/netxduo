@@ -78,6 +78,7 @@
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 #define NX_TCP_MSS_SIZE                 1460                /* Maximum Segment Size         */
 #define NX_TCP_OPTION_END               ((ULONG)0x01010100) /* NOPs and end of TCP options  */
+#define NX_TCP_OPTION_NOP               ((ULONG)0x01010101) /* Four NOPs, list continues    */
 #define NX_TCP_EOL_KIND                 0x00                /* EOL option kind              */
 #define NX_TCP_NOP_KIND                 0x01                /* NOP option kind              */
 #define NX_TCP_MSS_KIND                 0x02                /* MSS option kind              */
