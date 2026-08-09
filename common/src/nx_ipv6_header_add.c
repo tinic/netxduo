@@ -197,10 +197,22 @@ USHORT                     short_val;
                is ICMPv6-DAD. */
 
             /* This check is needed only if DAD is not disabled.
-               If DAD is disabled, we drop the packet. */
+               If DAD is disabled, we drop the packet.
+
+               A router solicitation is let through on the same terms as the
+               duplicate address detection solicitation beside it: RFC 4861 4.1
+               gives it the unspecified address as a source for exactly the case
+               where the interface has no valid address yet, which is every
+               interface for as long as detection runs, and
+               _nx_icmpv6_send_rs() sends it from there.  The address pointer is
+               only how the send path finds the outgoing interface; it is not
+               what goes in the header.  Without this the solicitation was
+               dropped here, and stateless autoconfiguration could not start
+               until detection on the link-local had finished. */
             if (!((protocol == NX_PROTOCOL_ICMPV6) &&
                   (packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_state == NX_IPV6_ADDR_STATE_TENTATIVE) &&
-                  (icmpv6_header -> nx_icmpv6_header_type == NX_ICMPV6_NEIGHBOR_SOLICITATION_TYPE)))
+                  ((icmpv6_header -> nx_icmpv6_header_type == NX_ICMPV6_NEIGHBOR_SOLICITATION_TYPE) ||
+                   (icmpv6_header -> nx_icmpv6_header_type == NX_ICMPV6_ROUTER_SOLICITATION_TYPE))))
 #endif /* NX_DISABLE_IPV6_DAD */
             {
 #ifndef NX_DISABLE_IP_INFO
