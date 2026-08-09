@@ -318,7 +318,9 @@ ULONG        mss = 0;
             socket_ptr -> nx_tcp_socket_rx_window_current = (1 << 30) - 1;
         }
 
-        option_word_2 |= scale_factor << 8;
+        /* Low byte: NX_TCP_RWIN_OPTION leads with the NOP, so the shift is
+           last rather than third. */
+        option_word_2 |= scale_factor;
 
         /* Update the socket with the scale factor. */
         socket_ptr -> nx_tcp_rcv_win_scale_value = scale_factor;

@@ -74,7 +74,13 @@
 
 #define NX_TCP_MSS_OPTION               ((ULONG)0x02040000) /* Maximum Segment Size option  */
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
-#define NX_TCP_RWIN_OPTION              ((ULONG)0x03030000) /* 24 bits, so NOP, 0x3, 0x3, scale value  */
+/* NOP, kind 3, length 3, shift.  The shift goes in the LOW byte: the option is
+   three bytes and the word it fills is four, and the pad has to be a NOP in
+   front rather than a zero behind.  A zero behind is an end-of-option-list, so
+   every option this file appends after the window scale -- SACK-Permitted, the
+   timestamp -- lands past the end of the list and a conforming peer never
+   reads it.  Same shape as NX_TCP_SACK_PERMITTED_OPTION below.  */
+#define NX_TCP_RWIN_OPTION              ((ULONG)0x01030300)
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 #define NX_TCP_MSS_SIZE                 1460                /* Maximum Segment Size         */
 #define NX_TCP_OPTION_END               ((ULONG)0x01010100) /* NOPs and end of TCP options  */
