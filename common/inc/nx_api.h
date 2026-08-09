@@ -574,7 +574,14 @@ VOID _nx_trace_event_update(TX_TRACE_BUFFER_ENTRY *event, ULONG timestamp, ULONG
 
 #define NX_IPv6_PACKET              (NX_PHYSICAL_HEADER + 40)   /* 40 bytes of basic IPv6 Header  */
 #define NX_IPv6_UDP_PACKET          (NX_IPv6_PACKET + 8)        /* IPv6 header plus 8 bytes       */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+/* The same twelve bytes as the IPv4 line above.  NX_TCP_PACKET is this macro
+   in an IPv6 build, so leaving it at 20 gave an IPv6 connection no room for
+   the option and prepend_ptr walked back past nx_packet_data_start.  */
+#define NX_IPv6_TCP_PACKET          (NX_IPv6_PACKET + 32)       /* IPv6 header plus 20 bytes and room for timestamps */
+#else
 #define NX_IPv6_TCP_PACKET          (NX_IPv6_PACKET + 20)       /* IPv6 header plus 20 bytes      */
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 #define NX_IPv6_ICMP_PACKET         (NX_IPv6_PACKET)
 #define NX_RECEIVE_PACKET           0                           /* This is for driver receive     */
 

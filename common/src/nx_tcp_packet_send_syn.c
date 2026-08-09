@@ -99,8 +99,9 @@ UCHAR        sack_permitted_option[4];
 /* Whatever trails the two option words shares one buffer, because
    _nx_tcp_packet_send_control takes a single trailing block: SACK-Permitted is
    four bytes and the timestamp twelve.  Declared independently of the other
-   two options, which are guarded on each other.  */
-UCHAR        trailing_options[16];
+   two options, which are guarded on each other.  Sized past the sixteen those
+   two need, because nothing here bounds the copy.  */
+UCHAR        trailing_options[24];
 UINT         trailing_length = 0;
 ULONG        timestamp_value;
 #endif /* NX_ENABLE_TCP_TIMESTAMP */

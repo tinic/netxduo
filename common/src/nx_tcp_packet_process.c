@@ -121,12 +121,12 @@ ULONG                        rwin_scale = 0xFF;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 #ifdef NX_ENABLE_TCP_SACK
 ULONG                        sack_permitted = NX_FALSE;
+#endif /* NX_ENABLE_TCP_SACK */
 #ifdef NX_ENABLE_TCP_TIMESTAMP
 ULONG                        timestamp_present = NX_FALSE;
 ULONG                        timestamp_value = 0;
 ULONG                        timestamp_echo = 0;
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
-#endif /* NX_ENABLE_TCP_SACK */
 
 #ifdef NX_DISABLE_TCP_RX_CHECKSUM
     compute_checksum = 0;
@@ -473,11 +473,21 @@ ULONG                        timestamp_echo = 0;
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP
 
-                        /* RFC 1323 section 3.2, the same rule for the same reason. */
-                        socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
-                        if (timestamp_present == NX_TRUE)
+                        /* RFC 1323 section 3.2, the same rule for the same reason, but
+                           only while the connection is still being settled.  A SYN that
+                           matches an established connection would otherwise reset the
+                           negotiation, and clearing the flag with segments already on
+                           the transmit queue makes the segment header length twelve
+                           bytes shorter than the header those segments were built with,
+                           so the retransmission accounts and rebuilds them wrongly.  */
+                        if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT) ||
+                            (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_RECEIVED))
                         {
-                            socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
+                            socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
+                            if (timestamp_present == NX_TRUE)
+                            {
+                                socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
+                            }
                         }
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
                     }

@@ -197,6 +197,13 @@ UINT           wrapped_flag = NX_FALSE;
            measurable too.  */
         if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
             (socket_ptr -> nx_tcp_socket_ts_echo_valid == NX_TRUE) &&
+
+            /* An echo of zero, or of a clock value this side has not reached,
+               is not something this side sent.  Taken as a sample it is the
+               time since boot, which pins SRTT and holds RTO at its ceiling
+               for the rest of the connection.  */
+            (socket_ptr -> nx_tcp_socket_ts_echo != 0) &&
+            ((INT)(tx_time_get() - socket_ptr -> nx_tcp_socket_ts_echo) >= 0) &&
             ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) > 0) &&
             ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - ending_tx_sequence) <= 0))
         {

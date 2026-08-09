@@ -296,7 +296,13 @@ ULONG         tcpip_offload;
             if ((!(tcp_header_copy.nx_tcp_header_word_3 & NX_TCP_RST_BIT)) &&
                 ((((INT)((packet_sequence + 1) - rx_sequence)) >= 0) ||
                  (packet_data_length > 0) ||
+#ifdef NX_ENABLE_TCP_SACK
+
+                 /* A D-SACK block waiting to be reported is a reason to send
+                    the acknowledgment even when nothing else changed.  The two
+                    fields exist only in a SACK build.  */
                  (socket_ptr -> nx_tcp_socket_dsack_left != socket_ptr -> nx_tcp_socket_dsack_right) ||
+#endif /* NX_ENABLE_TCP_SACK */
                  (socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
                  (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
             {

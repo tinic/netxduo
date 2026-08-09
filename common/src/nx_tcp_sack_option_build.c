@@ -130,6 +130,23 @@ UCHAR         *write_ptr;
 
     limit = NX_TCP_SACK_MAX_BLOCKS - dsack;
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* Four blocks are 36 bytes and the timestamps option is another 12, which
+       is 48 bytes of option space where a TCP header has 40.  Worse, the data
+       offset _nx_tcp_packet_send_control computes for that is 5 + 9 + 3 = 17
+       words, and seventeen does not fit the four bit field: it truncates to 1,
+       below the legal minimum of 5, and the peer reads the header as stream
+       data.  Three blocks and the timestamp come to exactly 40, a fifteen word
+       header.  Applied per connection, so one without the option still
+       reports four.  */
+    if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
+        (limit > (UINT)(3 - dsack)))
+    {
+        limit = (UINT)(3 - dsack);
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
     rx_sequence = socket_ptr -> nx_tcp_socket_rx_sequence;
 
     search_ptr = socket_ptr -> nx_tcp_socket_receive_queue_head;

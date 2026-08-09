@@ -122,6 +122,17 @@ UINT       ip_header_size;
         return(NX_NOT_CONNECTED);
     }
 
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+    /* A connection that negotiated the option sends an eight word header, and
+       _nx_tcp_socket_send_internal places it by moving prepend_ptr back over
+       it, so the caller's headroom has to cover the twelve bytes too.  */
+    if (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE)
+    {
+        ip_header_size += (UINT)NX_TCP_TIMESTAMP_OPTION_SIZE;
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
     /*lint -e{946} -e{947} suppress pointer subtraction, since it is necessary. */
     if ((INT)(packet_ptr -> nx_packet_prepend_ptr - packet_ptr -> nx_packet_data_start) < (INT)(ip_header_size + sizeof(NX_TCP_HEADER)))
     {
