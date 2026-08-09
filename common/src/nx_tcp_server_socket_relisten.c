@@ -94,6 +94,11 @@ ULONG                        rwin_scale = 0;
 #ifdef NX_ENABLE_TCP_SACK
 ULONG                        sack_permitted = NX_FALSE;
 #endif /* NX_ENABLE_TCP_SACK */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+ULONG                        timestamp_present = NX_FALSE;
+ULONG                        timestamp_value = 0;
+ULONG                        timestamp_echo = 0;
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT port);
 
 
@@ -232,6 +237,10 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
 #ifdef NX_ENABLE_TCP_SACK
                             _nx_tcp_sack_permitted_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)), option_words * (ULONG)sizeof(ULONG), &sack_permitted);
 #endif /* NX_ENABLE_TCP_SACK */
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+                            timestamp_present = (ULONG)_nx_tcp_timestamp_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)), option_words * (ULONG)sizeof(ULONG), &timestamp_value, &timestamp_echo);
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
                         }
                     }
 
@@ -359,6 +368,19 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                     socket_ptr -> nx_tcp_socket_dsack_left = 0;
                     socket_ptr -> nx_tcp_socket_dsack_right = 0;
 #endif /* NX_ENABLE_TCP_SACK */
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+
+                    /* RFC 1323 section 3.2, the same rule for the same reason.  This
+                       is the third site that settles a connection's options and the
+                       one AmiNetXDuo's listen() reaches, so a SYN-ACK built without
+                       it carried no timestamp however willing both ends were.  */
+                    socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
+                    if (timestamp_present == NX_TRUE)
+                    {
+                        socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
+                    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
 
                     /* If trace is enabled, insert this event into the trace buffer.  */
                     NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_STATE_CHANGE, ip_ptr, socket_ptr, socket_ptr -> nx_tcp_socket_state, NX_TCP_LISTEN_STATE, NX_TRACE_INTERNAL_EVENTS, 0, 0);
