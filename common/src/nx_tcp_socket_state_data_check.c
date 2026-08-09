@@ -163,8 +163,10 @@ NX_PACKET *work_ptr;
 /**************************************************************************/
 VOID _nx_tcp_socket_state_data_trim_front(NX_PACKET *packet_ptr, ULONG amount)
 {
-NX_PACKET *work_ptr = packet_ptr;
-ULONG      work_length;
+NX_PACKET     *work_ptr = packet_ptr;
+ULONG          work_length;
+ULONG          header_length;
+NX_TCP_HEADER *header_ptr;
 
     if (amount >= packet_ptr -> nx_packet_length || amount == 0)
     {
@@ -172,11 +174,18 @@ ULONG      work_length;
         return;
     }
 
+    /* The data offset the sender wrote, not the fixed twenty bytes: a segment
+       carrying the RFC 1323 timestamps option has an eight word header, and
+       everything below counts what follows the header as data.  */
+    /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+    header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+    header_length = (header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
+
     /* Adjust the packet length.  */
     packet_ptr -> nx_packet_length -= amount;
 
     /* Move prepend_ptr of first packet to TCP data.  */
-    packet_ptr -> nx_packet_prepend_ptr += sizeof(NX_TCP_HEADER);
+    packet_ptr -> nx_packet_prepend_ptr += header_length;
 
 #ifndef NX_DISABLE_PACKET_CHAIN
     /* Walk down the packet chain for the amount. */
@@ -253,7 +262,7 @@ ULONG      work_length;
 #endif /* NX_DISABLE_PACKET_CHAIN */
 
     /* Restore prepend_ptr of first packet to TCP data.  */
-    packet_ptr -> nx_packet_prepend_ptr -= sizeof(NX_TCP_HEADER);
+    packet_ptr -> nx_packet_prepend_ptr -= header_length;
 }
 
 
