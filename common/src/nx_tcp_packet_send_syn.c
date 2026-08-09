@@ -409,6 +409,18 @@ ULONG        mss = 0;
 
         option_ptr  = trailing_options;
         option_size = trailing_length;
+
+        /* The default filler for the second option word ends the option list,
+           and an option after the end of the list is not an option: a peer
+           that walks the area properly stops at the EOL and never sees the
+           timestamp.  Four NOPs pad the same word and leave the list open.
+           Reached whenever nothing else claimed the word, which is a SYN-ACK
+           to a peer that did not offer SACK-Permitted, and every SYN in a
+           build without SACK.  */
+        if (option_word_2 == NX_TCP_OPTION_END)
+        {
+            option_word_2 = NX_TCP_OPTION_NOP;
+        }
     }
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
 
