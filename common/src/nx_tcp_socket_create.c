@@ -155,7 +155,11 @@ NX_TCP_SOCKET *tail_ptr;
 
 
     /* Initialize the ack_n_packet counter. */
-    socket_ptr -> nx_tcp_socket_ack_n_packet_counter = 1;
+    /* Zero, not one: without NX_TCP_ACK_EVERY_N_PACKETS this is the
+       acknowledgment threshold in bytes and zero means "not set yet", since
+       the MSS it starts from is not negotiated until the SYN exchange.
+       nx_tcp_socket_state_data_check.c has the policy.  */
+    socket_ptr -> nx_tcp_socket_ack_n_packet_counter = 0;
 
     /* Save the application callback routines.  */
     socket_ptr -> nx_tcp_urgent_data_callback = tcp_urgent_data_callback;

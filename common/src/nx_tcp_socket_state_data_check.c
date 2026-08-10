@@ -1233,6 +1233,65 @@ NX_IP         *ip_ptr;
                 socket_ptr -> nx_tcp_socket_ack_n_packet_counter++;
             }
         }
+#else
+        /* Acknowledge by how much of the receive buffer is outstanding, not by
+           how many segments arrived.  A count of segments is a fixed proxy for
+           "give the sender its window back" and does not move when the window
+           does; the same buffer expressed in bytes does, and it is already the
+           number _nx_tcp_socket_window_update_step() uses to decide that a
+           reopening is worth announcing.  One policy, one threshold: an
+           acknowledgment leaves whenever half the receive buffer is
+           unacknowledged, whichever of the two paths notices first.
+
+           nx_tcp_socket_ack_n_packet_counter carries the threshold in bytes
+           rather than a segment count.  It ramps: RFC 1122 4.2.3.2's two
+           full-sized segments to begin with, doubling on each acknowledgment
+           until it reaches half the buffer.  A static threshold above RFC
+           6928's ten-segment initial window leaves a sender in slow start with
+           nothing to send until the delayed-ACK timer fires -- measured, at a
+           fixed sixteen segments, as one stalled repetition in three -- and a
+           threshold that doubles per acknowledgment cannot overtake a
+           congestion window that RFC 5681 3.1 has doubling per round trip.
+
+           rx_sequence_acked is what the last acknowledgment put on the wire,
+           and nx_tcp_socket_send_internal.c:894 advances it too, so data this
+           socket sends counts as the acknowledgment it carries. */
+        if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) &&
+            ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT) == 0))
+        {
+        ULONG ack_threshold;
+        ULONG ack_limit;
+
+            ack_limit = _nx_tcp_socket_window_update_step(socket_ptr);
+            ack_threshold = socket_ptr -> nx_tcp_socket_ack_n_packet_counter;
+
+            /* nx_tcp_socket_create.c leaves this at zero, and a socket that has
+               not acknowledged anything yet starts at the RFC's two segments. */
+            if (ack_threshold == 0)
+            {
+                ack_threshold = socket_ptr -> nx_tcp_socket_connect_mss << 1;
+            }
+            if (ack_threshold > ack_limit)
+            {
+                ack_threshold = ack_limit;
+            }
+
+            if ((socket_ptr -> nx_tcp_socket_rx_sequence -
+                 socket_ptr -> nx_tcp_socket_rx_sequence_acked) >= ack_threshold)
+            {
+
+                /* Need to send an immediate ACK.  */
+                need_ack = NX_TRUE;
+
+                ack_threshold = ack_threshold << 1;
+                if (ack_threshold > ack_limit)
+                {
+                    ack_threshold = ack_limit;
+                }
+            }
+
+            socket_ptr -> nx_tcp_socket_ack_n_packet_counter = ack_threshold;
+        }
 #endif
     }
 
