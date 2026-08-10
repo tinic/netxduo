@@ -91,6 +91,9 @@ ULONG          ending_tx_sequence;
 ULONG          ending_rx_sequence;
 ULONG          acked_bytes;
 ULONG          tcp_payload_length;
+#if defined(NX_ENABLE_TCP_RTT_ESTIMATOR) && defined(NX_ENABLE_TCP_TIMESTAMP)
+ULONG          ts_now;
+#endif
 UINT           wrapped_flag = NX_FALSE;
 
 
@@ -188,6 +191,11 @@ UINT           wrapped_flag = NX_FALSE;
 
 #if defined(NX_ENABLE_TCP_RTT_ESTIMATOR) && defined(NX_ENABLE_TCP_TIMESTAMP)
 
+        /* One read, used by both the test and the sample below: a tick
+           landing between the two would sample an instant the test never
+           saw, and it is one call per acknowledgment rather than two.  */
+        ts_now = (ULONG)tx_time_get();
+
         /* RFC 1323 section 4: with the option in use, every acknowledgment
            that advances the window measures a round trip, because the segment
            it acknowledges carried the clock value being echoed back.  That is
@@ -203,7 +211,7 @@ UINT           wrapped_flag = NX_FALSE;
                time since boot, which pins SRTT and holds RTO at its ceiling
                for the rest of the connection.  */
             (socket_ptr -> nx_tcp_socket_ts_echo != 0) &&
-            ((INT)(tx_time_get() - socket_ptr -> nx_tcp_socket_ts_echo) >= 0) &&
+            ((INT)(ts_now - socket_ptr -> nx_tcp_socket_ts_echo) >= 0) &&
             ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) > 0) &&
             ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - ending_tx_sequence) <= 0))
         {
@@ -212,7 +220,7 @@ UINT           wrapped_flag = NX_FALSE;
             socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
 
             _nx_tcp_socket_rtt_sample(socket_ptr,
-                                      tx_time_get() - socket_ptr -> nx_tcp_socket_ts_echo);
+                                      ts_now - socket_ptr -> nx_tcp_socket_ts_echo);
         }
         else
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR && NX_ENABLE_TCP_TIMESTAMP */
