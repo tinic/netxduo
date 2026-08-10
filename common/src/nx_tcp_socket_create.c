@@ -155,11 +155,17 @@ NX_TCP_SOCKET *tail_ptr;
 
 
     /* Initialize the ack_n_packet counter. */
-    /* Zero, not one: without NX_TCP_ACK_EVERY_N_PACKETS this is the
-       acknowledgment threshold in bytes and zero means "not set yet", since
-       the MSS it starts from is not negotiated until the SYN exchange.
+#ifdef NX_TCP_ACK_EVERY_N_PACKETS
+    socket_ptr -> nx_tcp_socket_ack_n_packet_counter = 1;
+#else
+    /* Without the macro this field is not a count of segments but the
+       acknowledgment threshold in bytes, and zero means "not set yet": the MSS
+       it starts from is not negotiated until the SYN exchange.  The two
+       establishment paths set it again, because the threshold belongs to the
+       connection and a socket may be connected more than once.
        nx_tcp_socket_state_data_check.c has the policy.  */
     socket_ptr -> nx_tcp_socket_ack_n_packet_counter = 0;
+#endif
 
     /* Save the application callback routines.  */
     socket_ptr -> nx_tcp_urgent_data_callback = tcp_urgent_data_callback;
