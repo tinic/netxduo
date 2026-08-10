@@ -135,6 +135,13 @@ VOID  _nx_tcp_socket_state_syn_received(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER
                 }
             }
 
+            /* A socket may be connected again after it has been closed, and the
+               acknowledgment threshold is per connection: nx_tcp_socket_create.c
+               is not reached the second time, so a reused socket would open the
+               next connection at whatever half buffer the last one ended on and
+               lose the ramp that keeps it under a peer's initial window.  */
+            socket_ptr -> nx_tcp_socket_ack_n_packet_counter =  0;
+
             /* Move into the ESTABLISHED state.  */
             socket_ptr -> nx_tcp_socket_state =  NX_TCP_ESTABLISHED;
 #ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
