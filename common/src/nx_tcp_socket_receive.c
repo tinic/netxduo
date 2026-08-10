@@ -213,7 +213,16 @@ ULONG                  trace_timestamp;
 
         window_step = _nx_tcp_socket_window_update_step(socket_ptr);
 
-        if (((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= window_step) &&
+        /* rx_window_current BELOW rx_window_last_sent is a window that has
+           shrunk since the last advertisement, not one that has reopened, and
+           there is nothing for SWS avoidance to announce about it.  Both are
+           ULONG, so the subtraction alone wrapped and every such read looked
+           like a reopening of four gigabytes: on a receiver whose peer fills
+           the buffer faster than the application drains it that is most reads,
+           and it was worth half of this stack's acknowledgment traffic.  RFC
+           1122 4.2.3.3 is written about the window growing.  */
+        if ((socket_ptr -> nx_tcp_socket_rx_window_current > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
+            ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= window_step) &&
             ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_2)))
         {
 

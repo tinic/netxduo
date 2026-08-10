@@ -175,6 +175,15 @@ VOID  _nx_tcp_socket_state_syn_sent(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *tc
         /* If trace is enabled, insert this event into the trace buffer.  */
         NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_STATE_CHANGE, socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, socket_ptr -> nx_tcp_socket_state, NX_TCP_ESTABLISHED, NX_TRACE_INTERNAL_EVENTS, 0, 0);
 
+#ifndef NX_TCP_ACK_EVERY_N_PACKETS
+        /* A socket may be connected again after it has been closed, and the
+           acknowledgment threshold is per connection: nx_tcp_socket_create.c
+           is not reached the second time, so a reused socket would open the
+           next connection at whatever half buffer the last one ended on and
+           lose the ramp that keeps it under a peer's initial window.  */
+        socket_ptr -> nx_tcp_socket_ack_n_packet_counter =  0;
+#endif
+
         /* Move to the ESTABLISHED state.  */
         socket_ptr -> nx_tcp_socket_state =  NX_TCP_ESTABLISHED;
 

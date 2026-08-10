@@ -105,8 +105,9 @@ ULONG          retry_shift;
            unacknowledged-data arm has no floor and must not have one.  */
         if ((socket_ptr -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED) &&
             ((socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
-             ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
-              _nx_tcp_socket_window_update_step(socket_ptr))))
+             ((socket_ptr -> nx_tcp_socket_rx_window_current > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
+              ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
+               _nx_tcp_socket_window_update_step(socket_ptr)))))
         {
 
             /* Determine if the ACK has expired.  */
