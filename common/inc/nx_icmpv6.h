@@ -73,6 +73,7 @@
  */
 #define ICMPV6_OPTION_TYPE_MTU                5
 #define ICMPV6_OPTION_TYPE_RDNSS              25
+#define ICMPV6_OPTION_TYPE_DNSSL              31
 
 /* Flag indicicatting that the option field should not contain
    source link layer address. */
@@ -281,6 +282,28 @@ typedef struct NX_ICMPV6_OPTION_RDNSS_STRUCT
     ULONG  nx_icmpv6_option_rdnss_lifetime;
 } NX_ICMPV6_OPTION_RDNSS;
 #endif /* NX_ENABLE_IPV6_RDNSS */
+
+#ifdef NX_ENABLE_IPV6_DNSSL
+/* Define the DNS Search List option, RFC 8106 section 5.2.  RFC 1035 4.1.4
+   label sequences follow this header, one after another, each ended by its
+   root label, and the remainder of the option is padded with zero octets to
+   the 8-byte unit the length is counted in.  A zero octet is a root label
+   with no labels in front of it, which is how a reader tells padding from a
+   name.  */
+
+typedef struct NX_ICMPV6_OPTION_DNSSL_STRUCT
+{
+    /* Option type and length, in 8-byte units. */
+    UCHAR  nx_icmpv6_option_dnssl_type;
+    UCHAR  nx_icmpv6_option_dnssl_length;
+
+    /* Unused; reserved for future use. */
+    USHORT nx_icmpv6_option_dnssl_reserved;
+
+    /* Seconds the domains may be searched for; 0 withdraws them. */
+    ULONG  nx_icmpv6_option_dnssl_lifetime;
+} NX_ICMPV6_OPTION_DNSSL;
+#endif /* NX_ENABLE_IPV6_DNSSL */
 
 /* Define the Router solicitation message type.  */
 

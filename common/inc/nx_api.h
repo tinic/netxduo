@@ -2884,6 +2884,16 @@ typedef struct NX_IP_STRUCT
     VOID        (*nx_ipv6_rdnss_notify)(struct NX_IP_STRUCT *ip_ptr, UINT interface_index,
                                         ULONG *dns_address, ULONG lifetime);
 #endif /* NX_ENABLE_IPV6_RDNSS */
+
+#ifdef NX_ENABLE_IPV6_DNSSL
+    /* Called once per router advertisement carrying an RFC 8106 5.2 option, from
+       the IP thread, with the option's RFC 1035 label sequences and their length
+       in bytes.  Decoding is the caller's, which already has a decoder for the
+       identical encoding in DHCP option 119.  A lifetime of zero withdraws the
+       domains the option names.  */
+    VOID        (*nx_ipv6_dnssl_notify)(struct NX_IP_STRUCT *ip_ptr, UINT interface_index,
+                                        UCHAR *domains, UINT length, ULONG lifetime);
+#endif /* NX_ENABLE_IPV6_DNSSL */
 #endif /* FEATURE_NX_IPV6 */
 
 #ifndef NX_DISABLE_IPV4
