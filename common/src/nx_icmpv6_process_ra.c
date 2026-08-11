@@ -632,6 +632,43 @@ UINT                          interface_index;
         }
 #endif /* NX_ENABLE_IPV6_RDNSS */
 
+#ifdef NX_ENABLE_IPV6_DNSSL
+
+        /* DNS search list, RFC 8106 section 5.2.  The suffixes a name with no
+           dot in it is tried under, which on a link with no DHCPv4 on it is the
+           only way this host learns any. */
+        else if (option_ptr -> nx_icmpv6_option_type == ICMPV6_OPTION_TYPE_DNSSL)
+        {
+
+        NX_ICMPV6_OPTION_DNSSL *dnssl_ptr;
+        ULONG                   lifetime;
+        UINT                    length;
+
+            /* The header, then the label sequences.  An option that claims no
+               more than the header carries no domain and is not a reason to
+               abandon the advertisement. */
+            if (((UINT)(option_ptr -> nx_icmpv6_option_length << 3) > sizeof(NX_ICMPV6_OPTION_DNSSL)) &&
+                (ip_ptr -> nx_ipv6_dnssl_notify))
+            {
+
+                /*lint -e{929} -e{826} -e{740} suppress cast of pointer to pointer, since it is necessary  */
+                dnssl_ptr = (NX_ICMPV6_OPTION_DNSSL *)option_ptr;
+
+                lifetime = dnssl_ptr -> nx_icmpv6_option_dnssl_lifetime;
+                NX_CHANGE_ULONG_ENDIAN(lifetime);
+
+                length = (UINT)(option_ptr -> nx_icmpv6_option_length << 3) -
+                         (UINT)sizeof(NX_ICMPV6_OPTION_DNSSL);
+
+                /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+                (ip_ptr -> nx_ipv6_dnssl_notify)(ip_ptr, if_ptr -> nx_interface_index,
+                                                 (UCHAR *)NX_UCHAR_POINTER_ADD(dnssl_ptr,
+                                                                               sizeof(NX_ICMPV6_OPTION_DNSSL)),
+                                                 length, lifetime);
+            }
+        }
+#endif /* NX_ENABLE_IPV6_DNSSL */
+
         /* Update the amount of packet option data remaining. */
         packet_length -= (option_ptr -> nx_icmpv6_option_length << 3);
 
