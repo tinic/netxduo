@@ -164,6 +164,21 @@ extern   "C" {
 #define NX_DNS_RR_TYPE_AAAA             28          /* IPv6 Host address                                    */
 #define NX_DNS_RR_TYPE_SRV              33          /* The location of services                             */
 
+/* The cache entry that holds a name error, RFC 2308 5.  A name that does not
+   exist has no record to hang a TTL on, so the cache needs a record of its
+   own; this is not a type any server can send.  0xFF00 is in the private-use
+   range RFC 6895 3.1 sets aside, and 0 is already the cache's empty-slot
+   marker, so neither collides.  It is keyed on the name alone and answers a
+   query of any type for that name: RFC 2308 5 says the non-existence is a
+   property of the name, not of the type asked about.  */
+#define NX_DNS_RR_TYPE_NXDOMAIN         0xFF00
+
+/* RFC 2308 5 leaves the ceiling on a negative answer to the resolver and
+   warns against holding one for the days a zone's SOA MINIMUM may say.  */
+#ifndef NX_DNS_MAX_NEGATIVE_CACHE_TTL
+#define NX_DNS_MAX_NEGATIVE_CACHE_TTL   3600
+#endif
+
 
 /* Define constants for Qtypes (queries).  */
 

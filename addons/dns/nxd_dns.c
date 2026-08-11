@@ -90,6 +90,7 @@ static UINT        _nx_dns_cache_delete_rr_string(NX_DNS *dns_ptr, VOID *cache_p
 static UINT        _nx_dns_cache_add_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, VOID **insert_ptr);
 static UINT        _nx_dns_cache_delete_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_len);  
 static UINT        _nx_dns_resource_time_to_live_get(UCHAR *resource, NX_PACKET *packet_ptr, ULONG *rr_ttl);
+static VOID        _nx_dns_cache_add_negative(NX_DNS *dns_ptr, UCHAR *query_name, NX_PACKET *packet_ptr);
 #endif /* NX_DNS_CACHE_ENABLE  */
 
 #ifdef FEATURE_NX_IPV6
@@ -3525,13 +3526,28 @@ UINT        i;
 #ifdef NX_DNS_CACHE_ENABLE
 
     /* Find the answer in local cache.  */
-    if(_nx_dns_cache_find_answer(dns_ptr, dns_ptr -> nx_dns_cache, host_name, (USHORT)lookup_type, buffer, buffer_size, record_count) == NX_DNS_SUCCESS)
-    {           
+    status = _nx_dns_cache_find_answer(dns_ptr, dns_ptr -> nx_dns_cache, host_name, (USHORT)lookup_type, buffer, buffer_size, record_count);
+
+    if (status == NX_DNS_SUCCESS)
+    {
 
         /* Put the DNS mutex.  */
         tx_mutex_put(&dns_ptr -> nx_dns_mutex);
 
         return (NX_DNS_SUCCESS);
+    }
+
+    /* A cached name error, RFC 2308 5.  The name does not exist and the
+       answer that said so is still good, so there is nothing to send: without
+       this every lookup of a name that does not exist paid a full round trip,
+       every time it was called.  */
+    if (status == NX_DNS_NAME_ERROR)
+    {
+
+        /* Put the DNS mutex.  */
+        tx_mutex_put(&dns_ptr -> nx_dns_mutex);
+
+        return (NX_DNS_NAME_ERROR);
     }
 #endif /*NX_DNS_CACHE_ENABLE.  */
 
@@ -3838,6 +3854,13 @@ ULONG       rr_ttl;
         if (((status & NX_DNS_QUERY_MASK) == NX_DNS_RESPONSE_FLAG) &&
             ((status & NX_DNS_RCODE_MASK) == NX_DNS_RCODE_NAME_ERR))
         {
+
+#ifdef NX_DNS_CACHE_ENABLE
+            /* Same as the forward direction: the in-addr.arpa name is the one
+               the entry is held against, so a second reverse lookup of an
+               address with no PTR record does not go out again.  */
+            _nx_dns_cache_add_negative(dns_ptr, ip_question, receive_packet_ptr);
+#endif /* NX_DNS_CACHE_ENABLE  */
 
             /* No; Release the packet.  */
             nx_packet_release(receive_packet_ptr);
@@ -4652,6 +4675,12 @@ UINT                host_name_size;
     if (((status & NX_DNS_QUERY_MASK) == NX_DNS_RESPONSE_FLAG) &&
         ((status & NX_DNS_RCODE_MASK) == NX_DNS_RCODE_NAME_ERR))
     {
+
+#ifdef NX_DNS_CACHE_ENABLE
+        /* Hold the answer for as long as the zone says it is good for,
+           RFC 2308 5.  */
+        _nx_dns_cache_add_negative(dns_ptr, host_name, packet_ptr);
+#endif /* NX_DNS_CACHE_ENABLE  */
 
         /* Release the source packet.  */
         nx_packet_release(packet_ptr);
@@ -7352,15 +7381,29 @@ UINT        length, index;
 #ifdef NX_DNS_CACHE_ENABLE
                           
     /* Find the answer in local cache.  */
-    if(_nx_dns_cache_find_answer(dns_ptr, dns_ptr -> nx_dns_cache, ip_question, NX_DNS_RR_TYPE_PTR, host_name_ptr, host_name_buffer_size, NX_NULL) == NX_DNS_SUCCESS)
-    {           
+    status = _nx_dns_cache_find_answer(dns_ptr, dns_ptr -> nx_dns_cache, ip_question, NX_DNS_RR_TYPE_PTR, host_name_ptr, host_name_buffer_size, NX_NULL);
+
+    if (status == NX_DNS_SUCCESS)
+    {
 
         /* Release the mutex. */
         tx_mutex_put(&dns_ptr -> nx_dns_mutex);
 
         return (NX_DNS_SUCCESS);
     }
-#endif /*NX_DNS_CACHE_ENABLE.  */  
+
+    /* A cached name error, RFC 2308 5: an address with no PTR record is the
+       ordinary case on a private network, and every reverse lookup of it used
+       to go to the wire.  */
+    if (status == NX_DNS_NAME_ERROR)
+    {
+
+        /* Release the mutex. */
+        tx_mutex_put(&dns_ptr -> nx_dns_mutex);
+
+        return (NX_DNS_NAME_ERROR);
+    }
+#endif /*NX_DNS_CACHE_ENABLE.  */
 
     /* Bind the UDP socket to random port for each query.  */
     status =  nx_udp_socket_bind(&(dns_ptr -> nx_dns_socket), NX_ANY_PORT, TX_WAIT_FOREVER);
@@ -9268,16 +9311,167 @@ ULONG       max_elapsed_time;
     }
 
     return(NX_DNS_SUCCESS);
-}    
-#endif /* NX_DNS_CACHE_ENABLE  */      
+}
+#endif /* NX_DNS_CACHE_ENABLE  */
 
-                             
+
 #ifdef NX_DNS_CACHE_ENABLE
-/**************************************************************************/ 
-/*                                                                        */ 
-/*  FUNCTION                                               RELEASE        */ 
-/*                                                                        */ 
-/*    _nx_dns_cache_find_answer                           PORTABLE C      */ 
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_dns_cache_add_negative                          PORTABLE C      */
+/*                                                           6.4.3        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function caches a name error, RFC 2308 5.  The SOA record the   */
+/*    server puts in the authority section of an NXDOMAIN response is      */
+/*    what says how long the answer is good for; without it there is       */
+/*    nothing to hold and the function stores nothing.                     */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    dns_ptr                           Pointer to DNS instance           */
+/*    query_name                        The name that was asked about     */
+/*    packet_ptr                        The NXDOMAIN response             */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/**************************************************************************/
+static VOID _nx_dns_cache_add_negative(NX_DNS *dns_ptr, UCHAR *query_name, NX_PACKET *packet_ptr)
+{
+
+UCHAR   *data_ptr;
+UCHAR   *rdata_ptr;
+UINT    answer_count;
+UINT    authority_count;
+UINT    index;
+UINT    question_size;
+UINT    query_name_size;
+UINT    name_size;
+UINT    resource_size;
+UINT    resource_type;
+UINT    data_length;
+ULONG   soa_ttl;
+ULONG   negative_ttl;
+
+
+    /* No cache configured, nothing to add to.  */
+    if (dns_ptr -> nx_dns_cache == NX_NULL)
+        return;
+
+    /* The response has to echo the question before any of it is worth
+       keeping.  A matching header ID does not tie an NXDOMAIN to a name, and
+       an entry cached against the wrong name denies that name for the whole
+       negative TTL, which is a worse failure than the round trip this saves. */
+    if (_nx_dns_network_to_short_convert(packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDCOUNT_OFFSET) != 1)
+        return;
+
+    data_ptr = packet_ptr -> nx_packet_prepend_ptr + NX_DNS_QDSECT_OFFSET;
+
+    question_size = _nx_dns_name_string_unencode(packet_ptr, data_ptr, temp_string_buffer, NX_DNS_NAME_MAX);
+    if (!question_size)
+        return;
+
+    if (_nx_utility_string_length_check((CHAR *)query_name, &query_name_size, question_size) ||
+        (question_size != query_name_size) ||
+        (_nx_dns_name_match(temp_string_buffer, query_name, question_size) != NX_DNS_SUCCESS))
+        return;
+
+    /* Step over the question.  */
+    name_size = _nx_dns_name_size_calculate(data_ptr, packet_ptr);
+    if (data_ptr + name_size + 4 >= packet_ptr -> nx_packet_append_ptr)
+        return;
+    data_ptr += name_size + 4;
+
+    answer_count = _nx_dns_network_to_short_convert(packet_ptr -> nx_packet_prepend_ptr + NX_DNS_ANCOUNT_OFFSET);
+    authority_count = _nx_dns_network_to_short_convert(packet_ptr -> nx_packet_prepend_ptr + NX_DNS_NSCOUNT_OFFSET);
+
+    /* Walk to the SOA in the authority section.  An NXDOMAIN usually carries
+       no answers, but one at the end of a CNAME chain carries the chain, so
+       the answer records are walked rather than assumed away.  */
+    for (index = 0; index < (answer_count + authority_count); index++)
+    {
+
+        if (data_ptr >= packet_ptr -> nx_packet_append_ptr)
+            return;
+
+        if (_nx_dns_resource_type_get(data_ptr, packet_ptr, &resource_type))
+            return;
+
+        if ((index >= answer_count) && (resource_type == NX_DNS_RR_TYPE_SOA))
+            break;
+
+        if (_nx_dns_resource_size_get(data_ptr, packet_ptr, &resource_size))
+            return;
+
+        data_ptr += resource_size;
+    }
+
+    if (index >= (answer_count + authority_count))
+        return;
+
+    if (_nx_dns_resource_time_to_live_get(data_ptr, packet_ptr, &soa_ttl))
+        return;
+
+    if (_nx_dns_resource_data_length_get(data_ptr, packet_ptr, &data_length))
+        return;
+
+    rdata_ptr = _nx_dns_resource_data_address_get(data_ptr, packet_ptr);
+
+    /* MNAME and RNAME are variable length and each is at least the one byte a
+       root name takes, then five 32-bit fields, RFC 1035 3.3.13.  MINIMUM is
+       the last of the five, so it is the last four bytes of the RDATA however
+       long the two names are.  */
+    if ((rdata_ptr == NX_NULL) || (data_length < 22) ||
+        ((rdata_ptr + data_length) > packet_ptr -> nx_packet_append_ptr))
+        return;
+
+    negative_ttl = _nx_dns_network_to_long_convert(rdata_ptr + data_length - 4);
+
+    /* "The TTL of this record is set from the minimum of the MINIMUM field of
+       the SOA record and the TTL of the SOA itself", RFC 2308 4.  */
+    if (soa_ttl < negative_ttl)
+        negative_ttl = soa_ttl;
+
+    if (negative_ttl > NX_DNS_MAX_NEGATIVE_CACHE_TTL)
+        negative_ttl = NX_DNS_MAX_NEGATIVE_CACHE_TTL;
+
+    /* A zone that says zero means do not cache this.  */
+    if (negative_ttl == 0)
+        return;
+
+    memset(&temp_rr, 0, sizeof(NX_DNS_RR));
+
+    temp_rr.nx_dns_rr_type = NX_DNS_RR_TYPE_NXDOMAIN;
+    temp_rr.nx_dns_rr_ttl = negative_ttl;
+
+    /* The question's own spelling of the name, which _nx_dns_name_match()
+       above has just confirmed is the caller's name up to case.  */
+    if (_nx_dns_cache_add_string(dns_ptr, dns_ptr -> nx_dns_cache, dns_ptr -> nx_dns_cache_size,
+                                 temp_string_buffer, question_size, (VOID **)(&(temp_rr.nx_dns_rr_name))))
+        return;
+
+    if (_nx_dns_cache_add_rr(dns_ptr, dns_ptr -> nx_dns_cache, dns_ptr -> nx_dns_cache_size, &temp_rr, NX_NULL))
+    {
+
+        /* Give the name string back.  _nx_dns_cache_delete_rr() is what the
+           record processors call here, but it also decrements the record
+           count for a record that was never added.  */
+        _nx_dns_cache_delete_rr_string(dns_ptr, dns_ptr -> nx_dns_cache, dns_ptr -> nx_dns_cache_size, &temp_rr);
+    }
+}
+#endif /* NX_DNS_CACHE_ENABLE  */
+
+
+#ifdef NX_DNS_CACHE_ENABLE
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_dns_cache_find_answer                           PORTABLE C      */
 /*                                                           6.4.3        */
 /*  AUTHOR                                                                */
 /*                                                                        */
@@ -9318,6 +9512,7 @@ ULONG               current_time;
 ULONG               elasped_ttl;    
 UINT                old_count;
 UINT                answer_count;
+UINT                negative_found;
 UCHAR               *buffer_prepend_ptr;
 UINT                 query_name_length;
 UINT                 name_string_length;
@@ -9344,9 +9539,10 @@ UINT                 mname_string_length;
     if (cache_ptr == NX_NULL)
         return(NX_DNS_CACHE_ERROR);
 
-    /* Initialize the value.  */  
+    /* Initialize the value.  */
     old_count = 0;
-    answer_count = 0;   
+    answer_count = 0;
+    negative_found = NX_FALSE;
     if(record_count)
         *record_count = 0;
                           
@@ -9383,13 +9579,30 @@ UINT                 mname_string_length;
             continue;
         }
 
+        /* A name error held against the name, RFC 2308 5.  It answers a query
+           of any type, so it is tested before the type is, but it does not
+           return here: a positive record for the same name outranks it, and
+           the scan has not seen the whole cache yet.  */
+        if (p -> nx_dns_rr_type == NX_DNS_RR_TYPE_NXDOMAIN)
+        {
+
+            if (_nx_dns_name_match(p -> nx_dns_rr_name, query_name, query_name_length) == NX_DNS_SUCCESS)
+            {
+                p -> nx_dns_rr_last_used_time += elasped_ttl * (ULONG)NX_IP_PERIODIC_RATE;
+                p -> nx_dns_rr_ttl -= elasped_ttl;
+                negative_found = NX_TRUE;
+            }
+
+            continue;
+        }
+
         /* Check the resource record type.  */
         if (p -> nx_dns_rr_type != query_type)
             continue;
 
         /* Check the resource record name.  */
         if (_nx_dns_name_match(p -> nx_dns_rr_name, query_name, query_name_length))
-            continue;      
+            continue;
 
         /* Update the elasped time and ttl.
 
@@ -9657,11 +9870,19 @@ UINT                 mname_string_length;
             *record_count = answer_count;
         return (NX_DNS_SUCCESS);
     }
+    else if (negative_found)
+    {
+
+        /* The name does not exist and the answer that said so has not
+           expired.  RFC 2308 5: the point of caching it is that the query
+           does not go out again.  */
+        return(NX_DNS_NAME_ERROR);
+    }
     else
     {
         return(NX_DNS_ERROR);
     }
-}   
+}
 #endif /* NX_DNS_CACHE_ENABLE  */
 
            
