@@ -10221,6 +10221,22 @@ UINT    index = 0;
         index ++;
     }
 
+    /* Both names have to end here.
+
+       The loop walks `dst` to its NUL and never looked at what was left of
+       `src`, so this was a prefix test: "playhouse2" matched a cached
+       "playhouse2.local.tinic.net".  The length check below could not catch it
+       because `length` is `dst`'s own length at every call site, which makes
+       `index != length` unreachable.
+
+       _nx_dns_cache_find_answer() is the caller that made it visible: once
+       anything resolved a qualified name, every shorter name it starts with
+       was answered out of the cache with that address.  */
+    if (*src != '\0')
+    {
+        return (NX_DNS_NAME_MISMATCH);
+    }
+
     /* Check the scan length.  */
     if (index != length)
     {
