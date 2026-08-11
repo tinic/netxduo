@@ -363,10 +363,12 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                        holes in blocks.  */
                     socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
 
-                    /* A duplicate recorded against the previous connection has no
-                       meaning in this one's sequence space.  */
+                    /* Neither a duplicate recorded against the previous
+                       connection nor a block its peer reported has any meaning
+                       in this one's sequence space.  */
                     socket_ptr -> nx_tcp_socket_dsack_left = 0;
                     socket_ptr -> nx_tcp_socket_dsack_right = 0;
+                    socket_ptr -> nx_tcp_socket_sack_block_count = 0;
 #endif /* NX_ENABLE_TCP_SACK */
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP

@@ -1249,6 +1249,19 @@ typedef struct NX_IPV6_DEFAULT_ROUTER_ENTRY_STRUCT
 #define NX_TCP_TIMED_WAIT                          10 /* Timed wait state             */
 #define NX_TCP_LAST_ACK                            11 /* Last ACK state               */
 
+#ifdef NX_ENABLE_TCP_SACK
+
+/* Blocks carried by one SACK option, RFC 2018 section 3.  Four is what fits:
+   two NOPs, the kind and length bytes, and eight bytes per block come to 36 of
+   the 40 bytes a TCP header has for options.  Three is the right value for a
+   build that also sends RFC 7323 timestamps.  It sizes the socket's copy of
+   what a peer reported as well as the option this side builds, so it lives
+   here rather than in nx_tcp.h.  */
+#ifndef NX_TCP_SACK_MAX_BLOCKS
+#define NX_TCP_SACK_MAX_BLOCKS                     4
+#endif
+#endif /* NX_ENABLE_TCP_SACK */
+
 
 /* API return values.  */
 
@@ -2159,8 +2172,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
        section 2 requires the option on both SYNs.  */
     UCHAR       nx_tcp_socket_sack_permitted;
 
+    /* Blocks the peer sent that still describe unacknowledged data, held for
+       _nx_tcp_socket_retransmit.  */
+    UCHAR       nx_tcp_socket_sack_block_count;
+
     /* It is reserved for future use. */
-    UCHAR       nx_tcp_socket_sack_reserved[3];
+    UCHAR       nx_tcp_socket_sack_reserved[2];
 
     /* Begin sequence of the most recent segment queued out of sequence.  RFC 2018
        section 4 puts the block holding it first in the option.  */
@@ -2171,6 +2188,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
        writes the block, so a duplicate is reported on one acknowledgment only.  */
     ULONG       nx_tcp_socket_dsack_left;
     ULONG       nx_tcp_socket_dsack_right;
+
+    /* Edges of the blocks the peer reported.  They are advisory -- RFC 2018
+       section 4 lets a receiver discard data it has already reported -- so
+       they only ever cause a segment to be skipped, never released.  */
+    ULONG       nx_tcp_socket_sack_left[NX_TCP_SACK_MAX_BLOCKS];
+    ULONG       nx_tcp_socket_sack_right[NX_TCP_SACK_MAX_BLOCKS];
 #endif /* NX_ENABLE_TCP_SACK */
 
     /* Define the TCP keepalive timer parameters.  If enabled with NX_ENABLE_TCP_KEEPALIVE,

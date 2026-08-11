@@ -476,6 +476,10 @@ ULONG                        timestamp_echo = 0;
                            peer's SYN carried decides whether this side may describe its
                            holes in blocks.  */
                         socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
+
+                        /* Nothing a previous connection on this socket reported survives
+                           into this one.  */
+                        socket_ptr -> nx_tcp_socket_sack_block_count = 0;
 #endif /* NX_ENABLE_TCP_SACK */
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP
@@ -803,6 +807,10 @@ ULONG                        timestamp_echo = 0;
                        peer's SYN carried decides whether this side may describe its
                        holes in blocks.  */
                     socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
+
+                    /* Nothing a previous connection on this socket reported survives
+                       into this one.  */
+                    socket_ptr -> nx_tcp_socket_sack_block_count = 0;
 #endif /* NX_ENABLE_TCP_SACK */
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP

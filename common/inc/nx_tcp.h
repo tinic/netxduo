@@ -127,16 +127,12 @@
    contains no end-of-list, so an option may follow it.  */
 #define NX_TCP_SACK_PERMITTED_OPTION    ((ULONG)0x01010402)
 
-/* Blocks carried by one SACK option.  Four is what fits: two NOPs, the kind and
-   length bytes, and eight bytes per block come to 36 of the 40 bytes a TCP
-   header has for options.  A connection also sending RFC 7323 timestamps has
-   only 28 of those bytes left and is held to three at run time, in
-   _nx_tcp_sack_option_build; the buffers stay sized for four, which is what a
-   connection without the option still reports.  */
-#ifndef NX_TCP_SACK_MAX_BLOCKS
-#define NX_TCP_SACK_MAX_BLOCKS          4
-#endif
-
+/* NX_TCP_SACK_MAX_BLOCKS is in nx_api.h: it sizes two members of
+   NX_TCP_SOCKET as well as the option built here.  A connection also sending
+   RFC 7323 timestamps has only 28 of the header's 40 option bytes left and is
+   held to three blocks at run time, in _nx_tcp_sack_option_build; the buffers
+   stay sized for four, which is what a connection without the option still
+   reports.  */
 #define NX_TCP_SACK_OPTION_SIZE(n)      (4 + ((n) << 3))
 #define NX_TCP_SACK_OPTION_MAX_SIZE     NX_TCP_SACK_OPTION_SIZE(NX_TCP_SACK_MAX_BLOCKS)
 
@@ -454,6 +450,7 @@ VOID _nx_tcp_packet_send_control(NX_TCP_SOCKET *socket_ptr, ULONG control_bits, 
 #ifdef NX_ENABLE_TCP_SACK
 UINT _nx_tcp_sack_permitted_option_get(UCHAR *option_ptr, ULONG option_area_size, ULONG *sack_permitted);
 UINT _nx_tcp_sack_option_build(NX_TCP_SOCKET *socket_ptr, UCHAR *option_ptr);
+VOID _nx_tcp_sack_option_get(NX_TCP_SOCKET *socket_ptr, UCHAR *option_ptr, ULONG option_area_size);
 #endif /* NX_ENABLE_TCP_SACK */
 VOID _nx_tcp_periodic_processing(NX_IP *ip_ptr);
 VOID _nx_tcp_queue_process(NX_IP *ip_ptr);
