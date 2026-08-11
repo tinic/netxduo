@@ -123,6 +123,12 @@ static NX_DNS_RR   temp_rr;
 
 static UCHAR       temp_string_buffer[NX_DNS_NAME_MAX + 1];
 
+/* The name the answer records are currently expected to be about: the name
+   that was asked, and then the target of each CNAME the answer walks through.
+   Separate from temp_string_buffer because the record processors overwrite
+   that one on every record.  */
+static UCHAR       temp_chain_buffer[NX_DNS_NAME_MAX + 1];
+
 /* Record the temp host name,*/
 #ifdef NX_DNS_ENABLE_EXTENDED_RR_TYPES 
 #define TEMP_SRV_BUFFER_SIZE    (NX_DNS_NAME_MAX + 1 + sizeof (NX_DNS_SRV_ENTRY))
@@ -4633,6 +4639,10 @@ UINT                answer_found = NX_FALSE;
 UINT                resource_size;
 UINT                name_size;
 UINT                host_name_size;
+UINT                chain_name_size;
+UINT                owner_name_size;
+UINT                process_record;
+UCHAR               *cname_ptr;
 
     /* Set the buffer pointer.  */
     buffer_prepend_ptr = record_buffer;
@@ -4777,6 +4787,12 @@ UINT                host_name_size;
                 return(NX_DNS_MISMATCHED_RESPONSE);
             }
 
+            /* The answer section starts out being about the name that was
+               asked, and each CNAME in it moves that on.  See the owner check
+               in the record loop below.  */
+            memcpy(temp_chain_buffer, host_name, host_name_size + 1); /* Use case of memcpy is verified. */
+            chain_name_size = host_name_size;
+
             /* Get the length of name field.  */
             name_size = _nx_dns_name_size_calculate(data_ptr, packet_ptr);
 
@@ -4838,25 +4854,107 @@ UINT                host_name_size;
                 break;
             }
 
-            /* Is this an A Type? */
-            if(response_type == NX_DNS_RR_TYPE_A)
+            /* Whose name is this record about?
+
+               RFC 1034 4.3.2 answers a question by following a CNAME chain
+               from the name that was asked, so the only owner names an answer
+               section may legitimately carry are that name and the targets of
+               the CNAMEs already seen in it.  Nothing here compared the two:
+               with NX_DNS_ENABLE_EXTENDED_RR_TYPES undefined the CNAME is not
+               a type this loop handles at all, so the A record that follows
+               one arrives with the CNAME's target as its owner and was taken
+               as the answer purely because it was an A record in the answer
+               section.  A server could therefore answer a question about one
+               name with a record about any other, and _nx_dns_process_a_type()
+               would cache it under the owner name it came with.
+
+               The check and the chain have to land together: the check alone
+               rejects every name that is hosted behind a CNAME, which is most
+               of them.
+
+               The chain is walked in the order the records appear, which is
+               the order RFC 1034 3.6.2 describes a server building it in.  A
+               server that emits the address before the alias it belongs to
+               has its records skipped rather than trusted.  */
+            process_record = NX_TRUE;
+
+            if (rr_location == NX_DNS_RR_ANSWER_SECTION)
             {
-                
+
+                owner_name_size = _nx_dns_name_string_unencode(packet_ptr, data_ptr, temp_string_buffer, NX_DNS_NAME_MAX);
+
+                if (!owner_name_size)
+                {
+
+                    /* Process error.  */
+                    status = NX_DNS_MALFORMED_PACKET;
+                    break;
+                }
+
+                if ((owner_name_size != chain_name_size) ||
+                    (_nx_dns_name_match(temp_string_buffer, temp_chain_buffer, chain_name_size) != NX_DNS_SUCCESS))
+                {
+
+                    /* Out of the chain the question started: not an answer to
+                       it, whatever it is.  */
+                    process_record = NX_FALSE;
+                }
+                else if ((response_type == NX_DNS_RR_TYPE_CNAME) &&
+                         (dns_ptr -> nx_dns_lookup_type != NX_DNS_RR_TYPE_CNAME))
+                {
+
+                    /* The name asked about is an alias.  The records that
+                       follow are judged against its target instead.  */
+                    cname_ptr = _nx_dns_resource_data_address_get(data_ptr, packet_ptr);
+
+                    if (cname_ptr == NX_NULL)
+                    {
+
+                        /* Process error.  */
+                        status = NX_DNS_MALFORMED_PACKET;
+                        break;
+                    }
+
+                    chain_name_size = _nx_dns_name_string_unencode(packet_ptr, cname_ptr, temp_chain_buffer, NX_DNS_NAME_MAX);
+
+                    if (!chain_name_size)
+                    {
+
+                        /* Process error.  */
+                        status = NX_DNS_MALFORMED_PACKET;
+                        break;
+                    }
+
+                    process_record = NX_FALSE;
+                }
+            }
+
+            if(!process_record)
+            {
+
+                /* Nothing to store: the record is not about the name the
+                   chain is on.  */
+            }
+
+            /* Is this an A Type? */
+            else if(response_type == NX_DNS_RR_TYPE_A)
+            {
+
                 /* Call the function process the A type message. */
                 status = _nx_dns_process_a_type(dns_ptr, packet_ptr, data_ptr,  &buffer_prepend_ptr, &buffer_append_ptr, record_count, rr_location);
-                
+
             }
-            
+
             /* Is this an AAAA Type? */
             else if(response_type == NX_DNS_RR_TYPE_AAAA)
             {
-                
+
                 /* Call the function process the AAAA type message. */
                 status = _nx_dns_process_aaaa_type(dns_ptr, packet_ptr, data_ptr,  &buffer_prepend_ptr, &buffer_append_ptr, record_count, rr_location);
-                
+
             }
 
-#ifdef NX_DNS_ENABLE_EXTENDED_RR_TYPES 
+#ifdef NX_DNS_ENABLE_EXTENDED_RR_TYPES
 
             /* Is this a Type NX_DNS_RR_TYPE_CNAME?  */
             else if(response_type == NX_DNS_RR_TYPE_CNAME)
@@ -4925,7 +5023,7 @@ UINT                host_name_size;
                    an authority or additional record of the type asked for, so
                    counting one as an answer reported success over an empty
                    record buffer.  */
-                if ((answer_found == NX_FALSE) &&
+                if ((answer_found == NX_FALSE) && process_record &&
                     (rr_location == NX_DNS_RR_ANSWER_SECTION) &&
                     (response_type == dns_ptr -> nx_dns_lookup_type))
                 {
