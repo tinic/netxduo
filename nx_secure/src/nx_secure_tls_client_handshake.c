@@ -445,6 +445,16 @@ const NX_CRYPTO_METHOD
                 break;
             }
 
+            /* RFC 7627 3.  Here and nowhere later: the transcript is complete
+               through ClientKeyExchange at this line, and a CertificateVerify
+               below would be inside it. */
+            status = _nx_secure_tls_session_hash_capture(tls_session);
+
+            if (status != NX_SUCCESS)
+            {
+                break;
+            }
+
             /* After sending ClientKeyExchange, we need to send a CertificateVerify message if the
                server has requested a certificate. If no certificate is available, this flag will
                be cleared after the empty certificate message is sent. */

@@ -330,6 +330,20 @@ USHORT                                supported_version = tls_session -> nx_secu
             }
 
             break;
+        case NX_SECURE_TLS_EXTENSION_EXTENDED_MASTER_SECRET:
+
+            /* RFC 7627 5.1, and the same zero-length echo. */
+            extension_length = (USHORT)((packet_buffer[offset] << 8) + packet_buffer[offset + 1]);
+            offset += 2;
+
+            if ((extension_length + offset > message_length) || (extension_length != 0))
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
+            tls_session -> nx_secure_tls_extended_master_secret = NX_TRUE;
+
+            break;
         case NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS:
         case NX_SECURE_TLS_EXTENSION_TRUNCATED_HMAC:
         default:

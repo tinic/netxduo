@@ -79,8 +79,11 @@ UINT _nx_secure_generate_master_secret(const NX_SECURE_TLS_CIPHERSUITE_INFO *cip
                                        VOID *prf_metadata, ULONG prf_metadata_size)
 {
 ;
-UINT  status;
-VOID *handler = NX_NULL;
+UINT   status;
+VOID  *handler = NX_NULL;
+UCHAR *prf_label = (UCHAR *)"master secret";
+UINT   prf_label_size = 13;
+UINT   prf_seed_size = NX_SECURE_TLS_RANDOM_SIZE << 1;
 
     NX_PARAMETER_NOT_USED(protocol_version);
 
@@ -112,11 +115,30 @@ VOID *handler = NX_NULL;
 #endif
         )
     {
-        /* Concatenate random values to feed into PRF. */
-        NX_SECURE_MEMCPY(_nx_secure_tls_gen_keys_random, tls_key_material -> nx_secure_tls_client_random,
-                         NX_SECURE_TLS_RANDOM_SIZE); /* Use case of memcpy is verified. */
-        NX_SECURE_MEMCPY(&_nx_secure_tls_gen_keys_random[NX_SECURE_TLS_RANDOM_SIZE],
-                         tls_key_material -> nx_secure_tls_server_random, NX_SECURE_TLS_RANDOM_SIZE); /* Use case of memcpy is verified. */
+        /* RFC 7627 4: with the extended master secret the seed is the
+           handshake transcript through ClientKeyExchange and the label changes
+           with it.  A nonzero session_hash length is the negotiation:
+           _nx_secure_tls_session_hash_capture only fills it in when the server
+           echoed the extension. */
+        if (tls_key_material -> nx_secure_tls_session_hash_length > 0)
+        {
+            prf_label = (UCHAR *)"extended master secret";
+            prf_label_size = 22;
+
+            NX_SECURE_MEMCPY(_nx_secure_tls_gen_keys_random, tls_key_material -> nx_secure_tls_session_hash,
+                             tls_key_material -> nx_secure_tls_session_hash_length); /* Use case of memcpy is verified. */
+            prf_seed_size = tls_key_material -> nx_secure_tls_session_hash_length;
+        }
+        else
+        {
+
+            /* Concatenate random values to feed into PRF. */
+            NX_SECURE_MEMCPY(_nx_secure_tls_gen_keys_random, tls_key_material -> nx_secure_tls_client_random,
+                             NX_SECURE_TLS_RANDOM_SIZE); /* Use case of memcpy is verified. */
+            NX_SECURE_MEMCPY(&_nx_secure_tls_gen_keys_random[NX_SECURE_TLS_RANDOM_SIZE],
+                             tls_key_material -> nx_secure_tls_server_random, NX_SECURE_TLS_RANDOM_SIZE); /* Use case of memcpy is verified. */
+            prf_seed_size = NX_SECURE_TLS_RANDOM_SIZE << 1;
+        }
 
         /* Generate the master secret using the pre-master secret, the defined TLS label, and the concatenated
            random values. */
@@ -155,10 +177,10 @@ VOID *handler = NX_NULL;
             status = session_prf_method -> nx_crypto_operation(NX_CRYPTO_PRF,
                                                       handler,
                                                       (NX_CRYPTO_METHOD*)session_prf_method,
-                                                      (UCHAR *)"master secret",
-                                                      13,
+                                                      prf_label,
+                                                      prf_label_size,
                                                       _nx_secure_tls_gen_keys_random,
-                                                      64,
+                                                      prf_seed_size,
                                                       NX_NULL,
                                                       master_sec,
                                                       48,

@@ -573,6 +573,7 @@ typedef struct NX_SECURE_VERSIONS_LIST_STRUCT
 #define NX_SECURE_TLS_EXTENSION_EC_POINT_FORMATS           (0x000B)
 #define NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS       (0x000D)
 #define NX_SECURE_TLS_EXTENSION_ENCRYPT_THEN_MAC           (0x0016)
+#define NX_SECURE_TLS_EXTENSION_EXTENDED_MASTER_SECRET     (0x0017)
 #define NX_SECURE_TLS_EXTENSION_PRE_SHARED_KEY             (0x0029)
 #define NX_SECURE_TLS_EXTENSION_EARLY_DATA                 (0x002A)
 #define NX_SECURE_TLS_EXTENSION_SUPPORTED_VERSIONS         (0x002B)
@@ -895,6 +896,14 @@ typedef struct NX_SECURE_TLS_KEY_MATERIAL_STRUCT
        length of the pre-master-secret. */
     UCHAR nx_secure_tls_master_secret[NX_SECURE_TLS_MASTER_SIZE];
 
+    /* RFC 7627 session_hash: the handshake transcript through
+       ClientKeyExchange, captured at the moment that message was hashed.  Zero
+       length means the classic derivation.  It lives here and not on the
+       session because _nx_secure_generate_master_secret is handed the key
+       material and nothing else. */
+    UCHAR nx_secure_tls_session_hash[NX_SECURE_TLS_MAX_HASH_SIZE];
+    UINT  nx_secure_tls_session_hash_length;
+
     /* We store generate the session key material into this buffer,
        thus needing no copying of data (using the pointers to actual data below). */
     UCHAR nx_secure_tls_key_material_data[NX_SECURE_TLS_KEY_MATERIAL_SIZE];
@@ -1142,6 +1151,12 @@ typedef struct NX_SECURE_TLS_SESSION_STRUCT
        ciphertext already, and RFC 7366 3 says the extension has no effect
        there. */
     UCHAR nx_secure_tls_encrypt_then_mac;
+
+    /* RFC 7627 extended master secret, negotiated.  The master secret is
+       derived from the handshake transcript instead of the two randoms, which
+       binds it to the certificates that were used and closes the triple
+       handshake. */
+    UCHAR nx_secure_tls_extended_master_secret;
 
     /* State of whether the client and server session cipher is initialized. */
     UCHAR nx_secure_tls_session_cipher_client_initialized;
@@ -1534,6 +1549,7 @@ UINT _nx_secure_tls_send_certificate_request(NX_SECURE_TLS_SESSION *tls_session,
                                              NX_PACKET *send_packet);
 UINT _nx_secure_tls_send_changecipherspec(NX_SECURE_TLS_SESSION *tls_session,
                                           NX_PACKET *send_packet);
+UINT _nx_secure_tls_session_hash_capture(NX_SECURE_TLS_SESSION *tls_session);
 UINT _nx_secure_tls_send_clienthello(NX_SECURE_TLS_SESSION *tls_session, NX_PACKET *send_packet);
 UINT _nx_secure_tls_send_clienthello_extensions(NX_SECURE_TLS_SESSION *tls_session,
                                                 UCHAR *packet_buffer, ULONG *packet_offset,
