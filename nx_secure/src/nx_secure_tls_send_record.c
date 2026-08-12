@@ -76,19 +76,111 @@
 /*    _nx_secure_tls_session_send           Send session packet           */
 /*                                                                        */
 /**************************************************************************/
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_secure_tls_record_mac_append                    PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Hash a record and append the MAC to it.  The caller has already put  */
+/*    the length the MAC is to cover into record_header, and skip_bytes    */
+/*    says how much of the payload to leave out of the hash.               */
+/*                                                                        */
+/*    skip_bytes is the explicit IV in the MAC-then-encrypt case, where    */
+/*    the MAC is over the plaintext and the IV is not part of it, and zero */
+/*    under RFC 7366, where the IV is part of the ciphertext the MAC       */
+/*    authenticates.  That one parameter is the whole difference between   */
+/*    the two orderings on this side.                                      */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_secure_tls_record_mac_append(NX_SECURE_TLS_SESSION *tls_session, NX_PACKET *send_packet,
+                                             UCHAR *record_header, USHORT skip_bytes, ULONG wait_option)
+{
+UINT       status;
+UCHAR     *mac_secret;
+UCHAR      record_hash[NX_SECURE_TLS_MAX_HASH_SIZE];
+UINT       hash_length;
+UCHAR     *hash_data;
+ULONG      hash_data_length;
+NX_PACKET *current_packet;
+
+    /* Select our proper MAC secret for hashing. */
+    if (tls_session -> nx_secure_tls_socket_type == NX_SECURE_TLS_SESSION_TYPE_SERVER)
+    {
+        /* If we are a server, we need to use the client's MAC secret. */
+        mac_secret = tls_session -> nx_secure_tls_key_material.nx_secure_tls_server_write_mac_secret;
+    }
+    else
+    {
+        /* We are a client, so use the server's MAC secret. */
+        mac_secret = tls_session -> nx_secure_tls_key_material.nx_secure_tls_client_write_mac_secret;
+    }
+
+    /* Account for large records that exceed the packet size and are chained in multiple packets
+       such as large certificate messages with multiple certificates.
+       tls_session->nx_secure_hash_mac_metadata_area is persistent across the following calls, so it's important
+       to not do anything that might change the contents of that buffer until the hash is calculated after the loop! */
+    current_packet = send_packet;
+
+    /* Initialize the hash routine with our MAC secret, sequence number, and header. */
+    status = _nx_secure_tls_record_hash_initialize(tls_session, tls_session -> nx_secure_tls_local_sequence_number,
+                                                   record_header, 5, &hash_length, mac_secret);
+
+    /* Check return from hash routine initialization. */
+    if (status != NX_SUCCESS)
+    {
+        return(status);
+    }
+
+    hash_data = current_packet -> nx_packet_prepend_ptr + skip_bytes;
+    hash_data_length = (ULONG)(current_packet -> nx_packet_append_ptr - current_packet -> nx_packet_prepend_ptr) - skip_bytes;
+
+    /* Walk packet chain. */
+    do
+    {
+        /* Update the hash with the data. */
+        status = _nx_secure_tls_record_hash_update(tls_session, hash_data,
+                                                   (UINT)hash_data_length);
+
+        /* Advance the packet pointer to the next packet in the chain. */
+        current_packet = current_packet -> nx_packet_next;
+        if (current_packet != NX_NULL)
+        {
+            hash_data = current_packet -> nx_packet_prepend_ptr;
+            hash_data_length = (ULONG)(current_packet -> nx_packet_append_ptr - current_packet -> nx_packet_prepend_ptr);
+        }
+    } while (current_packet != NX_NULL);
+
+    _nx_secure_tls_record_hash_calculate(tls_session, record_hash, &hash_length);
+
+    /* Release the protection before suspending on nx_packet_data_append. */
+    tx_mutex_put(&_nx_secure_tls_protection);
+
+    status = nx_packet_data_append(send_packet, record_hash, hash_length,
+                                   tls_session -> nx_secure_tls_packet_pool, wait_option);
+
+#ifdef NX_SECURE_KEY_CLEAR
+    NX_SECURE_MEMSET(record_hash, 0, sizeof(record_hash));
+#endif /* NX_SECURE_KEY_CLEAR  */
+
+    /* Get the protection after nx_packet_data_append. */
+    tx_mutex_get(&_nx_secure_tls_protection, TX_WAIT_FOREVER);
+
+    return(status);
+}
+
+
 UINT _nx_secure_tls_send_record(NX_SECURE_TLS_SESSION *tls_session, NX_PACKET *send_packet,
                                 UCHAR record_type, ULONG wait_option)
 {
 UINT       status;
 UINT       message_length;
-UCHAR     *mac_secret;
 UCHAR     *record_header;
-UCHAR      record_hash[NX_SECURE_TLS_MAX_HASH_SIZE];
-UINT       hash_length;
-UCHAR     *hash_data;
-ULONG      hash_data_length;
 ULONG      length;
 USHORT     iv_size = 0;
+UINT       etm_active = NX_FALSE;
 NX_PACKET *current_packet;
 
     /* Length of the data in the packet. */
@@ -184,6 +276,18 @@ NX_PACKET *current_packet;
         /*************************************************************************************************************/
         NX_ASSERT(tls_session -> nx_secure_tls_session_ciphersuite != NX_NULL)
 
+        /* Encrypt-then-MAC is only ever negotiated for a block cipher with a
+           MAC in TLS 1.2 or below; the ServerHello handler will not set it
+           otherwise. */
+        if (tls_session -> nx_secure_tls_encrypt_then_mac
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+            && !tls_session -> nx_secure_tls_1_3
+#endif
+            )
+        {
+            etm_active = NX_TRUE;
+        }
+
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
         /* TLS 1.3 records have the record type appended in a single byte. */
         if(tls_session->nx_secure_tls_1_3)
@@ -212,72 +316,20 @@ NX_PACKET *current_packet;
             tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_hash -> nx_crypto_operation)
         {
 
-            /***** HASHING *****/
-            /* Select our proper MAC secret for hashing. */
-            if (tls_session -> nx_secure_tls_socket_type == NX_SECURE_TLS_SESSION_TYPE_SERVER)
+            /* RFC 7366 2: under encrypt-then-MAC the MAC is taken over the
+               ciphertext, so it cannot be computed until after encryption and
+               the block below runs there instead. */
+            if (etm_active != NX_TRUE)
             {
-                /* If we are a server, we need to use the client's MAC secret. */
-                mac_secret = tls_session -> nx_secure_tls_key_material.nx_secure_tls_server_write_mac_secret;
-            }
-            else
-            {
-                /* We are a client, so use the server's MAC secret. */
-                mac_secret = tls_session -> nx_secure_tls_key_material.nx_secure_tls_client_write_mac_secret;
-            }
+                status = _nx_secure_tls_record_mac_append(tls_session, send_packet, record_header,
+                                                          iv_size, wait_option);
 
-            /* Account for large records that exceed the packet size and are chained in multiple packets
-               such as large certificate messages with multiple certificates.
-               tls_session->nx_secure_hash_mac_metadata_area is persistent across the following calls, so it's important
-               to not do anything that might change the contents of that buffer until the hash is calculated after the loop! */
-            current_packet = send_packet;
-
-            /* Initialize the hash routine with our MAC secret, sequence number, and header. */
-            status = _nx_secure_tls_record_hash_initialize(tls_session, tls_session -> nx_secure_tls_local_sequence_number,
-                                                           record_header, 5, &hash_length, mac_secret);
-
-            /* Check return from hash routine initialization. */
-            if (status != NX_SUCCESS)
-            {
-                tx_mutex_put(&(tls_session -> nx_secure_tls_session_transmit_mutex));
-                return(status);
-            }
-
-            /* Start the hash data after the header and IV. */
-            hash_data = current_packet -> nx_packet_prepend_ptr + iv_size;
-            hash_data_length = (ULONG)(current_packet -> nx_packet_append_ptr - current_packet -> nx_packet_prepend_ptr) - iv_size;
-
-            /* Walk packet chain. */
-            do
-            {
-                /* Update the hash with the data. */
-                status = _nx_secure_tls_record_hash_update(tls_session, hash_data,
-                                                           (UINT)hash_data_length);
-
-                /* Advance the packet pointer to the next packet in the chain. */
-                current_packet = current_packet -> nx_packet_next;
-                if (current_packet != NX_NULL)
+                if (status != NX_SUCCESS)
                 {
-                    hash_data = current_packet -> nx_packet_prepend_ptr;
-                    hash_data_length = (ULONG)(current_packet -> nx_packet_append_ptr - current_packet -> nx_packet_prepend_ptr);
+                    tx_mutex_put(&(tls_session -> nx_secure_tls_session_transmit_mutex));
+                    return(status);
                 }
-            } while (current_packet != NX_NULL);
-
-            /* Generate the hash on the plaintext data. */
-            _nx_secure_tls_record_hash_calculate(tls_session, record_hash, &hash_length);
-
-            /* Release the protection before suspending on nx_packet_data_append. */
-            tx_mutex_put(&_nx_secure_tls_protection);
-
-            /* Append the hash to the plaintext data in the last packet before encryption. */
-            status = nx_packet_data_append(send_packet, record_hash, hash_length,
-                                           tls_session -> nx_secure_tls_packet_pool, wait_option);
-
-#ifdef NX_SECURE_KEY_CLEAR
-            NX_SECURE_MEMSET(record_hash, 0, sizeof(record_hash));
-#endif /* NX_SECURE_KEY_CLEAR  */
-
-            /* Get the protection after nx_packet_data_append. */
-            tx_mutex_get(&_nx_secure_tls_protection, TX_WAIT_FOREVER);
+            }
         }
 
 
@@ -290,6 +342,30 @@ NX_PACKET *current_packet;
         {
             tx_mutex_put(&(tls_session -> nx_secure_tls_session_transmit_mutex));
             return(status);
+        }
+
+        if (etm_active == NX_TRUE)
+        {
+
+            /* RFC 7366 3: the MAC covers the sequence number, the record
+               header carrying the length of the ENCRYPTED payload, the
+               explicit IV, and the ciphertext.  The header's length field
+               therefore has to be written now, before hashing, and it is
+               written again after the MAC is appended. */
+            message_length = send_packet -> nx_packet_length;
+            record_header[3] = (UCHAR)((message_length & 0xFF00) >> 8);
+            record_header[4] = (UCHAR)(message_length & 0x00FF);
+
+            /* iv_size 0: the IV is part of what is authenticated here, unlike
+               the MAC-then-encrypt case where it is not yet meaningful. */
+            status = _nx_secure_tls_record_mac_append(tls_session, send_packet, record_header,
+                                                      0, wait_option);
+
+            if (status != NX_SUCCESS)
+            {
+                tx_mutex_put(&(tls_session -> nx_secure_tls_session_transmit_mutex));
+                return(status);
+            }
         }
 
         /*************************************************************************************************************/

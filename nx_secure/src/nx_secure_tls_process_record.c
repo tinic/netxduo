@@ -90,6 +90,8 @@ ULONG      bytes_copied;
 UCHAR     *packet_data = NX_NULL;
 ULONG      record_offset = 0;
 ULONG      record_offset_next = 0;
+UINT       etm_active;
+UINT       mac_length;
 NX_PACKET *decrypted_packet;
 
     /* Basic state machine:
@@ -245,6 +247,51 @@ NX_PACKET *decrypted_packet;
                 }
             }
 
+            /* RFC 7366 3: with encrypt-then-MAC the MAC is over the
+               ciphertext, so it is checked here, before anything looks at the
+               padding.  That is the whole point of the extension.  A CBC
+               record whose MAC does not verify is discarded without the
+               padding ever being examined, so there is no padding oracle to
+               time and no need for the constant-time padding check that
+               answering Lucky 13 the other way would require -- about 10 ms a
+               record on a 7 MHz 68000. */
+            etm_active = NX_FALSE;
+
+            if (tls_session -> nx_secure_tls_encrypt_then_mac
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+                && !tls_session -> nx_secure_tls_1_3
+#endif
+                )
+            {
+                etm_active = NX_TRUE;
+            }
+
+            if (etm_active == NX_TRUE)
+            {
+
+                /* _nx_secure_tls_verify_mac takes the length of data plus MAC,
+                   rewrites the header's length field to the data length, hashes
+                   that, and compares the trailing bytes.  Handed the ciphertext
+                   it computes exactly RFC 7366's MAC, and reports back the
+                   ciphertext length. */
+                mac_length = message_length;
+
+                status = _nx_secure_tls_verify_mac(tls_session, header_data, header_length,
+                                                   packet_ptr, record_offset, &mac_length);
+
+                if (status != NX_SECURE_TLS_SUCCESS)
+                {
+                    return(status);
+                }
+
+                if (mac_length == 0 || mac_length >= message_length)
+                {
+                    return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+                }
+
+                message_length = mac_length;
+            }
+
             /* Decrypt the record data. */
             status = _nx_secure_tls_record_payload_decrypt(tls_session, packet_ptr, record_offset,
                                                            message_length, &decrypted_packet,
@@ -327,6 +374,12 @@ NX_PACKET *decrypted_packet;
             }
             else
 #endif
+            if (etm_active == NX_TRUE)
+            {
+
+                /* Already authenticated, above, over the ciphertext. */
+            }
+            else
             {
                 /* Verify the hash MAC in the decrypted record. */
                 if (status)

@@ -572,6 +572,7 @@ typedef struct NX_SECURE_VERSIONS_LIST_STRUCT
 #define NX_SECURE_TLS_EXTENSION_EC_GROUPS                  (0x000A)
 #define NX_SECURE_TLS_EXTENSION_EC_POINT_FORMATS           (0x000B)
 #define NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS       (0x000D)
+#define NX_SECURE_TLS_EXTENSION_ENCRYPT_THEN_MAC           (0x0016)
 #define NX_SECURE_TLS_EXTENSION_PRE_SHARED_KEY             (0x0029)
 #define NX_SECURE_TLS_EXTENSION_EARLY_DATA                 (0x002A)
 #define NX_SECURE_TLS_EXTENSION_SUPPORTED_VERSIONS         (0x002B)
@@ -1135,6 +1136,12 @@ typedef struct NX_SECURE_TLS_SESSION_STRUCT
     /* State of local and remote encryption - post ChangeCipherSpec. */
     UCHAR nx_secure_tls_remote_session_active;
     UCHAR nx_secure_tls_local_session_active;
+
+    /* RFC 7366 encrypt-then-MAC, negotiated.  Only ever set for a CBC
+       ciphersuite in TLS 1.2 or below; AEAD and TLS 1.3 authenticate the
+       ciphertext already, and RFC 7366 3 says the extension has no effect
+       there. */
+    UCHAR nx_secure_tls_encrypt_then_mac;
 
     /* State of whether the client and server session cipher is initialized. */
     UCHAR nx_secure_tls_session_cipher_client_initialized;

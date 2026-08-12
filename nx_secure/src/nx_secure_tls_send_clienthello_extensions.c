@@ -72,6 +72,12 @@ UINT _nx_secure_tls_send_clienthello_psk_extension(NX_SECURE_TLS_SESSION *tls_se
                                                           ULONG available_size);
 #endif
 
+static UINT _nx_secure_tls_send_clienthello_empty_extension(USHORT extension_id,
+                                                            UCHAR *packet_buffer,
+                                                            ULONG *packet_offset,
+                                                            USHORT *extension_length,
+                                                            ULONG available_size);
+
 #ifndef NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION
 static UINT _nx_secure_tls_send_clienthello_sec_reneg_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                                 UCHAR *packet_buffer,
@@ -233,6 +239,22 @@ UINT   status;
         total_extensions_length = (USHORT)(total_extensions_length + extension_length);
     }
 #endif
+
+    /* RFC 7366.  A TLS 1.2-and-below property and a zero-length offer, sent
+       unconditionally: a server that negotiates TLS 1.3 is required to ignore
+       it, and this ClientHello does not yet know which version it will get.
+
+       Not optional from a security point of view.  Without encrypt-then-MAC
+       the CBC suites below need a constant-time padding check to answer Lucky
+       13, which costs about 10 ms a record at 7 MHz. */
+    status = _nx_secure_tls_send_clienthello_empty_extension(NX_SECURE_TLS_EXTENSION_ENCRYPT_THEN_MAC,
+                                                             packet_buffer, &length,
+                                                             &extension_length, available_size);
+    if (status != NX_SUCCESS)
+    {
+        return(status);
+    }
+    total_extensions_length = (USHORT)(total_extensions_length + extension_length);
 
 #ifndef NX_SECURE_TLS_SNI_EXTENSION_DISABLED
     /* Send the server name indication extension. */
@@ -1407,6 +1429,47 @@ UINT   data_length;
     return(NX_SUCCESS);
 }
 #endif
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_secure_tls_send_clienthello_empty_extension     PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Write a four-byte extension: identifier and a length of zero.  That  */
+/*    is the whole wire form of RFC 7366 encrypt_then_mac in a ClientHello */
+/*    -- an offer with no body, which the server answers by echoing the    */
+/*    same four bytes.                                                     */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_secure_tls_send_clienthello_empty_extension(USHORT extension_id,
+                                                            UCHAR *packet_buffer,
+                                                            ULONG *packet_offset,
+                                                            USHORT *extension_length,
+                                                            ULONG available_size)
+{
+ULONG offset = *packet_offset;
+
+    if (available_size < (offset + 4u))
+    {
+        return(NX_SECURE_TLS_PACKET_BUFFER_TOO_SMALL);
+    }
+
+    packet_buffer[offset]     = (UCHAR)((extension_id & 0xFF00) >> 8);
+    packet_buffer[offset + 1] = (UCHAR)(extension_id & 0x00FF);
+    packet_buffer[offset + 2] = 0x00;
+    packet_buffer[offset + 3] = 0x00;
+
+    offset += 4;
+
+    *extension_length = (USHORT)(offset - *packet_offset);
+    *packet_offset = offset;
+
+    return(NX_SUCCESS);
+}
+
 
 /**************************************************************************/
 /*                                                                        */

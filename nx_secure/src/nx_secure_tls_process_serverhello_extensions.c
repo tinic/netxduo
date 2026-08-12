@@ -297,6 +297,39 @@ USHORT                                supported_version = tls_session -> nx_secu
             }
 
             break;
+        case NX_SECURE_TLS_EXTENSION_ENCRYPT_THEN_MAC:
+
+            /* RFC 7366 3.  The answer is the bare identifier with a zero
+               length, and it was offered in every ClientHello this code
+               sends, so an echo is the negotiation. */
+            extension_length = (USHORT)((packet_buffer[offset] << 8) + packet_buffer[offset + 1]);
+            offset += 2;
+
+            if ((extension_length + offset > message_length) || (extension_length != 0))
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
+            /* Encrypt-then-MAC changes the record framing of a block cipher
+               and means nothing for anything else.  A server that echoes it
+               alongside an AEAD suite, or in TLS 1.3, is answering a question
+               that was not asked, and obeying it would put a MAC on a record
+               that has no room for one. */
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+            if (tls_session -> nx_secure_tls_1_3)
+            {
+                break;
+            }
+#endif
+            if ((tls_session -> nx_secure_tls_session_ciphersuite != NX_NULL) &&
+                (tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_hash_size > 0) &&
+                (tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_session_cipher != NX_NULL) &&
+                (tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_session_cipher -> nx_crypto_block_size_in_bytes > 0))
+            {
+                tls_session -> nx_secure_tls_encrypt_then_mac = NX_TRUE;
+            }
+
+            break;
         case NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS:
         case NX_SECURE_TLS_EXTENSION_TRUNCATED_HMAC:
         default:
