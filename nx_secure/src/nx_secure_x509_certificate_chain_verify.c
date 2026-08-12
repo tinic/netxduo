@@ -101,6 +101,24 @@ INT                  issuer_path_length;
             return(NX_SECURE_X509_CHAIN_TOO_LONG);
         }
 
+        /* extendedKeyUsage, nameConstraints, and every extension the
+           certificate marked critical.  Before the expiry and signature work
+           because it is cheap and because a certificate that fails it is not
+           a certificate this code may use for anything.
+
+           Every link the walk visits passes through here: the leaf on the
+           first pass, each intermediate on a later one.  The trust anchor does
+           not, the loop returns as soon as an issuer is found in the trusted
+           store, and the anchor is there because the machine's owner put it
+           there -- but its name constraints still bind what it signed, so
+           those are applied separately below. */
+        status = _nx_secure_x509_extension_policy_check(current_certificate, certificate, depth);
+
+        if (status != NX_SECURE_X509_SUCCESS)
+        {
+            return(status);
+        }
+
         /* Check the certificate expiration against the current time. */
         if (current_time != 0)
         {
@@ -179,6 +197,18 @@ INT                  issuer_path_length;
                then continue the verification process. */
             if (issuer_location == NX_SECURE_X509_CERT_LOCATION_TRUSTED)
             {
+                /* The anchor is never current_certificate, so this is the one
+                   place its own nameConstraints can be applied.  A root
+                   constrained to a set of names and not held to it is the
+                   whole point of the extension going unread. */
+                status = _nx_secure_x509_name_constraints_check(issuer_certificate, certificate);
+
+                if ((status != NX_SECURE_X509_SUCCESS) &&
+                    (status != NX_SECURE_X509_EXTENSION_NOT_FOUND))
+                {
+                    return(status);
+                }
+
                 return(NX_SECURE_X509_SUCCESS);
             }
 

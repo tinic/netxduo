@@ -180,6 +180,9 @@ extern   "C" {
 #define NX_SECURE_X509_INVALID_CA_CERTIFICATE                     0x1AB /* A certificate used to issue another one is not a CA: basicConstraints is absent, has cA FALSE, or its pathLenConstraint is exceeded. */
 #define NX_SECURE_X509_CHAIN_TOO_LONG                             0x1AC /* The issuer walk passed NX_SECURE_X509_MAX_VERIFY_DEPTH links without reaching the trusted store. */
 #define NX_SECURE_X509_SIGNATURE_ALGORITHM_MISMATCH               0x1AD /* The signatureAlgorithm outside the certificate body does not match the one inside it (RFC 5280 4.1.1.2). */
+#define NX_SECURE_X509_UNSUPPORTED_CRITICAL_EXTENSION             0x1AE /* A certificate marks an extension critical that this implementation does not act on (RFC 5280 4.2). */
+#define NX_SECURE_X509_NAME_CONSTRAINT_VIOLATION                  0x1AF /* The leaf carries a DNS name a CA above it excluded, or outside every subtree it permitted (RFC 5280 4.2.1.10). */
+#define NX_SECURE_X509_NAME_CONSTRAINT_UNSUPPORTED                0x1B0 /* A nameConstraints subtree names a form this implementation does not evaluate, or an end-entity certificate carries the extension at all. */
 
 /* Defines for working with private key types. */
 #define NX_SECURE_X509_KEY_TYPE_USER_DEFINED_MASK                 (0xFFFF0000)
@@ -997,6 +1000,14 @@ UINT _nx_secure_x509_extended_key_usage_extension_parse(NX_SECURE_X509_CERT *cer
                                                         UINT key_usage);
 UINT _nx_secure_x509_extension_find(NX_SECURE_X509_CERT *certificate,
                                     NX_SECURE_X509_EXTENSION *extension, USHORT extension_id);
+UINT _nx_secure_x509_extension_policy_check(NX_SECURE_X509_CERT *certificate,
+                                            NX_SECURE_X509_CERT *leaf_certificate,
+                                            UINT depth);
+UINT _nx_secure_x509_critical_extensions_check(NX_SECURE_X509_CERT *certificate,
+                                               UINT name_constraints_enforced);
+UINT _nx_secure_x509_name_constraints_check(NX_SECURE_X509_CERT *ca_certificate,
+                                            NX_SECURE_X509_CERT *leaf_certificate);
+UINT _nx_secure_x509_server_auth_check(NX_SECURE_X509_CERT *certificate);
 UINT _nx_secure_x509_key_usage_extension_parse(NX_SECURE_X509_CERT *certificate, USHORT *bitfield);
 UINT _nx_secure_x509_basic_constraints_extension_parse(NX_SECURE_X509_CERT *certificate,
                                                        UINT *is_ca, INT *path_length);
