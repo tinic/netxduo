@@ -209,11 +209,18 @@ ULONG                   current_length;
         {
             current_length = (ULONG)(packet_ptr -> nx_packet_append_ptr - packet_ptr -> nx_packet_prepend_ptr);
             current_length -= offset;
-            offset = 0;
             if (current_length > length)
             {
                 current_length = length;
             }
+
+            /* offset is cleared AFTER the pointer is formed, not before.  The
+               loop above leaves it as the position within the first packet,
+               and zeroing it here read from the packet's prepend pointer
+               instead -- the record header rather than the payload.  It went
+               unseen because the only caller that passes a nonzero offset is
+               the padding-failure branch of _nx_secure_tls_process_record,
+               where the result is thrown away and only the timing matters. */
             status = authentication_method -> nx_crypto_operation(NX_CRYPTO_HASH_UPDATE,
                                                         handler,
                                                         (NX_CRYPTO_METHOD*)authentication_method,
@@ -234,6 +241,7 @@ ULONG                   current_length;
                 return(status);
             }
 
+            offset = 0;
             length -= current_length;
             packet_ptr = packet_ptr -> nx_packet_next;
         }
