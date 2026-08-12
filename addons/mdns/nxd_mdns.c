@@ -75,6 +75,7 @@ static VOID         _nx_mdns_packet_send(NX_MDNS *mdns_ptr, NX_PACKET *packet_pt
 static UINT         _nx_mdns_packet_rr_add(NX_PACKET *packet_ptr, NX_MDNS_RR *rr, UINT op, UINT packet_type); 
 static UINT         _nx_mdns_packet_rr_set(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, NX_MDNS_RR *rr_ptr, UINT op, UINT interface_index);
 static UINT         _nx_mdns_packet_rr_data_set(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, NX_MDNS_RR *rr_ptr, UINT op);
+static UINT         _nx_mdns_packet_source_port(NX_PACKET *packet_ptr);
 #ifdef NX_MDNS_ENABLE_ADDRESS_CHECK
 static UINT         _nx_mdns_packet_address_check(NX_PACKET *packet_ptr);
 #endif /* NX_MDNS_ENABLE_ADDRESS_CHECK  */
@@ -113,6 +114,8 @@ static VOID         _nx_mdns_additional_a_aaaa_find(NX_MDNS *mdns_ptr, UCHAR *na
 static VOID         _nx_mdns_probing_send(NX_MDNS *mdns_ptr, UINT interface_index);
 static VOID         _nx_mdns_announcing_send(NX_MDNS *mdns_ptr, UINT interface_index);
 static VOID         _nx_mdns_response_send(NX_MDNS *mdns_ptr, UINT interface_index);
+static USHORT       _nx_mdns_legacy_answer_add(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, NX_MDNS_RR *question_rr, UINT interface_index);
+static UINT         _nx_mdns_legacy_query_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UINT interface_index);
 #ifndef NX_DISABLE_IPV4
 static VOID         _nx_mdns_ip_address_change_notify(NX_IP *ip_ptr, VOID *additional_info);
 #endif /* NX_DISABLE_IPV4 */
@@ -7376,6 +7379,21 @@ NX_MDNS_RR         *nsec_rr;
     /* Extract the message type which should be the first byte.  */
     mdns_flags = NX_MDNS_GET_USHORT_DATA(packet_ptr -> nx_packet_prepend_ptr + NX_MDNS_FLAGS_OFFSET);
 
+#ifndef NX_MDNS_DISABLE_SERVER
+
+    /* A query that did not come from 5353 is a one-shot resolver -- dig, or
+       anything on a plain resolver socket -- and RFC6762 Section6.7 answers it
+       unicast, with the question echoed, the query's ID, a ten second TTL and
+       no cache-flush bit.  None of that is the multicast machinery below, and
+       such a query takes no part in duplicate suppression or known answers,
+       so it is handled on its own and this returns.  */
+    if (((mdns_flags & NX_MDNS_RESPONSE_FLAG) != NX_MDNS_RESPONSE_FLAG) &&
+        (_nx_mdns_packet_source_port(packet_ptr) != NX_MDNS_UDP_PORT))
+    {
+        return(_nx_mdns_legacy_query_process(mdns_ptr, packet_ptr, interface_index));
+    }
+#endif /* NX_MDNS_DISABLE_SERVER  */
+
     /* Get the question count.  */
     question_count = NX_MDNS_GET_USHORT_DATA(packet_ptr -> nx_packet_prepend_ptr + NX_MDNS_QDCOUNT_OFFSET);
    
@@ -8314,8 +8332,283 @@ UCHAR               resend_flag = NX_FALSE;
     _nx_mdns_packet_send(mdns_ptr, packet_ptr, interface_index);
 
     /* Resend the packet.  */
-    if (resend_flag)  
-        tx_event_flags_set(&(mdns_ptr -> nx_mdns_events), NX_MDNS_RESPONSE_SEND_EVENT, TX_OR);   
+    if (resend_flag)
+        tx_event_flags_set(&(mdns_ptr -> nx_mdns_events), NX_MDNS_RESPONSE_SEND_EVENT, TX_OR);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_legacy_answer_add                          PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function adds the local records answering one question of a    */
+/*    legacy unicast query into the response packet.                      */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    mdns_ptr                              Pointer to mDNS instance      */
+/*    packet_ptr                            Pointer to response packet    */
+/*    question_rr                           The question being answered   */
+/*    interface_index                       The interface index           */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    count                                 Records added to the packet   */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_mdns_packet_rr_add                Add the record into packet    */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_mdns_legacy_query_process         Process legacy unicast query  */
+/*                                                                        */
+/**************************************************************************/
+static USHORT _nx_mdns_legacy_answer_add(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, NX_MDNS_RR *question_rr, UINT interface_index)
+{
+
+ULONG              *head;
+NX_MDNS_RR         *p;
+USHORT              count = 0;
+
+
+    /* Get head. */
+    head = (ULONG*)mdns_ptr -> nx_mdns_local_service_cache;
+    head = (ULONG*)(*head);
+
+    for(p = (NX_MDNS_RR*)((UCHAR*)mdns_ptr -> nx_mdns_local_service_cache + sizeof(ULONG)); (ULONG*)p < head; p++)
+    {
+
+        /* Check the interface index.  */
+        if (p -> nx_mdns_rr_interface_index != interface_index)
+            continue;
+
+        /* Only a name this machine has finished claiming may be answered for:
+           a record still probing is not ours yet.  */
+        if ((p -> nx_mdns_rr_state != NX_MDNS_RR_STATE_VALID) &&
+            (p -> nx_mdns_rr_state != NX_MDNS_RR_STATE_ANNOUNCING))
+            continue;
+
+        /* The matching rules of RFC6762, Section6, Page13, the same ones
+           _nx_mdns_packet_process applies to a multicast query.  */
+        if (p -> nx_mdns_rr_name != question_rr -> nx_mdns_rr_name)
+            continue;
+
+        if ((p -> nx_mdns_rr_type != question_rr -> nx_mdns_rr_type) &&
+            (question_rr -> nx_mdns_rr_type != NX_MDNS_RR_TYPE_ALL) &&
+            (p -> nx_mdns_rr_type != NX_MDNS_RR_TYPE_CNAME))
+            continue;
+
+        /* Check the RR class, Ignore the top bit.  */
+        if ((p -> nx_mdns_rr_class != (question_rr -> nx_mdns_rr_class & NX_MDNS_TOP_BIT_MASK)) &&
+            ((question_rr -> nx_mdns_rr_class & NX_MDNS_TOP_BIT_MASK) != NX_MDNS_RR_CLASS_ALL))
+            continue;
+
+        if (_nx_mdns_packet_rr_add(packet_ptr, p, NX_MDNS_PACKET_ADD_RR_ANSWER, NX_MDNS_PACKET_LEGACY_RESPONSE) == NX_MDNS_SUCCESS)
+            count++;
+    }
+
+    return(count);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_legacy_query_process                       PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function answers a query that did not come from port 5353,     */
+/*    which RFC6762, Section6.7 calls a legacy unicast query.  The reply  */
+/*    goes straight back to the address and port that asked, repeats the  */
+/*    question, carries the query's ID and a ten second TTL, and leaves   */
+/*    the cache-flush bit clear.                                          */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    mdns_ptr                              Pointer to mDNS instance      */
+/*    packet_ptr                            Pointer to the query packet   */
+/*    interface_index                       The interface index           */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    status                                Completion status             */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_mdns_packet_create                Create the response packet    */
+/*    _nx_mdns_packet_rr_set                Set the question record       */
+/*    _nx_mdns_packet_rr_add                Add a record into the packet  */
+/*    _nx_mdns_legacy_answer_add            Add the answering records     */
+/*    nx_udp_socket_source_send             Send the response             */
+/*    nx_packet_release                     Release the response packet   */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_mdns_packet_process               Process mDNS packet           */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_mdns_legacy_query_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UINT interface_index)
+{
+
+NX_PACKET          *response_ptr;
+NX_MDNS_RR          question_rr;
+UCHAR              *data_ptr;
+USHORT              question_count;
+USHORT              echoed_count = 0;
+USHORT              answer_count = 0;
+USHORT              index;
+UINT                name_size;
+UINT                pass;
+UINT                src_port;
+UINT                status;
+
+#ifndef NX_DISABLE_IPV4
+NX_IPV4_HEADER     *ipv4_header;
+#endif /* NX_DISABLE_IPV4  */
+
+#ifdef NX_MDNS_ENABLE_IPV6
+NX_IPV6_HEADER     *ipv6_header;
+NXD_ADDRESS         src_address;
+#endif /* NX_MDNS_ENABLE_IPV6  */
+
+
+    /* Check the packet length.  */
+    if (packet_ptr -> nx_packet_length < NX_MDNS_QDSECT_OFFSET)
+    {
+        return(NX_MDNS_ERROR);
+    }
+
+    /* Get the question count.  */
+    question_count = NX_MDNS_GET_USHORT_DATA(packet_ptr -> nx_packet_prepend_ptr + NX_MDNS_QDCOUNT_OFFSET);
+
+    if (question_count == 0)
+    {
+        return(NX_MDNS_SUCCESS);
+    }
+
+    src_port = _nx_mdns_packet_source_port(packet_ptr);
+
+    /* Create the response.  */
+    status = _nx_mdns_packet_create(mdns_ptr, &response_ptr, NX_FALSE);
+
+    /* Check for errors. */
+    if (status != NX_SUCCESS)
+    {
+        return(status);
+    }
+
+    /* Take the query's ID.  A legacy querier matches the answer to the question
+       by ID, where an mDNS response carries zero.  */
+    *(USHORT *)(response_ptr -> nx_packet_prepend_ptr + NX_MDNS_ID_OFFSET) =
+        *(USHORT *)(packet_ptr -> nx_packet_prepend_ptr + NX_MDNS_ID_OFFSET);
+
+    /* Two passes over the questions, because every question has to be in the
+       packet before the first answer is: pass 0 repeats the question, which an
+       mDNS response never carries and a legacy one must, pass 1 answers it.  */
+    for (pass = 0; pass < 2; pass++)
+    {
+
+        /* Skip the Header. Point at the start of the question.  */
+        data_ptr = packet_ptr -> nx_packet_prepend_ptr + NX_MDNS_QDSECT_OFFSET;
+
+        for (index = 0; index < question_count; index++)
+        {
+
+            /* Check for data_ptr.  */
+            if (data_ptr >= packet_ptr -> nx_packet_append_ptr)
+                break;
+
+            /* A question naming something not in the local cache sets nothing
+               and is passed over: this machine has no answer for it and
+               RFC6762, Section6 says to stay quiet rather than deny it.  */
+            if (_nx_mdns_packet_rr_set(mdns_ptr, packet_ptr, data_ptr, &question_rr,
+                                       NX_MDNS_RR_OP_LOCAL_SET_QUESTION, interface_index) == NX_MDNS_SUCCESS)
+            {
+                if (pass == 0)
+                {
+                    if (_nx_mdns_packet_rr_add(response_ptr, &question_rr, NX_MDNS_PACKET_ADD_RR_QUESTION,
+                                               NX_MDNS_PACKET_QUERY) == NX_MDNS_SUCCESS)
+                        echoed_count++;
+                }
+                else
+                {
+                    answer_count = (USHORT)(answer_count +
+                                            _nx_mdns_legacy_answer_add(mdns_ptr, response_ptr, &question_rr, interface_index));
+                }
+            }
+
+            name_size = _nx_mdns_name_size_calculate(data_ptr, packet_ptr);
+
+            if (name_size == 0)
+                break;
+
+            data_ptr += (name_size + 4);
+        }
+    }
+
+    /* Nothing to say.  */
+    if ((echoed_count == 0) || (answer_count == 0))
+    {
+
+        /* Release the packet.  */
+        nx_packet_release(response_ptr);
+        return(NX_MDNS_SUCCESS);
+    }
+
+    /* Update the question and answer count in header.  */
+    _nx_mdns_short_to_network_convert(response_ptr -> nx_packet_prepend_ptr + NX_MDNS_QDCOUNT_OFFSET, echoed_count);
+    _nx_mdns_short_to_network_convert(response_ptr -> nx_packet_prepend_ptr + NX_MDNS_ANCOUNT_OFFSET, answer_count);
+
+    /* Straight back to the address and port that asked, sourced from 5353,
+       rather than multicast to 224.0.0.251.  RFC6762, Section6.7.  */
+#ifdef NX_MDNS_ENABLE_IPV6
+    if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
+    {
+        ipv6_header = (NX_IPV6_HEADER *)packet_ptr -> nx_packet_ip_header;
+
+        src_address.nxd_ip_version = NX_IP_VERSION_V6;
+        COPY_IPV6_ADDRESS(ipv6_header -> nx_ip_header_source_ip, src_address.nxd_ip_address.v6);
+
+        status = nxd_udp_socket_source_send(&mdns_ptr -> nx_mdns_socket, response_ptr, &src_address, src_port,
+                                            mdns_ptr -> nx_mdns_ipv6_address_index[interface_index]);
+    }
+    else
+#endif /* NX_MDNS_ENABLE_IPV6  */
+    {
+#ifndef NX_DISABLE_IPV4
+        ipv4_header = (NX_IPV4_HEADER *)packet_ptr -> nx_packet_ip_header;
+
+        status = nx_udp_socket_source_send(&mdns_ptr -> nx_mdns_socket, response_ptr,
+                                           ipv4_header -> nx_ip_header_source_ip, src_port, interface_index);
+#else
+        status = NX_MDNS_ERROR;
+#endif /* NX_DISABLE_IPV4  */
+    }
+
+    /* If an error is detected, the packet was not sent and we have to release the packet. */
+    if (status != NX_SUCCESS)
+    {
+
+        /* Release the packet.  */
+        nx_packet_release(response_ptr);
+    }
+
+    return(NX_MDNS_SUCCESS);
 }
 #endif /* NX_MDNS_DISABLE_SERVER */
 
@@ -8768,6 +9061,7 @@ USHORT      rr_size = 0;
 USHORT      rdata_length_index = 0;
 UCHAR       *data_ptr = packet_ptr -> nx_packet_append_ptr;
 UINT        rr_name_length;
+ULONG       ttl;
 
 
     /* Check string length.  */
@@ -8832,37 +9126,48 @@ UINT        rr_name_length;
         _nx_mdns_short_to_network_convert(data_ptr + index, rr -> nx_mdns_rr_type);
         index = (USHORT)(index + 2);
         
-        /* Add the class.  */
+        /* Add the class.  The cache-flush bit is meaningless to a legacy
+           querier, which is an ordinary DNS resolver, and setting it there
+           would have it flush a cache that does not work that way.
+           RFC6762, Section6.7.  */
         if ((!(rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER)) &&
-            (rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_UNIQUE))
+            (rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_UNIQUE) &&
+            (packet_type != NX_MDNS_PACKET_LEGACY_RESPONSE))
         {
             _nx_mdns_short_to_network_convert(data_ptr + index, ((rr -> nx_mdns_rr_class) | NX_MDNS_RR_CLASS_TOP_BIT));
         }
         else
         {
-            
+
             _nx_mdns_short_to_network_convert(data_ptr + index, rr -> nx_mdns_rr_class);
         }
         index = (USHORT)(index + 2);
-        
+
         /* Add the ttl.  */
         /* Check the resource record owner.  */
         if (rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER)
         {
             /* Add the remaining ttl of peer resource reocrd.  */
-            _nx_mdns_long_to_network_convert(data_ptr + index, (rr -> nx_mdns_rr_remaining_ticks / NX_IP_PERIODIC_RATE));
+            ttl = (rr -> nx_mdns_rr_remaining_ticks / NX_IP_PERIODIC_RATE);
+        }
+        else if (rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_GOODBYE)
+        {
+            ttl = 0;
         }
         else
         {
-            if (rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_GOODBYE)
-            {
-                _nx_mdns_long_to_network_convert(data_ptr + index, 0);
-            }
-            else
-            {
-                _nx_mdns_long_to_network_convert(data_ptr + index, rr -> nx_mdns_rr_ttl);
-            }
+            ttl = rr -> nx_mdns_rr_ttl;
         }
+
+        /* A legacy querier holds the record for as long as the TTL says and
+           hears no announcement afterwards, so it is told ten seconds.
+           RFC6762, Section6.7.  */
+        if ((packet_type == NX_MDNS_PACKET_LEGACY_RESPONSE) && (ttl > NX_MDNS_LEGACY_TTL))
+        {
+            ttl = NX_MDNS_LEGACY_TTL;
+        }
+
+        _nx_mdns_long_to_network_convert(data_ptr + index, ttl);
         index = (USHORT)(index + 4);
     
         /* Compare the RDATA. */
@@ -9787,12 +10092,58 @@ UINT            temp_string_length;
 }
 
 
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_packet_source_port                         PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function returns the UDP source port of a received packet.     */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    packet_ptr                            Pointer to mDNS packet        */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    port                                  UDP source port               */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_mdns_packet_process               Process mDNS packet           */
+/*    _nx_mdns_packet_address_check         Check the address and port    */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_mdns_packet_source_port(NX_PACKET *packet_ptr)
+{
+
+ULONG      *udp_header;
+
+
+    /* The UDP header sits 8 bytes ahead of the mDNS payload, and
+       _nx_udp_packet_receive has already put it in host order.  */
+    udp_header = (ULONG *)(packet_ptr -> nx_packet_prepend_ptr - 8);
+
+    return((UINT)((*udp_header) >> NX_SHIFT_BY_16));
+}
+
+
 #ifdef NX_MDNS_ENABLE_ADDRESS_CHECK
-/**************************************************************************/ 
-/*                                                                        */ 
-/*  FUNCTION                                               RELEASE        */ 
-/*                                                                        */ 
-/*    _nx_mdns_packet_address_check                       PORTABLE C      */ 
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_packet_address_check                       PORTABLE C      */
 /*                                                           6.4.3        */
 /*  AUTHOR                                                                */
 /*                                                                        */
@@ -9824,7 +10175,6 @@ static UINT _nx_mdns_packet_address_check(NX_PACKET *packet_ptr)
 
 USHORT              mdns_flags;
 UINT                src_port;
-ULONG              *udp_header;
 
 #if !defined NX_DISABLE_IPV4 || defined NX_MDNS_ENABLE_IPV6
 NXD_ADDRESS         src_address;
@@ -9891,14 +10241,16 @@ NX_IPV6_HEADER     *ipv6_header;
         return(NX_MDNS_ERROR);
     }
 
-    /* Pickup the pointer to the head of the UDP packet.  */
-    udp_header =  (ULONG *) (packet_ptr -> nx_packet_prepend_ptr - 8);
+    /* Get the source port.  */
+    src_port = _nx_mdns_packet_source_port(packet_ptr);
 
-    /* Get the source port and destination port.  */
-    src_port = (UINT) ((*udp_header) >> NX_SHIFT_BY_16);
-
-    /* Check the source UDP port.  RFC6762, Section6, Page15.  */
-    if (src_port != NX_MDNS_UDP_PORT)
+    /* Check the source UDP port.  RFC6762, Section6, Page15.  A response has to
+       come from 5353 to be an mDNS response at all.  A QUERY from another port
+       is a legacy unicast querier, which RFC6762 Section6.7 says to answer;
+       _nx_mdns_legacy_query_process handles those and this must not drop
+       them.  */
+    if ((src_port != NX_MDNS_UDP_PORT) &&
+        ((mdns_flags & NX_MDNS_RESPONSE_FLAG) == NX_MDNS_RESPONSE_FLAG))
     {
         return(NX_MDNS_UDP_PORT_ERROR);
     }
