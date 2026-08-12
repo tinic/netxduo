@@ -203,6 +203,13 @@ extern   "C" {
 #define NX_MDNS_UDP_PORT                        5353
 
 
+/* A querier that did not source from 5353 is a legacy unicast resolver: it
+   caches by TTL alone, having no cache-flush bit and no announcement to
+   correct the entry with, so RFC 6762 6.7 caps what it is told at ten
+   seconds.  */
+#define NX_MDNS_LEGACY_TTL                      10
+
+
 /* Define UDP socket create options.  */
 #ifndef NX_MDNS_UDP_TYPE_OF_SERVICE
 #define NX_MDNS_UDP_TYPE_OF_SERVICE             NX_IP_NORMAL
@@ -594,6 +601,7 @@ extern   "C" {
 #define NX_MDNS_PACKET_QUERY                    1           /* Query packet.                                        */
 #define NX_MDNS_PACKET_PROBING                  2           /* Probing packet. Is specific query.                   */
 #define NX_MDNS_PACKET_RESPONSE                 3           /* Response packet.                                     */
+#define NX_MDNS_PACKET_LEGACY_RESPONSE          4           /* Legacy unicast response packet.                      */
 
 
 /* Define the Add NSEC type.  */
