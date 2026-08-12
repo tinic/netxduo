@@ -280,7 +280,29 @@
 #define NX_TCP_RTO_MINIMUM              NX_TCP_RTO_TICKS(NX_TCP_RTO_MINIMUM_MS)
 #define NX_TCP_RTO_MAXIMUM              NX_TCP_RTO_TICKS(NX_TCP_RTO_MAXIMUM_MS)
 
+/* RFC 8985 section 7.2's worst case delayed acknowledgment, added to the probe
+   timeout so a peer that is merely holding its ACK back is not probed.  The
+   section names 200 ms as the example and that is what every delayed ACK timer
+   in reach is bounded by.  A port on a link whose peers acknowledge promptly
+   may lower it and probe sooner, at the price of the occasional duplicate
+   segment.  */
+
+#ifndef NX_TCP_LOSS_PROBE_DELACK_MS
+#define NX_TCP_LOSS_PROBE_DELACK_MS     200
+#endif
+
+#define NX_TCP_LOSS_PROBE_DELACK        NX_TCP_RTO_TICKS(NX_TCP_LOSS_PROBE_DELACK_MS)
+
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+
+/* The duplicate acknowledgment count that triggers a fast retransmit, RFC 5681
+   section 3.2.  Three is the standard threshold and is what a flight large
+   enough to produce three of them uses.  RFC 5827 lowers it when the flight is
+   too small to ever produce three; NX_TCP_EARLY_RETRANSMIT is that.  */
+
+#ifndef NX_TCP_FAST_RETRANSMIT_THRESHOLD
+#define NX_TCP_FAST_RETRANSMIT_THRESHOLD 3
+#endif
 
 /* Define the value of the TCP minimum acceptable MSS for the host to accept the connection,
    which by default is 128.  */
