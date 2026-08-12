@@ -2075,6 +2075,14 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_timeout_rate;
     ULONG       nx_tcp_socket_timeout_retries;
     ULONG       nx_tcp_socket_timeout_max_retries;
+
+    /* Ticks since the peer last acknowledged something this socket was waiting
+       on, counted only while output is outstanding, and the deadline the
+       application put on that.  Zero deadline means the retry ladder alone
+       decides, which is what every socket gets until one asks otherwise.  */
+    ULONG       nx_tcp_socket_stall_ticks;
+    ULONG       nx_tcp_socket_user_timeout;
+
     UCHAR       nx_tcp_socket_timeout_shift;
 
 #ifdef NX_ENABLE_VLAN

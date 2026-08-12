@@ -204,8 +204,27 @@ ULONG          retry_shift;
         if (socket_ptr -> nx_tcp_socket_timeout)
         {
 
+            /* A retransmission timer is armed, so this socket is waiting on the
+               peer for something -- a SYN, a segment, a FIN, a window.  Count
+               how long it has been waiting.  The ladder alone cannot answer
+               that: it is a retry count, and an application that wants to know
+               whether a connection is making progress wants seconds.  */
+            socket_ptr -> nx_tcp_socket_stall_ticks += timer_rate;
+
+            /* R2 as a deadline rather than a retry count, which is what an
+               application asking not to wait out the whole ladder means.
+               Checked every tick, not at each expiry, or a 20-second request
+               would be served at the next rung, 31.  Zero is every socket that
+               never asked, and leaves the ladder in sole charge.  */
+            if ((socket_ptr -> nx_tcp_socket_user_timeout != 0) &&
+                (socket_ptr -> nx_tcp_socket_stall_ticks >= socket_ptr -> nx_tcp_socket_user_timeout))
+            {
+
+                /* Report it the same way the ladder running out is reported.  */
+                _nx_tcp_socket_connection_reset(socket_ptr);
+            }
             /* Yes, a timeout is active.  Determine if it has expired.  */
-            if (socket_ptr -> nx_tcp_socket_timeout > timer_rate)
+            else if (socket_ptr -> nx_tcp_socket_timeout > timer_rate)
             {
 
                 /* No, it hasn't expired yet.  Just decrement the timeout value.  */
@@ -291,6 +310,14 @@ ULONG          retry_shift;
                 /* Clean the transmission control block.  */
                 _nx_tcp_socket_block_cleanup(socket_ptr);
             }
+        }
+        else
+        {
+
+            /* Nothing is outstanding, so nothing is being waited for.  An
+               established connection with an empty transmit queue lives here,
+               and it must read zero rather than its own age.  */
+            socket_ptr -> nx_tcp_socket_stall_ticks = 0;
         }
 
         /* Move to the next TCP socket.  */
