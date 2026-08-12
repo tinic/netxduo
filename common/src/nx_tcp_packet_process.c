@@ -440,8 +440,18 @@ ULONG                        timestamp_echo = 0;
                     /* Move the port head pointer to this socket.  */
                     ip_ptr -> nx_ip_tcp_port_table[index] = socket_ptr;
 
-                    /* If this packet contains SYN */
-                    if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT)
+                    /* A SYN carries the options that settle a connection, so it is
+                       read only while one is still being settled.  RFC 5961 section 4
+                       answers a SYN in a synchronised state with a challenge
+                       acknowledgment and leaves the connection as it was, which
+                       _nx_tcp_socket_packet_process does -- but this runs first, so
+                       without the state test one stray SYN rewrote the MSS, the peer's
+                       window scale and SACK permission on a live connection.  A bare
+                       SYN does it and needs no sequence number to be accepted here:
+                       the three fall back to 536, to 0xFF and to false.  */
+                    if ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT) &&
+                        ((socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT) ||
+                         (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_RECEIVED)))
                     {
 
                         /* Record the MSS value if it is present and the   Otherwise use 536, as
@@ -484,21 +494,15 @@ ULONG                        timestamp_echo = 0;
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP
 
-                        /* RFC 1323 section 3.2, the same rule for the same reason, but
-                           only while the connection is still being settled.  A SYN that
-                           matches an established connection would otherwise reset the
-                           negotiation, and clearing the flag with segments already on
-                           the transmit queue makes the segment header length twelve
-                           bytes shorter than the header those segments were built with,
-                           so the retransmission accounts and rebuilds them wrongly.  */
-                        if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_SENT) ||
-                            (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_RECEIVED))
+                        /* RFC 1323 section 3.2, the same rule for the same reason.
+                           Clearing the flag with segments already on the transmit
+                           queue also makes the segment header twelve bytes shorter
+                           than the header those segments were built with, so the
+                           retransmission accounts and rebuilds them wrongly.  */
+                        socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
+                        if (timestamp_present == NX_TRUE)
                         {
-                            socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
-                            if (timestamp_present == NX_TRUE)
-                            {
-                                socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
-                            }
+                            socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
                         }
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
                     }
