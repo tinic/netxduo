@@ -107,6 +107,9 @@ VOID  _nx_tcp_socket_block_cleanup(NX_TCP_SOCKET *socket_ptr)
         socket_ptr -> nx_tcp_socket_rtt_timing    = NX_FALSE;
         socket_ptr -> nx_tcp_socket_timeout_rate  = _nx_tcp_transmit_timer_rate;
     }
+
+    /* The next connection's sequence numbers are its own.  */
+    socket_ptr -> nx_tcp_socket_loss_probe_sequence = 0;
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
 
     /* Connection needs to be closed down immediately.  */

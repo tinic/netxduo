@@ -34,6 +34,140 @@
 #include "nx_tcp.h"
 
 
+#if defined(NX_ENABLE_TCP_LOSS_PROBE) && defined(NX_ENABLE_TCP_RTT_ESTIMATOR)
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_socket_loss_probe_check                     PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Eclipse ThreadX Contributors                                        */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function sends RFC 8985 section 7.2's tail loss probe: one      */
+/*    extra transmission of what is outstanding, two round trips after     */
+/*    the last acknowledgment rather than at the retransmission timeout.   */
+/*                                                                        */
+/*    The last segment of anything is the one no later segment can produce */
+/*    a duplicate acknowledgment for, so fast retransmit -- even with RFC  */
+/*    5827's lowered threshold -- cannot reach it and the timeout is all   */
+/*    there is.  On this port that timeout has a one second floor          */
+/*    (NX_TCP_RTO_MINIMUM_MS) against a round trip of a millisecond, and a */
+/*    request and its response is all tail: every outbound segment of an   */
+/*    HTTP request is the last one until the response arrives.             */
+/*                                                                        */
+/*    The probe is not a timeout and does not answer like one.  It leaves  */
+/*    the congestion window, the slow start threshold and the retry ladder */
+/*    where they were, so a peer that was merely slow to acknowledge costs */
+/*    one duplicate segment rather than a collapsed window, and the        */
+/*    timeout it stands in front of still expires on its own schedule.     */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                Pointer to IP control block   */
+/*    socket_ptr                            Pointer to socket             */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit             Resend the queued segment     */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_fast_periodic_processing                                    */
+/*                                                                        */
+/**************************************************************************/
+static VOID  _nx_tcp_socket_loss_probe_check(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
+{
+
+ULONG probe_timeout;
+ULONG elapsed;
+ULONG saved_congestion;
+ULONG saved_threshold;
+ULONG saved_retries;
+ULONG saved_timeout;
+
+
+    /* Something has to be outstanding to probe for, the connection has to be
+       one that is still sending, and the timer has to be the one that arms
+       after a transmission.  A zero window is the persist timer's business and
+       a retry already under way is the ladder's; neither is a loss.  */
+    if ((socket_ptr -> nx_tcp_socket_state < NX_TCP_ESTABLISHED) ||
+        (socket_ptr -> nx_tcp_socket_state > NX_TCP_CLOSE_WAIT) ||
+        (socket_ptr -> nx_tcp_socket_transmit_sent_head == NX_NULL) ||
+        (socket_ptr -> nx_tcp_socket_tx_window_advertised == 0) ||
+        (socket_ptr -> nx_tcp_socket_timeout_retries != 0) ||
+        (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE) ||
+        (socket_ptr -> nx_tcp_socket_rtt_configured == NX_TRUE))
+    {
+        return;
+    }
+
+    /* One probe per transmit high water mark.  The timer restarts on every
+       acknowledgment that leaves something outstanding, so without this a
+       long silence would be probed once per acknowledgment that preceded it.  */
+    if (socket_ptr -> nx_tcp_socket_loss_probe_sequence == socket_ptr -> nx_tcp_socket_tx_sequence)
+    {
+        return;
+    }
+
+    /* PTO is twice the smoothed round trip, section 7.2.  The estimate is held
+       in eighths of a tick, so twice it is a shift of two.  Without a
+       measurement yet -- the first segment a connection sends -- take the tick
+       the sample would be floored at.  */
+    if (socket_ptr -> nx_tcp_socket_rtt_smoothed != 0)
+    {
+        probe_timeout = socket_ptr -> nx_tcp_socket_rtt_smoothed >> 2;
+    }
+    else
+    {
+        probe_timeout = 2;
+    }
+
+    probe_timeout = probe_timeout + NX_TCP_LOSS_PROBE_DELACK;
+
+    /* A probe that would land at or after the timeout is not a probe.  */
+    if (probe_timeout >= socket_ptr -> nx_tcp_socket_timeout_rate)
+    {
+        return;
+    }
+
+    elapsed = socket_ptr -> nx_tcp_socket_timeout_rate - socket_ptr -> nx_tcp_socket_timeout;
+
+    if (elapsed < probe_timeout)
+    {
+        return;
+    }
+
+    socket_ptr -> nx_tcp_socket_loss_probe_sequence = socket_ptr -> nx_tcp_socket_tx_sequence;
+
+    /* The retransmit path is the only thing that knows how to rebuild a queued
+       segment's header and checksum, so it does the sending, under the window
+       it sets for itself -- one segment.  What it changed on the way is put
+       back afterwards: none of it belongs to a probe.  */
+    saved_congestion = socket_ptr -> nx_tcp_socket_tx_window_congestion;
+    saved_threshold  = socket_ptr -> nx_tcp_socket_tx_slow_start_threshold;
+    saved_retries    = socket_ptr -> nx_tcp_socket_timeout_retries;
+    saved_timeout    = socket_ptr -> nx_tcp_socket_timeout;
+
+    _nx_tcp_socket_retransmit(ip_ptr, socket_ptr, NX_FALSE);
+
+    socket_ptr -> nx_tcp_socket_tx_window_congestion    = saved_congestion;
+    socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = saved_threshold;
+    socket_ptr -> nx_tcp_socket_timeout_retries         = saved_retries;
+    socket_ptr -> nx_tcp_socket_timeout                 = saved_timeout;
+}
+
+#endif /* NX_ENABLE_TCP_LOSS_PROBE && NX_ENABLE_TCP_RTT_ESTIMATOR */
+
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -150,6 +284,12 @@ ULONG          retry_shift;
 
                 /* No, it hasn't expired yet.  Just decrement the timeout value.  */
                 socket_ptr -> nx_tcp_socket_timeout -= timer_rate;
+
+#if defined(NX_ENABLE_TCP_LOSS_PROBE) && defined(NX_ENABLE_TCP_RTT_ESTIMATOR)
+
+                /* Two round trips into the wait, ask rather than keep waiting.  */
+                _nx_tcp_socket_loss_probe_check(ip_ptr, socket_ptr);
+#endif /* NX_ENABLE_TCP_LOSS_PROBE && NX_ENABLE_TCP_RTT_ESTIMATOR */
             }
             else if (((socket_ptr -> nx_tcp_socket_timeout_retries >= max_retries) &&
                       (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_FALSE)) ||

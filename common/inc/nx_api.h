@@ -2122,6 +2122,13 @@ typedef struct NX_TCP_SOCKET_STRUCT
 
     /* It is reserved for future use. */
     UCHAR       nx_tcp_socket_rtt_reserved[2];
+
+    /* The transmit sequence a tail loss probe was last sent under, RFC 8985
+       section 7.2.  One probe per high water mark: the timer restarts on every
+       acknowledgment that leaves data outstanding, and without this a socket
+       whose peer has stopped answering would probe on each of them.  Data sent
+       later moves the sequence on and earns another.  */
+    ULONG       nx_tcp_socket_loss_probe_sequence;
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
 
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
