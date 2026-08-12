@@ -114,6 +114,66 @@ ULONG          retry_shift;
             if (socket_ptr -> nx_tcp_socket_delayed_ack_timeout <= timer_rate)
             {
 
+#ifndef NX_TCP_ACK_EVERY_N_PACKETS
+                /* The feedback edge of the acknowledgment threshold, and
+                   reaching this line is the evidence that it is set too high.
+
+                   nx_tcp_socket_state_data_check.c ramps
+                   nx_tcp_socket_ack_n_packet_counter up from two full-sized
+                   segments, doubling per acknowledgment, so a fast clean link
+                   is not acknowledged a segment at a time.  It only ever went
+                   up: nothing lowered it, and half the receive buffer is where
+                   it stopped, 50176 bytes on a machine whose pool affords a
+                   100352-byte window.  That is 34 segments, larger than the
+                   32 KB chunk a file-server read asks for.
+
+                   The first loss halves the sender's congestion window, so it
+                   can no longer put the threshold's worth in flight, the
+                   data-driven acknowledgment never fires again, and the
+                   connection runs on this timer at one acknowledgment per
+                   200 ms for the rest of the transfer.  Measured on the loss
+                   rig, A2065 bridged, 0.2 ms link, 0.5% loss: read 4173 ->
+                   554 KB/s with the write flat, acknowledgment delay 6.9 ->
+                   195 ms median and a 1009 ms tail.  The acknowledgment count
+                   did not change; its clock did.
+
+                   This timer firing means the threshold was not reached in a
+                   whole delayed-ACK period, so what the sender did deliver in
+                   that period measures what it can have in flight.  Half of
+                   that is the new threshold -- RFC 1122 4.2.3.2's every second
+                   full-sized segment, in bytes -- floored at two full-sized
+                   segments and never raised here, so this can only make the
+                   stack acknowledge sooner.  The ramp takes it back up,
+                   doubling per acknowledgment, faster than the congestion
+                   window it tracks.  A clean link fires this once or twice in
+                   a 2 MB transfer against 125 acknowledgments.  */
+                if (socket_ptr -> nx_tcp_socket_rx_sequence !=
+                    socket_ptr -> nx_tcp_socket_rx_sequence_acked)
+                {
+                ULONG outstanding;
+                ULONG floor_threshold;
+
+                    outstanding = socket_ptr -> nx_tcp_socket_rx_sequence -
+                                  socket_ptr -> nx_tcp_socket_rx_sequence_acked;
+                    floor_threshold = (ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1;
+
+                    outstanding = outstanding >> 1;
+                    if (outstanding < floor_threshold)
+                    {
+                        outstanding = floor_threshold;
+                    }
+
+                    /* Downward only.  A window update ACK, or a period in
+                       which more arrived than the threshold asked for, must
+                       not be able to push it up: the ramp is the only thing
+                       that raises it.  */
+                    if (outstanding < socket_ptr -> nx_tcp_socket_ack_n_packet_counter)
+                    {
+                        socket_ptr -> nx_tcp_socket_ack_n_packet_counter = outstanding;
+                    }
+                }
+#endif /* NX_TCP_ACK_EVERY_N_PACKETS */
+
                 /* Send the delayed ACK, which also resets the ACK timeout.  */
                 _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
             }
