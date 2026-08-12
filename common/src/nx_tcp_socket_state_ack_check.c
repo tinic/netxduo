@@ -660,6 +660,13 @@ UINT           wrapped_flag = NX_FALSE;
             /* Setup a new transmit timeout.  */
             socket_ptr -> nx_tcp_socket_timeout =          socket_ptr -> nx_tcp_socket_timeout_rate;
             socket_ptr -> nx_tcp_socket_timeout_retries =  0;
+
+            /* This acknowledgment released packets, so the connection moved.
+               The stall clock restarts with the retry count, or a transfer
+               that is making progress one segment at a time would accumulate
+               a deadline it never deserved: the timer is armed again below and
+               the fast timer would go on adding to it.  */
+            socket_ptr -> nx_tcp_socket_stall_ticks =      0;
         }
         else
         {
