@@ -379,7 +379,12 @@ UINT         queued_count;
                     arp_ptr -> nx_arp_ip_address =            destination_ip;
                     arp_ptr -> nx_arp_physical_address_msw =  0;
                     arp_ptr -> nx_arp_physical_address_lsw =  0;
-                    arp_ptr -> nx_arp_entry_next_update =     NX_ARP_UPDATE_RATE;
+                    /* +1 because the countdown is decremented by a periodic
+                       tick this entry was not created on, so a value of N
+                       expires anywhere in (N-1, N] seconds.  At an update rate
+                       of one that lets the first retransmit follow the request
+                       by microseconds and spend a retry on the same loss.  */
+                    arp_ptr -> nx_arp_entry_next_update =     NX_ARP_UPDATE_RATE + 1;
                     arp_ptr -> nx_arp_retries =               0;
                     arp_ptr -> nx_arp_ip_interface =          packet_ptr -> nx_packet_address.nx_packet_interface_ptr;
 

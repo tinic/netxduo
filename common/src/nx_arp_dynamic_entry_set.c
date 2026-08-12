@@ -199,7 +199,10 @@ ULONG         next_hop_address;
 
         /* Since there isn't physical mapping, change the update rate
            for possible ARP retries.  */
-        arp_ptr -> nx_arp_entry_next_update =     NX_ARP_UPDATE_RATE;
+        /* +1 for the same reason as nx_ip_driver_packet_send.c: the
+           countdown is decremented by a periodic tick this entry was not
+           created on, so a value of N expires anywhere in (N-1, N] seconds. */
+        arp_ptr -> nx_arp_entry_next_update =     NX_ARP_UPDATE_RATE + 1;
 
         /* The physical address was not specified so send an
            ARP request for the selected IP address.  */
