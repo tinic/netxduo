@@ -240,14 +240,26 @@ UINT   status;
     }
 #endif
 
-    /* RFC 7366.  A TLS 1.2-and-below property and a zero-length offer, sent
-       unconditionally: a server that negotiates TLS 1.3 is required to ignore
-       it, and this ClientHello does not yet know which version it will get.
+    /* RFC 7366 and RFC 7627.  Both are TLS 1.2-and-below properties and both
+       are zero-length offers, and both are sent unconditionally: a server that
+       negotiates TLS 1.3 is required to ignore them, and this ClientHello does
+       not yet know which version it will get.
 
        Not optional from a security point of view.  Without encrypt-then-MAC
        the CBC suites below need a constant-time padding check to answer Lucky
-       13, which costs about 10 ms a record at 7 MHz. */
+       13, which costs about 10 ms a record at 7 MHz.  Without the extended
+       master secret a resumed session is not bound to the certificate that
+       authenticated it, which is the triple handshake. */
     status = _nx_secure_tls_send_clienthello_empty_extension(NX_SECURE_TLS_EXTENSION_ENCRYPT_THEN_MAC,
+                                                             packet_buffer, &length,
+                                                             &extension_length, available_size);
+    if (status != NX_SUCCESS)
+    {
+        return(status);
+    }
+    total_extensions_length = (USHORT)(total_extensions_length + extension_length);
+
+    status = _nx_secure_tls_send_clienthello_empty_extension(NX_SECURE_TLS_EXTENSION_EXTENDED_MASTER_SECRET,
                                                              packet_buffer, &length,
                                                              &extension_length, available_size);
     if (status != NX_SUCCESS)
@@ -1439,9 +1451,9 @@ UINT   data_length;
 /*  DESCRIPTION                                                           */
 /*                                                                        */
 /*    Write a four-byte extension: identifier and a length of zero.  That  */
-/*    is the whole wire form of RFC 7366 encrypt_then_mac in a ClientHello */
-/*    -- an offer with no body, which the server answers by echoing the    */
-/*    same four bytes.                                                     */
+/*    is the whole wire form of RFC 7366 encrypt_then_mac and RFC 7627     */
+/*    extended_master_secret in a ClientHello -- both are offers with no   */
+/*    body, and the server answers by echoing the same four bytes.         */
 /*                                                                        */
 /**************************************************************************/
 static UINT _nx_secure_tls_send_clienthello_empty_extension(USHORT extension_id,

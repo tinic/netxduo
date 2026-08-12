@@ -196,8 +196,10 @@ ULONG                      extension_length, total_extensions_length;
     length += sizeof(tls_session -> nx_secure_tls_key_material.nx_secure_tls_client_random);
 
     /* Nothing has been negotiated yet.  A renegotiation reuses the session
-       structure, so this is cleared here rather than at session create. */
+       structure, so these are cleared here rather than at session create. */
     tls_session -> nx_secure_tls_encrypt_then_mac = NX_FALSE;
+    tls_session -> nx_secure_tls_extended_master_secret = NX_FALSE;
+    tls_session -> nx_secure_tls_key_material.nx_secure_tls_session_hash_length = 0;
 
     /* Session ID length is one byte. As session resumption is not implemented yet, ClientHello doesn't include Session ID now. */
     tls_session -> nx_secure_tls_session_id_length  = 0;
