@@ -152,6 +152,13 @@ UINT i, table_size;
             NX_PARAMETER_NOT_USED(mtu_timeout);
 #endif /* NX_ENABLE_IPV6_PATH_MTU_DISCOVERY */
 
+            /* Note the use, so _nx_icmpv6_dest_table_add() can tell an entry
+               something is still talking to from one nothing has touched in a
+               while. */
+            ip_ptr -> nx_ipv6_destination_table_clock++;
+            ip_ptr -> nx_ipv6_destination_table[i].nx_ipv6_destination_entry_last_used =
+                ip_ptr -> nx_ipv6_destination_table_clock;
+
             *dest_entry_ptr = &ip_ptr -> nx_ipv6_destination_table[i];
 
             return(NX_SUCCESS);

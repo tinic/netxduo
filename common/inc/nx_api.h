@@ -1112,6 +1112,11 @@ typedef struct NX_IPV6_DESTINATION_ENTRY_STRUCT
     /* Cross link to the next hop entry in the ND cache. */
     ND_CACHE_ENTRY *nx_ipv6_destination_entry_nd_entry;
 
+    /* Value of nx_ipv6_destination_table_clock when this entry was last used,
+       so a full table can give up its least recently used slot.  Compared as a
+       signed difference, which is wrap-safe. */
+    ULONG nx_ipv6_destination_entry_last_used;
+
 #ifdef NX_ENABLE_IPV6_PATH_MTU_DISCOVERY
 
     /* Maximum transmission size for this destination. */
@@ -2691,6 +2696,9 @@ typedef struct NX_IP_STRUCT
 
     /* Define the destination table size. */
     UINT        nx_ipv6_destination_table_size;
+
+    /* Counts uses of the destination table, to order its entries by age. */
+    ULONG       nx_ipv6_destination_table_clock;
 #endif /* FEATURE_NX_IPV6 */
 
     /* Define the statistic and error counters for this IP instance.   */

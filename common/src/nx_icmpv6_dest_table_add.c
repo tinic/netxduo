@@ -125,10 +125,46 @@ UINT status;
     /* Set a local variable for convenience. */
     table_size = ip_ptr -> nx_ipv6_destination_table_size;
 
-    /* There is no invalid destination in table. */
+    /* Every slot is taken.  RFC 4861 section 5.2 leaves the replacement policy
+       to the implementation, and refusing is not one: nothing ever ages an
+       entry out on its own -- only a next hop changing or its ND cache entry
+       being deleted clears one, and on a host whose next hop is one default
+       router neither happens.  So the table filled once and every destination
+       after it could not be sent to at all, while the ones already in it kept
+       working.  Give up the least recently used slot instead; the destination
+       table is a cache and an entry dropped from it is rebuilt on the next
+       packet with no traffic on the wire. */
     if (table_size == NX_IPV6_DESTINATION_TABLE_SIZE)
     {
-        return(NX_NOT_SUCCESSFUL);
+    UINT  oldest = NX_IPV6_DESTINATION_TABLE_SIZE;
+
+        for (i = 0; i < NX_IPV6_DESTINATION_TABLE_SIZE; i++)
+        {
+
+            if (!ip_ptr -> nx_ipv6_destination_table[i].nx_ipv6_destination_entry_valid)
+            {
+                continue;
+            }
+
+            /* Signed difference, so the comparison survives the clock wrapping. */
+            if ((oldest == NX_IPV6_DESTINATION_TABLE_SIZE) ||
+                ((LONG)(ip_ptr -> nx_ipv6_destination_table[i].nx_ipv6_destination_entry_last_used -
+                        ip_ptr -> nx_ipv6_destination_table[oldest].nx_ipv6_destination_entry_last_used) < 0))
+            {
+                oldest = i;
+            }
+        }
+
+        /* nx_ipv6_destination_table_size said the table was full, so there is
+           one.  If the count and the slots ever disagreed there would be
+           nothing to give up and nothing to do but refuse. */
+        if (oldest == NX_IPV6_DESTINATION_TABLE_SIZE)
+        {
+            return(NX_NOT_SUCCESSFUL);
+        }
+
+        ip_ptr -> nx_ipv6_destination_table[oldest].nx_ipv6_destination_entry_valid = 0;
+        ip_ptr -> nx_ipv6_destination_table_size--;
     }
 
     /* Initialize the pointer to the table location where we will update/add information. */
@@ -185,6 +221,11 @@ UINT status;
 
     /* Validate this entry to ensure it will not be overwritten with new entries. */
     ip_ptr -> nx_ipv6_destination_table[i].nx_ipv6_destination_entry_valid = 1;
+
+    /* Youngest in the table until something else is used. */
+    ip_ptr -> nx_ipv6_destination_table_clock++;
+    ip_ptr -> nx_ipv6_destination_table[i].nx_ipv6_destination_entry_last_used =
+        ip_ptr -> nx_ipv6_destination_table_clock;
 
     /* Update the count of destinations currently in the table. */
     ip_ptr -> nx_ipv6_destination_table_size++;
