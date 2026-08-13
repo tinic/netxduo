@@ -6987,12 +6987,20 @@ ULONG       value;
     if (_nx_dhcp_get_option_value(dhcp_message, NX_DHCP_OPTION_REBIND, &value, length) == NX_SUCCESS)
     {
 
-        /* Check for an infinite lease. */
+        /* Check for an infinite lease.  Only where the lease itself is
+           infinite -- a T2 of "never" against a lease that does expire would
+           leave the Client in RENEWING for good: renewal_remain_time is
+           rebind_time - renewal_time, and 0xFFFFFFFF - renewal never counts
+           down to the rebind transition.  A finite lease keeps the derived
+           0.875 * lease default from the lease block above.  */
         if (value == 0xFFFFFFFF)
         {
+            if (interface_record -> nx_dhcp_lease_time == 0xFFFFFFFF)
+            {
 
-            /* Set the 'infinite least time.  */
-            interface_record -> nx_dhcp_rebind_time = value;
+                /* Set the 'infinite' rebind time.  */
+                interface_record -> nx_dhcp_rebind_time = value;
+            }
         }
         else if (value <= (0xFFFFFFFF / (ULONG)NX_IP_PERIODIC_RATE))
         {
