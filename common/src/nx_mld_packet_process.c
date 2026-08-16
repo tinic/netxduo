@@ -316,7 +316,19 @@ UCHAR           message_type;
         return;
     }
 
-    nx_interface = packet_ptr -> nx_packet_address.nx_packet_interface_ptr;
+    /* nx_packet_address is a union, and by the time an ICMPv6 message is
+       dispatched _nx_ipv6_packet_receive() has overwritten the interface
+       pointer it arrived with (nx_ipv6_packet_receive.c:300) with the address
+       entry it matched.  Reading nx_packet_interface_ptr here returns an
+       NXD_IPV6_ADDRESS, which matches no interface and silently answers no
+       query at all.  */
+    if (packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr == NX_NULL)
+    {
+        return;
+    }
+
+    nx_interface = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr ->
+                       nxd_ipv6_address_attached;
 
     if (nx_interface == NX_NULL)
     {
@@ -452,13 +464,15 @@ UCHAR         record_type;
 
         _nx_mld_message_send(ip_ptr, group_ptr, message_type, record_type);
 
+        group_ptr -> nx_mld_group_retransmit =
+            (UCHAR)((group_ptr -> nx_mld_group_retransmit != 0) ?
+                    (group_ptr -> nx_mld_group_retransmit - 1) : 0);
+
         if (group_ptr -> nx_mld_group_retransmit != 0)
         {
 
-            /* Still owed: one more copy of the same state change, after
-               another random delay.  */
-            group_ptr -> nx_mld_group_retransmit--;
-
+            /* Still owed: another copy of the same state change, after another
+               random delay.  */
             if (_nx_mld_v1_mode(ip_ptr, group_ptr -> nx_mld_group_interface) == NX_TRUE)
             {
                 group_ptr -> nx_mld_group_timer =
