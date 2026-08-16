@@ -92,10 +92,11 @@
  *
  * An off-path remote guessing an acknowledgment number has to land on a
  * counter within NX_TCP_SYNCACHE_COOKIE_MAXDIFF of the current one, which is
- * two values in 256, and then on one of the 1024 encodings the option field
- * has, which is 1024 in 2^24.  That is one guess in about two million million,
- * per packet, and the keys it would have to recover instead are drawn from
- * NX_RAND at nx_tcp_enable and never leave the machine.
+ * one of two values in 256 -- the counter step it was minted in, or the one
+ * after -- and then on one of the 1024 encodings the option field has, which
+ * is 1024 in 2^24.  That is one guess in about two million, per packet, and
+ * the keys it would have to recover instead are drawn from NX_RAND at
+ * nx_tcp_enable and never leave the machine.
  *
  * THE HASH
  *
@@ -157,10 +158,18 @@
    as the LARGEST entry not above it, so the connection never announces a
    segment size the peer did not agree to carry.  The clustering at the top is
    where the values a real network produces are: 1460 on Ethernet, 1452 and
-   1440 behind PPPoE and common tunnels, 1380 behind others, 1220 on IPv6.  */
+   1440 behind PPPoE and common tunnels, 1380 behind others, 1220 on IPv6.
+
+   THE FLOOR IS THE ONE VALUE THAT CAN BE ROUNDED UP.  Below the first entry
+   there is no smaller index to fall to, so a peer offering less than it would
+   be told the floor -- the one direction this encoding must not go.  It is 88
+   because that is under every MSS a legal link can produce: the smallest IPv4
+   MTU a host must handle is 68 and the smallest IPv6 link MTU is 1280, so 88
+   is already below anything a real peer asks for, and NX_TCP_MSS_MINIMUM
+   rejects the rest before this is reached.  */
 static const USHORT _nx_tcp_syncache_mss_table[16] =
 {
-    128, 256, 384, 512, 536, 640, 768, 896,
+    88, 216, 344, 472, 536, 640, 768, 896,
     1024, 1152, 1220, 1280, 1380, 1440, 1452, 1460
 };
 
@@ -820,14 +829,21 @@ static VOID  _nx_tcp_syncache_fill(NX_TCP_SYNCACHE_ENTRY *entry, NX_PACKET *pack
 }
 
 
-/* The window a SYN-ACK for this listen request should advertise.  */
+/* The window a SYN-ACK for this listen request advertises.
+ *
+ * Read from the listen request and NOT from whatever socket is parked on it
+ * at this instant.  The cookie path reconstructs the window scale from this
+ * number at ACK time, one round trip after the SYN-ACK announced it, and the
+ * parked socket can have changed or gone in between; a different number there
+ * is a different scale, and a peer shifting its window by a scale this end
+ * does not use.  nx_tcp_server_socket_listen and _relisten record it.
+ */
 static ULONG  _nx_tcp_syncache_window(NX_TCP_LISTEN *listen_ptr)
 {
 
-    if ((listen_ptr) && (listen_ptr -> nx_tcp_listen_socket_ptr) &&
-        (listen_ptr -> nx_tcp_listen_socket_ptr -> nx_tcp_socket_rx_window_default))
+    if ((listen_ptr) && (listen_ptr -> nx_tcp_listen_rx_window))
     {
-        return(listen_ptr -> nx_tcp_listen_socket_ptr -> nx_tcp_socket_rx_window_default);
+        return(listen_ptr -> nx_tcp_listen_rx_window);
     }
 
     return(NX_TCP_SYNCACHE_DEFAULT_WINDOW);
@@ -1028,6 +1044,26 @@ UINT                   bucket;
         options |= NX_TCP_SYNCACHE_OPT_TIMESTAMP;
     }
 
+#ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
+    /* The application's own filter on a connection request, and this is now
+       the only place a SYN is seen with its packet still in hand -- the
+       listen queue that used to carry one to relisten no longer exists.  It
+       runs before anything is recorded, so a refused SYN costs an entry as
+       little as it costs a socket.  */
+    if ((listen_ptr -> nx_tcp_listen_socket_ptr) &&
+        (listen_ptr -> nx_tcp_listen_socket_ptr -> nx_tcp_socket_syn_received_notify))
+    {
+
+        NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
+
+        if ((listen_ptr -> nx_tcp_listen_socket_ptr -> nx_tcp_socket_syn_received_notify)(
+                listen_ptr -> nx_tcp_listen_socket_ptr, packet_ptr) != NX_TRUE)
+        {
+            return;
+        }
+    }
+#endif /* NX_DISABLE_EXTENDED_NOTIFY_SUPPORT */
+
     entry = _nx_tcp_syncache_find(ip_ptr, packet_ptr -> nx_packet_ip_version,
                                   source_ip, local_port, source_port);
 
@@ -1045,8 +1081,23 @@ UINT                   bucket;
             return;
         }
 
-        /* Anything else is a new connection on a four-tuple the old one has
-           not finished with.  The old one is the stale side of that.  */
+        if (entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_ESTABLISHED)
+        {
+
+            /* A finished handshake waiting to be accepted.  A SYN does not
+               end it: the peer of THAT connection is established and never
+               sent this, so acting on it would let anyone who can guess a
+               four-tuple throw away a connection somebody else made.  The
+               socket path in this fork refuses a stray SYN on a live
+               connection for the same reason; a connection waiting in the
+               accept queue is no less live for having no socket yet.  */
+            return;
+        }
+
+        /* A half-open connection, and a SYN carrying a different sequence
+           number: the client has restarted and this is a new incarnation on
+           the same four-tuple.  The old half is the stale side of that, and
+           it was never more than an entry.  */
         _nx_tcp_syncache_release(ip_ptr, entry);
     }
 
@@ -1666,13 +1717,31 @@ UINT                   bucket;
 /*                                                                        */
 /*  DESCRIPTION                                                           */
 /*                                                                        */
-/*    A RST for a port in listen mode.  If it names a half-open connection */
-/*    this end is holding, that connection is over.  A finished one is     */
-/*    left alone: it is the socket path's, and this function only sees     */
-/*    segments no socket matched.                                         */
+/*    A RST for a port in listen mode.  If it names a connection this end  */
+/*    is holding, and carries the sequence number that connection is       */
+/*    expecting, it is over.                                              */
+/*                                                                        */
+/*    THE SEQUENCE NUMBER IS CHECKED, RFC 5961 SECTION 3.  Without it any  */
+/*    remote that can guess or observe a four-tuple ends somebody else's   */
+/*    half-open connection with one forged segment -- which would make     */
+/*    this the softest way into a machine the rest of the defence just     */
+/*    hardened, and the socket path in this same fork already refuses a    */
+/*    RST on the wrong sequence number.                                   */
+/*                                                                        */
+/*    Both legitimate resets carry the same number.  A client that aborts  */
+/*    sends RST from its next sequence number, which is irs + 1; a host    */
+/*    that never opened the connection at all answers the SYN-ACK with a   */
+/*    RST whose sequence number is that segment's acknowledgment field,    */
+/*    which is also irs + 1.  So one test admits both and nothing else.    */
+/*                                                                        */
+/*    A finished handshake still waiting to be accepted is reset by the    */
+/*    same rule.  No socket is bound to it, so nothing else in the stack   */
+/*    would see this RST, and leaving it would hand the application a live */
+/*    socket for a connection the peer has already abandoned.             */
 /*                                                                        */
 /**************************************************************************/
-VOID  _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, ULONG *source_ip, ULONG ip_version,
+VOID  _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, NX_TCP_HEADER *tcp_header_ptr,
+                                      ULONG *source_ip, ULONG ip_version,
                                       UINT local_port, UINT source_port)
 {
 
@@ -1686,10 +1755,21 @@ NX_TCP_SYNCACHE_ENTRY *entry;
 
     entry = _nx_tcp_syncache_find(ip_ptr, ip_version, source_ip, local_port, source_port);
 
-    if ((entry) && (entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_SYN_RECEIVED))
+    if (entry == NX_NULL)
     {
-        _nx_tcp_syncache_release(ip_ptr, entry);
+        return;
     }
+
+    if (tcp_header_ptr -> nx_tcp_sequence_number != (entry -> nx_tcp_syncache_irs + 1))
+    {
+
+        /* Out of window.  Counted, because a machine seeing these is being
+           probed by something that does not know the sequence number.  */
+        ip_ptr -> nx_ip_tcp_syncache.nx_tcp_syncache_resets_refused++;
+        return;
+    }
+
+    _nx_tcp_syncache_release(ip_ptr, entry);
 }
 
 

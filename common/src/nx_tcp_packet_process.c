@@ -684,7 +684,7 @@ ULONG                        timestamp_echo = 0;
                     /* A half-open connection this end is holding for that
                        peer is over.  There is nothing else to release: the
                        cache holds no packet and has committed no socket.  */
-                    _nx_tcp_syncache_reset_received(ip_ptr, source_ip,
+                    _nx_tcp_syncache_reset_received(ip_ptr, tcp_header_ptr, source_ip,
                                                     packet_ptr -> nx_packet_ip_version,
                                                     port, source_port);
 

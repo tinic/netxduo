@@ -2372,6 +2372,19 @@ typedef struct NX_TCP_LISTEN_STRUCT
     NX_PACKET   *nx_tcp_listen_queue_head,
                 *nx_tcp_listen_queue_tail;
 
+    /* The receive window a SYN-ACK from the SYN cache advertises for this
+       port, recorded when a socket is put on the listen request.
+
+       It is here rather than read off nx_tcp_listen_socket_ptr because that
+       pointer is NULL for as long as a connection is being handed over, and a
+       SYN arriving in that window would otherwise be answered with a
+       different window -- and so with a different window SCALE -- than the
+       one the completing ACK is reconstructed against.  The peer would then
+       shift by a scale this end does not use.  One number per port, stable
+       across the whole handshake, is what makes the cookie path reproduce
+       what the SYN-ACK actually said.  */
+    ULONG       nx_tcp_listen_rx_window;
+
 #ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
     /* Define the callback function for notifying the host application of
        a new connect request in the listen queue. */
@@ -2444,11 +2457,12 @@ typedef struct NX_TCP_LISTEN_STRUCT
 #define NX_TCP_SYNCACHE_RETRY_LADDER            { 1, 3, 7 }
 #define NX_TCP_SYNCACHE_RETRIES                 3
 
-/* A cookie's counter steps every 2048 ticks, which at the fifty a tick per
-   second this port runs at is 41 seconds, and a cookie two steps old is
-   still accepted.  So a cookie is good for between 41 and 82 seconds: long
-   enough for any client's ACK, short enough that a captured one is not worth
-   replaying.  */
+/* A cookie's counter steps every 2048 ticks, which at the fifty ticks a
+   second this port runs at is 41 seconds, and a cookie is accepted in the
+   step it was minted in and in the one after -- MAXDIFF is the first value
+   REFUSED.  So a cookie is good for between 41 and 82 seconds depending on
+   where in a step it was minted: long enough for any client's ACK, short
+   enough that a captured one is not worth replaying.  */
 #define NX_TCP_SYNCACHE_COOKIE_SHIFT            11
 #define NX_TCP_SYNCACHE_COOKIE_MAXDIFF          2
 
@@ -2561,6 +2575,7 @@ typedef struct NX_TCP_SYNCACHE_STRUCT
     ULONG        nx_tcp_syncache_cookies_sent;
     ULONG        nx_tcp_syncache_cookies_valid;
     ULONG        nx_tcp_syncache_cookies_invalid;
+    ULONG        nx_tcp_syncache_resets_refused;
 
     UINT         nx_tcp_syncache_initialized;
 } NX_TCP_SYNCACHE;

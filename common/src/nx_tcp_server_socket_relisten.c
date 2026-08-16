@@ -163,6 +163,15 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                 }
 #endif /* NX_ENABLE_TCPIP_OFFLOAD */
 
+                /* Keep the port's advertised window in step with the socket
+                   now serving it, so a SYN-ACK the cache sends and the ACK it
+                   is reconstructed against agree on the scale.  */
+                if (socket_ptr -> nx_tcp_socket_rx_window_default)
+                {
+                    listen_ptr -> nx_tcp_listen_rx_window =
+                        socket_ptr -> nx_tcp_socket_rx_window_default;
+                }
+
                 /* A handshake that finished while this listen request had no
                    socket is waiting in the SYN cache, and this is the socket
                    it was waiting for.  It goes over before the socket is

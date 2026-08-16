@@ -492,7 +492,8 @@ UINT _nx_tcp_syncache_ack_received(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                                    ULONG *source_ip, ULONG *dest_ip, UINT source_port,
                                    NX_INTERFACE *interface_ptr, ULONG timestamp_present,
                                    ULONG timestamp_value);
-VOID _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, ULONG *source_ip, ULONG ip_version,
+VOID _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, NX_TCP_HEADER *tcp_header_ptr,
+                                     ULONG *source_ip, ULONG ip_version,
                                      UINT local_port, UINT source_port);
 UINT _nx_tcp_syncache_deliver(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                               NX_TCP_SOCKET *socket_ptr);
