@@ -528,7 +528,28 @@ ULONG  step;
        released by its own persist timer, which this fork arms
        (nx_tcp_socket_send_internal.c), so the fine-grained announcement is
        not what gets it moving again and costs the read path four fifths of
-       its acknowledgment traffic.  */
+       its acknowledgment traffic.
+
+       PUT BACK AT 2*MSS AND MEASURED AGAIN, 2026-08-16, because the "carried
+       nothing new" count looked like something the duplicate-information gate
+       in nx_tcp_socket_state_data_check.c would have suppressed.  It would
+       not have: that gate is three days OLDER than the removal, so the 574 of
+       1057 were counted with it already in the tree.  The re-measurement was
+       run anyway, under a streaming workload the original did not have --
+       tests/tools/run-iperf.sh with the guest as the server, so the guest is
+       the receiver and its application is the slow end, which is the only
+       shape this threshold governs.  Bridged, arms interleaved inside each
+       card's block, n=3, 8-second transfers, against RCV.BUFF/2:
+
+         a2065        / A1200   read  591.0 ->  439.3 KB/s   -25.7%
+         ariadne      / A1200   read  597.7 ->  425.0        -28.9%
+         x-surf-100 Z3/ A3000   read 4244.0 -> 2876.7        -32.2%
+
+       Within-arm spreads were 0.9 to 8.2%, and writes moved by half a percent
+       or less on every card, which is what a receive-side threshold should
+       do.  The term costs a quarter to a third of the read path.  It stays
+       out, and this note is here so the next reading of the RFC does not
+       spend another afternoon on it.  */
     step = socket_ptr -> nx_tcp_socket_rx_window_default / 2;
 
     return(step);
