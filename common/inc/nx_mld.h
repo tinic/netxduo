@@ -110,7 +110,8 @@
 #endif
 
 
-#ifdef NX_SOURCE_CODE
+/* Declared unconditionally, the way nx_ipv6.h declares its internals: the
+   host-tier test in tests/ipv6/host/ drives these directly.  */
 
 UINT _nx_mld_enable(NX_IP *ip_ptr);
 
@@ -131,8 +132,6 @@ VOID  _nx_mld_group_schedule(NX_IP *ip_ptr, NX_MLD_GROUP *group_ptr,
 VOID  _nx_mld_message_send(NX_IP *ip_ptr, NX_MLD_GROUP *group_ptr, UINT message_type,
                            UCHAR record_type);
 UINT  _nx_mld_is_message(NX_PACKET *packet_ptr, ULONG protocol);
-
-#endif /* NX_SOURCE_CODE */
 
 #endif /* NX_ENABLE_MLD */
 
