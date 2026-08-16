@@ -123,7 +123,7 @@ ULONG tx_window_current;
            those round trips is a context switch and a mutex pair on a machine
            that has neither to spare.  With it, the wait ends when a segment
            can actually be sent.  */
-        if (_nx_tcp_socket_sws_send_permitted(socket_ptr, tx_window_current) == NX_FALSE)
+        if (_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE)
         {
             tx_window_current = 0;
         }
