@@ -2384,6 +2384,187 @@ typedef struct NX_TCP_LISTEN_STRUCT
                 *nx_tcp_listen_previous;
 } NX_TCP_LISTEN;
 
+
+/* SYN DEFENCE, RFC 4987.
+
+   A listening port used to answer a SYN by taking the socket the listen
+   request was given, or, once that was gone, by holding the SYN PACKET on a
+   queue until the application handed over another socket.  Both are state an
+   unauthenticated remote allocates by sending one segment, and neither is
+   returned until a timeout: eight SYNs from forged addresses were enough to
+   stop a listening port answering anything for the length of the SYN-ACK
+   retry ladder, and packets held on the listen queues of several ports come
+   out of the one pool the whole stack sends from.
+
+   What replaces it is section 3.4 and section 3.6 of RFC 4987 together.  A
+   half-open connection is a NX_TCP_SYNCACHE_ENTRY, 72 bytes and no packet,
+   which is what the SYN-ACK is built from and what the completing ACK is
+   matched against; the socket is not committed and the listen request is not
+   touched until the handshake finishes.  When the cache is full -- which
+   takes a flood, not a busy server -- the SYN-ACK still goes out, carrying a
+   sequence number that IS the state: a keyed hash of the connection's four
+   addresses, the peer's own sequence number and the TCP options that were
+   negotiated.  Nothing is stored for it at all, and the ACK that comes back
+   one round trip later rebuilds the connection from the number it echoes.
+
+   The options a cookie carries are the reason it is not a downgrade.  The MSS
+   goes in as an index into _nx_tcp_syncache_mss_table, the window scale as
+   its shift, and SACK-Permitted and timestamps as one bit each; the peer's
+   timestamp value comes off the completing ACK, which carries a fresher one
+   than the SYN did.  So a connection settled under a flood negotiates the
+   same options as one settled when the machine is idle.  */
+
+/* Number of half-open connections held with their options recorded exactly.
+   Past this the cookie takes over, so this is not the bound on how many
+   connections can be in flight -- it is how many are served without the
+   quantisation the cookie's MSS table imposes.  An entry is 80 bytes on the
+   target; 512 of them and 128 chain heads cost 41,548 bytes -- about 40 KB --
+   of the IP instance, measured, one percent of the four megabytes the project
+   targets.  */
+#define NX_TCP_SYNCACHE_SIZE                    512
+#define NX_TCP_SYNCACHE_BUCKETS                 128
+
+/* A half-open entry is given up after this many ticks.  Twenty seconds
+   outlasts the SYN retry ladder of every client that matters (Linux gives up
+   at 1, 3, 7 and 15 seconds), so a client whose SYN-ACK was lost still finds
+   its entry when it tries again.  */
+#define NX_TCP_SYNCACHE_TIMEOUT                 (20 * NX_IP_PERIODIC_RATE)
+
+/* A finished handshake nobody has accepted is reset after this long.  The
+   peer believes it is established, so silence would leave it retransmitting
+   data into a connection that no longer exists.  */
+#define NX_TCP_SYNCACHE_ACCEPT_TIMEOUT          (60 * NX_IP_PERIODIC_RATE)
+
+/* Ticks after which a SYN-ACK is sent again, and how many times.  A lost
+   SYN-ACK is otherwise the client's SYN timer to recover, which is a second
+   at best and three at worst; this is what the socket path did with its own
+   one-second retransmit and losing it would be a slower handshake on a lossy
+   link.  The ladder is bounded, so the work a full cache of forged entries
+   can ask for is bounded with it.  */
+#define NX_TCP_SYNCACHE_RETRY_LADDER            { 1, 3, 7 }
+#define NX_TCP_SYNCACHE_RETRIES                 3
+
+/* A cookie's counter steps every 2048 ticks, which at the fifty a tick per
+   second this port runs at is 41 seconds, and a cookie two steps old is
+   still accepted.  So a cookie is good for between 41 and 82 seconds: long
+   enough for any client's ACK, short enough that a captured one is not worth
+   replaying.  */
+#define NX_TCP_SYNCACHE_COOKIE_SHIFT            11
+#define NX_TCP_SYNCACHE_COOKIE_MAXDIFF          2
+
+/* Handshakes that finished while the application had given the listen request
+   no socket to put them on.  The peer is established and will send data, so
+   these cannot be dropped silently; they are handed over by the next
+   nx_tcp_server_socket_relisten() and reset if they go stale first.  */
+#define NX_TCP_SYNCACHE_ACCEPT_MAX              32
+
+/* Entry states.  */
+#define NX_TCP_SYNCACHE_FREE                    0
+#define NX_TCP_SYNCACHE_SYN_RECEIVED            1
+#define NX_TCP_SYNCACHE_ESTABLISHED             2
+
+/* What the peer's SYN offered, held as bits so a cookie can carry them.  */
+#define NX_TCP_SYNCACHE_OPT_SACK                0x01u
+#define NX_TCP_SYNCACHE_OPT_TIMESTAMP           0x02u
+
+/* Window scale 15 is not a legal shift (RFC 7323 caps it at 14), so it is the
+   "the peer did not offer the option" marker, matching the 0xFF NetX Duo uses
+   in a socket.  Four bits is what a cookie has room for.  */
+#define NX_TCP_SYNCACHE_NO_WINDOW_SCALE         15u
+
+typedef struct NX_TCP_SYNCACHE_ENTRY_STRUCT
+{
+
+    /* Hash chain when in use, free list when not.  */
+    struct NX_TCP_SYNCACHE_ENTRY_STRUCT
+                *nx_tcp_syncache_hash_next;
+
+    /* Oldest first, so ageing and eviction both read one end.  Carries the
+       accept queue once the handshake has finished.  */
+    struct NX_TCP_SYNCACHE_ENTRY_STRUCT
+                *nx_tcp_syncache_age_next;
+
+    /* The connection this entry is half of.  */
+    NXD_ADDRESS  nx_tcp_syncache_peer_ip;
+    UINT         nx_tcp_syncache_peer_port;
+    UINT         nx_tcp_syncache_local_port;
+
+    /* The peer's initial sequence number, ours, and the window the last
+       segment from the peer advertised.  */
+    ULONG        nx_tcp_syncache_irs;
+    ULONG        nx_tcp_syncache_iss;
+    ULONG        nx_tcp_syncache_peer_window;
+
+    /* Where the SYN arrived, which is where the answer goes.  NX_INTERFACE
+       and NXD_IPV6_ADDRESS are both declared below this point, so both are
+       named by their struct tags.  */
+    struct NX_INTERFACE_STRUCT
+                *nx_tcp_syncache_interface;
+    struct NXD_IPV6_ADDRESS_STRUCT
+                *nx_tcp_syncache_ipv6_addr;
+
+    /* RFC 7323 TS.Recent, and the tick the entry was created on.  */
+    ULONG        nx_tcp_syncache_ts_recent;
+    ULONG        nx_tcp_syncache_time;
+
+    /* The receive window the SYN-ACK advertised, kept so a retransmission of
+       it carries the same window and the same scale.  */
+    ULONG        nx_tcp_syncache_rx_window;
+
+    /* The MSS the peer asked for, and the one the two ends settled on.  */
+    USHORT       nx_tcp_syncache_peer_mss;
+    USHORT       nx_tcp_syncache_connect_mss;
+
+    /* The peer's window scale and ours, as shifts.  */
+    UCHAR        nx_tcp_syncache_snd_win_scale;
+    UCHAR        nx_tcp_syncache_rcv_win_scale;
+
+    UCHAR        nx_tcp_syncache_options;
+    UCHAR        nx_tcp_syncache_state;
+    UCHAR        nx_tcp_syncache_retries;
+    UCHAR        nx_tcp_syncache_reserved;
+} NX_TCP_SYNCACHE_ENTRY;
+
+typedef struct NX_TCP_SYNCACHE_STRUCT
+{
+
+    NX_TCP_SYNCACHE_ENTRY
+                 nx_tcp_syncache_entries[NX_TCP_SYNCACHE_SIZE];
+
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_hash[NX_TCP_SYNCACHE_BUCKETS];
+
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_free;
+
+    /* Half-open entries, oldest first.  */
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_age_head,
+                *nx_tcp_syncache_age_tail;
+
+    /* Finished handshakes waiting for a socket, oldest first.  */
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_accept_head,
+                *nx_tcp_syncache_accept_tail;
+
+    ULONG        nx_tcp_syncache_count;
+    ULONG        nx_tcp_syncache_accept_count;
+
+    /* The two keys the cookie is built from.  Drawn once, at nx_tcp_enable.  */
+    ULONG        nx_tcp_syncache_key[4];
+
+    /* Counters, so netstat can say whether a machine is under one of these.  */
+    ULONG        nx_tcp_syncache_added;
+    ULONG        nx_tcp_syncache_completed;
+    ULONG        nx_tcp_syncache_evicted;
+    ULONG        nx_tcp_syncache_expired;
+    ULONG        nx_tcp_syncache_cookies_sent;
+    ULONG        nx_tcp_syncache_cookies_valid;
+    ULONG        nx_tcp_syncache_cookies_invalid;
+
+    UINT         nx_tcp_syncache_initialized;
+} NX_TCP_SYNCACHE;
+
 /* There should be at least one physical interface. */
 #ifndef NX_MAX_PHYSICAL_INTERFACES
 #define NX_MAX_PHYSICAL_INTERFACES    1
@@ -3171,6 +3352,11 @@ typedef struct NX_IP_STRUCT
        by issuing the nx_tcp_server_socket_listen service.  */
     NX_TCP_LISTEN
                 *nx_ip_tcp_active_listen_requests;
+
+    /* Define the SYN cache, which is what a connection to a listening port
+       exists in until its handshake completes.  See NX_TCP_SYNCACHE.  */
+    NX_TCP_SYNCACHE
+                nx_ip_tcp_syncache;
 
 #ifdef NX_ENABLE_HTTP_PROXY
     /* Define the IP address of HTTP proxy server.  */

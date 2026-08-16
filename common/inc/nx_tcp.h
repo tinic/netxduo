@@ -477,6 +477,36 @@ VOID _nx_tcp_sack_option_get(NX_TCP_SOCKET *socket_ptr, UCHAR *option_ptr, ULONG
 #endif /* NX_ENABLE_TCP_SACK */
 VOID _nx_tcp_periodic_processing(NX_IP *ip_ptr);
 VOID _nx_tcp_queue_process(NX_IP *ip_ptr);
+
+/* SYN defence, RFC 4987.  nx_tcp_syncache.c; the shape is described where
+   NX_TCP_SYNCACHE is declared in nx_api.h.  */
+VOID _nx_tcp_syncache_initialize(NX_IP *ip_ptr);
+VOID _nx_tcp_syncache_syn_received(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
+                                   NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr,
+                                   ULONG *source_ip, ULONG *dest_ip, UINT source_port,
+                                   NX_INTERFACE *interface_ptr, ULONG peer_mss,
+                                   ULONG window_scale, ULONG sack_permitted,
+                                   ULONG timestamp_present, ULONG timestamp_value);
+UINT _nx_tcp_syncache_ack_received(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
+                                   NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr,
+                                   ULONG *source_ip, ULONG *dest_ip, UINT source_port,
+                                   NX_INTERFACE *interface_ptr, ULONG timestamp_present,
+                                   ULONG timestamp_value);
+VOID _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, ULONG *source_ip, ULONG ip_version,
+                                     UINT local_port, UINT source_port);
+UINT _nx_tcp_syncache_deliver(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
+                              NX_TCP_SOCKET *socket_ptr);
+VOID _nx_tcp_syncache_flush(NX_IP *ip_ptr, UINT port);
+VOID _nx_tcp_syncache_periodic(NX_IP *ip_ptr);
+
+/* Split out so a host test can drive the cookie without a stack.  */
+ULONG _nx_tcp_syncache_hash(ULONG *key, ULONG *words, UINT word_count);
+ULONG _nx_tcp_syncache_cookie_build(ULONG *key, ULONG *tuple, UINT tuple_words,
+                                    ULONG irs, ULONG count, ULONG data);
+UINT  _nx_tcp_syncache_cookie_check(ULONG *key, ULONG *tuple, UINT tuple_words,
+                                    ULONG irs, ULONG count, ULONG cookie, ULONG *data);
+UINT  _nx_tcp_syncache_mss_encode(ULONG mss);
+ULONG _nx_tcp_syncache_mss_decode(UINT index);
 VOID _nx_tcp_receive_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 UINT _nx_tcp_socket_bytes_available(NX_TCP_SOCKET *socket_ptr, ULONG *bytes_available);
 VOID _nx_tcp_socket_connection_reset(NX_TCP_SOCKET *socket_ptr);

@@ -55,9 +55,10 @@
 /*    matching the packet to an existing connection and dispatching to    */
 /*    the socket specific processing routine.  If no connection is        */
 /*    found, this routine checks for a new connection request and if      */
-/*    found, processes it accordingly. If a reset packet is received, it  */
-/*    checks the queue for a previous connection request which needs to be*/
-/*    removed.                                                            */
+/*    found, hands it to the SYN cache -- which is where a connection to  */
+/*    a listening port lives until its handshake finishes, and why one    */
+/*    that never finishes costs this machine no socket and no packet.     */
+/*    See nx_tcp_syncache.c.                                             */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -74,11 +75,11 @@
 /*    _nx_ip_checksum_compute               Calculate TCP packet checksum */
 /*    _nx_tcp_mss_option_get                Get peer MSS option           */
 /*    _nx_tcp_no_connection_reset           Reset on no connection        */
-/*    _nx_tcp_packet_send_syn               Send SYN message              */
 /*    _nx_tcp_socket_packet_process         Socket specific packet        */
 /*                                            processing routine          */
-/*    (nx_tcp_listen_callback)              Application listen callback   */
-/*                                            function                    */
+/*    _nx_tcp_syncache_syn_received         Record a half-open connection */
+/*    _nx_tcp_syncache_ack_received         Finish one, or check a cookie */
+/*    _nx_tcp_syncache_reset_received       Cancel one                    */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -97,10 +98,6 @@ UINT                         source_port;
 NX_TCP_SOCKET               *socket_ptr;
 NX_TCP_HEADER               *tcp_header_ptr;
 struct NX_TCP_LISTEN_STRUCT *listen_ptr;
-VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT port);
-#ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
-VOID                         (*queue_callback)(struct NX_TCP_LISTEN_STRUCT *listen_ptr);
-#endif
 ULONG                        option_words;
 ULONG                        mss = 0;
 ULONG                        checksum;
@@ -108,12 +105,6 @@ NX_INTERFACE                *interface_ptr = NX_NULL;
 #if defined(NX_DISABLE_TCP_RX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
 UINT                         compute_checksum = 1;
 #endif /* defined(NX_DISABLE_TCP_RX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
-ULONG                        queued_count;
-NX_PACKET                   *queued_ptr;
-NX_PACKET                   *queued_prev_ptr;
-ULONG                       *queued_source_ip;
-UINT                         queued_source_port;
-UINT                         is_a_RST_request;
 UINT                         is_valid_option_flag = NX_TRUE;
 UINT                         status;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
@@ -573,9 +564,16 @@ ULONG                        timestamp_echo = 0;
 
     /* Handle new connection requests without ACK bit in NX_TCP_SYN_RECEIVED state.
        NX_TCP_SYN_RECEIVED state is equal of LISTEN state of RFC.
-       RFC793, Section3.9, Page65. */
-    if ((!(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT)) &&
-        (ip_ptr -> nx_ip_tcp_active_listen_requests))
+       RFC793, Section3.9, Page65.
+
+       The ACK that finishes a handshake the SYN cache is holding gets here
+       too, and has to: no socket is bound to that connection yet, so the
+       search above found nothing for it.  The test admits everything except a
+       SYN+ACK, which is a segment no listening port ever has an answer for.
+       nx_tcp_syncache.c says what the three cases below do with it.  */
+    if ((ip_ptr -> nx_ip_tcp_active_listen_requests) &&
+        ((!(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT)) ||
+         (!(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT))))
     {
 
 #ifndef NX_DISABLE_IPV4
@@ -677,473 +675,112 @@ ULONG                        timestamp_echo = 0;
             if (listen_ptr -> nx_tcp_listen_port == port)
             {
 
-                /* Determine if the packet is an initial connection request.
-                   The incoming SYN packet is a connection request.
-                   The incoming RST packet is related to a previous connection request.
-                   Fourth other text or control. RFC793, Section3.9, Page66. */
-                if ((!(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT)) &&
-                    (!(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)))
+                /* A SYN opens a connection, an ACK finishes one the SYN
+                   cache is holding, and a RST cancels one.  Fourth other
+                   text or control, RFC 793 section 3.9 page 66: nothing.  */
+                if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)
+                {
+
+                    /* A half-open connection this end is holding for that
+                       peer is over.  There is nothing else to release: the
+                       cache holds no packet and has committed no socket.  */
+                    _nx_tcp_syncache_reset_received(ip_ptr, source_ip,
+                                                    packet_ptr -> nx_packet_ip_version,
+                                                    port, source_port);
+
+#ifndef NX_DISABLE_TCP_INFO
+                    /* Increment the TCP dropped packet count.  */
+                    ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
+#endif
+
+                    _nx_packet_release(packet_ptr);
+
+                    return;
+                }
+
+                if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT)
                 {
 
 #ifndef NX_DISABLE_TCP_INFO
-                    /* This is a duplicate connection request. Increment the TCP dropped packet count.  */
-                    ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
-#endif /* NX_DISABLE_TCP_INFO */
+                    /* A connection has been requested.  It is not a
+                       connection yet -- nx_ip_tcp_connections counts the ones
+                       whose handshake finished, which under a flood is the
+                       difference that matters.  */
+                    ip_ptr -> nx_ip_tcp_passive_connections++;
+#endif
 
-                    /* Release the packet.  */
+                    /* If trace is enabled, insert this event into the trace buffer.  */
+                    NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_SYN_RECEIVE, ip_ptr, NX_NULL, packet_ptr, tcp_header_ptr -> nx_tcp_sequence_number, NX_TRACE_INTERNAL_EVENTS, 0, 0);
+
+                    /* Record the half-open connection, or answer it with a
+                       cookie if there is no room left to record one.  No
+                       socket is committed and no packet is held either way:
+                       that is the whole of the defence, and nx_tcp_syncache.c
+                       is where it is described.  */
+                    _nx_tcp_syncache_syn_received(ip_ptr, listen_ptr, packet_ptr, tcp_header_ptr,
+                                                  source_ip, dest_ip, source_port, interface_ptr,
+                                                  mss,
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+                                                  rwin_scale,
+#else
+                                                  0xFF,
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+#ifdef NX_ENABLE_TCP_SACK
+                                                  sack_permitted,
+#else
+                                                  NX_FALSE,
+#endif /* NX_ENABLE_TCP_SACK */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+                                                  timestamp_present, timestamp_value
+#else
+                                                  NX_FALSE, 0
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+                                                  );
+
+                    _nx_packet_release(packet_ptr);
+
+                    return;
+                }
+
+                if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT)
+                {
+
+                    /* The third segment of a handshake, or a stray.  If it is
+                       ours the connection is built here and a socket is
+                       committed to it for the first time.  */
+                    if (_nx_tcp_syncache_ack_received(ip_ptr, listen_ptr, packet_ptr, tcp_header_ptr,
+                                                      source_ip, dest_ip, source_port, interface_ptr,
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+                                                      timestamp_present, timestamp_value
+#else
+                                                      NX_FALSE, 0
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+                                                      ) != NX_TRUE)
+                    {
+
+#ifndef NX_DISABLE_TCP_INFO
+                        /* Not a handshake this end started.  Dropped rather
+                           than reset: a reset per unmatched acknowledgment is
+                           a segment an attacker gets this machine to send for
+                           nothing, and a peer holding a connection this end
+                           has forgotten learns that from its own retransmit
+                           timer.  */
+                        ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
+#endif
+                    }
+
                     _nx_packet_release(packet_ptr);
 
                     return;
                 }
 
 #ifndef NX_DISABLE_TCP_INFO
-
-                /* Check for a SYN bit set.  */
-                if ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT))
-                {
-
-                    /* Increment the passive TCP connections count.  */
-                    ip_ptr -> nx_ip_tcp_passive_connections++;
-
-                    /* Increment the TCP connections count.  */
-                    ip_ptr -> nx_ip_tcp_connections++;
-                }
-#endif
-
-                /* Okay, this port is in a listen mode.  We now need to see if
-                   there is an available socket for the new connection request
-                   present.  */
-                if ((listen_ptr -> nx_tcp_listen_socket_ptr) &&
-                    ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT) == NX_NULL))
-                {
-
-                    /* Yes there is indeed a socket present.  We now need to
-                       fill in the appropriate info and call the server callback
-                       routine.  */
-
-                    /* Allocate the supplied server socket.  */
-                    socket_ptr = listen_ptr -> nx_tcp_listen_socket_ptr;
-
-#ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
-                    /* If extended notify is enabled, call the syn_received notify function.
-                       This user-supplied function decides whether or not this SYN request
-                       should be accepted. */
-                    if (socket_ptr -> nx_tcp_socket_syn_received_notify)
-                    {
-
-                        /* Add debug information. */
-                        NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
-
-                        if ((socket_ptr -> nx_tcp_socket_syn_received_notify)(socket_ptr, packet_ptr) != NX_TRUE)
-                        {
-
-                            /* Release the packet.  */
-                            _nx_packet_release(packet_ptr);
-
-                            /* Finished processing, simply return!  */
-                            return;
-                        }
-                    }
-#endif /* NX_DISABLE_EXTENDED_NOTIFY_SUPPORT */
-
-                    /* If trace is enabled, insert this event into the trace buffer.  */
-                    NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_SYN_RECEIVE, ip_ptr, socket_ptr, packet_ptr, tcp_header_ptr -> nx_tcp_sequence_number, NX_TRACE_INTERNAL_EVENTS, 0, 0);
-
-                    /* Clear the server socket pointer in the listen request.  If the
-                       application wishes to honor more server connections on this port,
-                       the application must call relisten with a new server socket
-                       pointer.  */
-                    listen_ptr -> nx_tcp_listen_socket_ptr =  NX_NULL;
-
-                    /* Fill the socket in with the appropriate information.  */
-
-
-#ifndef NX_DISABLE_IPV4
-                    if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
-                    {
-
-                        /* Assume the interface that receives the incoming packet is the best interface
-                           for sending responses. */
-                        socket_ptr -> nx_tcp_socket_connect_interface = interface_ptr;
-                        socket_ptr -> nx_tcp_socket_next_hop_address = NX_NULL;
-
-                        /* Set the next hop address.  */
-                        _nx_ip_route_find(ip_ptr, *source_ip, &socket_ptr -> nx_tcp_socket_connect_interface,
-                                          &socket_ptr -> nx_tcp_socket_next_hop_address);
-
-                        socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version =  NX_IP_VERSION_V4;
-                        socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v4 = *source_ip;
-                    }
-#endif /* !NX_DISABLE_IPV4  */
-
-#ifdef FEATURE_NX_IPV6
-                    if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
-                    {
-
-                        socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version = NX_IP_VERSION_V6;
-                        COPY_IPV6_ADDRESS(source_ip, socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v6);
-
-                        /* Also record the outgoing interface information. */
-                        socket_ptr -> nx_tcp_socket_ipv6_addr = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr;
-                        socket_ptr -> nx_tcp_socket_connect_interface = interface_ptr;
-                    }
-#endif /* FEATURE_NX_IPV6 */
-
-                    socket_ptr -> nx_tcp_socket_connect_port = source_port;
-                    socket_ptr -> nx_tcp_socket_rx_sequence =  tcp_header_ptr -> nx_tcp_sequence_number;
-
-
-                    /* Yes, MSS was found, so store it!  */
-                    socket_ptr -> nx_tcp_socket_peer_mss = mss;
-
-#ifdef NX_ENABLE_TCP_WINDOW_SCALING
-                    /*
-                       Simply record the peer's window scale value. When we move to the
-                       ESTABLISHED state, we will set the peer window scale to 0 if the
-                       peer does not support this feature.
-                     */
-                    socket_ptr -> nx_tcp_snd_win_scale_value = rwin_scale;
-#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
-
-#ifdef NX_ENABLE_TCP_SACK
-
-                    /* RFC 2018 section 2: the option has to be on both SYNs, so what the
-                       peer's SYN carried decides whether this side may describe its
-                       holes in blocks.  */
-                    socket_ptr -> nx_tcp_socket_sack_permitted = (UCHAR)sack_permitted;
-
-                    /* Nothing a previous connection on this socket reported survives
-                       into this one.  */
-                    socket_ptr -> nx_tcp_socket_sack_block_count = 0;
-#endif /* NX_ENABLE_TCP_SACK */
-
-#ifdef NX_ENABLE_TCP_TIMESTAMP
-
-                    /* RFC 1323 section 3.2, the same rule for the same reason. */
-                    socket_ptr -> nx_tcp_socket_timestamp_enabled = (UCHAR)timestamp_present;
-                    if (timestamp_present == NX_TRUE)
-                    {
-                        socket_ptr -> nx_tcp_socket_ts_recent = timestamp_value;
-                    }
-#endif /* NX_ENABLE_TCP_TIMESTAMP */
-
-                    /* Set the initial slow start threshold to be the advertised window size. */
-                    socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = socket_ptr -> nx_tcp_socket_tx_window_advertised;
-
-                    /* Slow start:  setup initial window (IW) to be MSS,  RFC 2581, 3.1 */
-                    socket_ptr -> nx_tcp_socket_tx_window_congestion = mss;
-
-                    /* Initialize the transmit outstanding byte count to zero. */
-                    socket_ptr -> nx_tcp_socket_tx_outstanding_bytes = 0;
-
-                    /* Calculate the hash index in the TCP port array of the associated IP instance.  */
-                    index = (UINT)((port + (port >> 8)) & NX_TCP_PORT_TABLE_MASK);
-
-                    /* Determine if the list is NULL.  */
-                    if (ip_ptr -> nx_ip_tcp_port_table[index])
-                    {
-
-                        /* There are already sockets on this list... just add this one
-                           to the end.  */
-                        socket_ptr -> nx_tcp_socket_bound_next =
-                            ip_ptr -> nx_ip_tcp_port_table[index];
-                        socket_ptr -> nx_tcp_socket_bound_previous =
-                            (ip_ptr -> nx_ip_tcp_port_table[index]) -> nx_tcp_socket_bound_previous;
-                        ((ip_ptr -> nx_ip_tcp_port_table[index]) -> nx_tcp_socket_bound_previous) -> nx_tcp_socket_bound_next =
-                            socket_ptr;
-                        (ip_ptr -> nx_ip_tcp_port_table[index]) -> nx_tcp_socket_bound_previous = socket_ptr;
-                    }
-                    else
-                    {
-
-                        /* Nothing is on the TCP port list.  Add this TCP socket to an
-                           empty list.  */
-                        socket_ptr -> nx_tcp_socket_bound_next =      socket_ptr;
-                        socket_ptr -> nx_tcp_socket_bound_previous =  socket_ptr;
-                        ip_ptr -> nx_ip_tcp_port_table[index] =       socket_ptr;
-                    }
-
-                    /* Pickup the listen callback function.  */
-                    listen_callback = listen_ptr -> nx_tcp_listen_callback;
-
-                    /* Release the incoming packet.  */
-                    _nx_packet_release(packet_ptr);
-
-                    /* Determine if an accept call with suspension has already been made
-                       for this socket.  If so, the SYN message needs to be sent from
-                       here.  */
-                    if (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_RECEIVED)
-                    {
-
-
-                        /* If trace is enabled, insert this event into the trace buffer.  */
-                        NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_STATE_CHANGE, ip_ptr, socket_ptr, socket_ptr -> nx_tcp_socket_state, socket_ptr -> nx_tcp_socket_state, NX_TRACE_INTERNAL_EVENTS, 0, 0);
-
-
-                        /* The application is suspended on an accept call for this socket.
-                           Simply send the SYN now and keep the thread suspended until the
-                           other side completes the connection.  */
-
-                        /* Send the SYN message, but increment the ACK first.  */
-                        socket_ptr -> nx_tcp_socket_rx_sequence++;
-
-                        /* Increment the sequence number for the SYN message.  */
-                        socket_ptr -> nx_tcp_socket_tx_sequence++;
-
-                        /* Setup a timeout so the connection attempt can be sent again.  */
-                        socket_ptr -> nx_tcp_socket_timeout =          socket_ptr -> nx_tcp_socket_timeout_rate;
-                        socket_ptr -> nx_tcp_socket_timeout_retries =  0;
-
-                        /* Send the SYN+ACK message.  */
-                        _nx_tcp_packet_send_syn(socket_ptr, (socket_ptr -> nx_tcp_socket_tx_sequence - 1));
-                    }
-
-                    /* Determine if there is a listen callback function.  */
-                    if (listen_callback)
-                    {
-                        /* Call the user's listen callback function.  */
-                        (listen_callback)(socket_ptr, port);
-                    }
-                }
-                else
-                {
-
-                    /* There is no server socket available for the new connection.  */
-
-                    /* The application needs to call relisten with a new server request to process this queued
-                       connection.  */
-
-                    /* Check for a RST (reset) bit set.  */
-                    if (!(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT))
-                    {
-
-                        /* If trace is enabled, insert this event into the trace buffer.  */
-                        NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_SYN_RECEIVE, ip_ptr, NX_NULL, packet_ptr, tcp_header_ptr -> nx_tcp_sequence_number, NX_TRACE_INTERNAL_EVENTS, 0, 0);
-                    }
-
-                    /* Check for the same connection request already in the queue.  */
-                    queued_count = listen_ptr -> nx_tcp_listen_queue_current;
-                    queued_ptr = listen_ptr -> nx_tcp_listen_queue_head;
-                    queued_prev_ptr = queued_ptr;
-
-                    /* Initialize the check for queued request to false.*/
-                    is_a_RST_request = NX_FALSE;
-
-                    /* Loop through the queued list in order to search for duplicate request.  */
-                    while (queued_count--)
-                    {
-
-                        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-                        queued_source_port = (UINT)(*((ULONG *)queued_ptr -> nx_packet_prepend_ptr) >> NX_SHIFT_BY_16);
-
-#ifndef NX_DISABLE_IPV4
-                        /* Pickup the queued source port and source IP address for comparison.  */
-                        if (queued_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
-                        {
-
-                            /*lint -e{929} -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-                            queued_source_ip = (ULONG *)(((ULONG *)queued_ptr -> nx_packet_prepend_ptr) - 2);
-
-                            /* Determine if this matches the current connection request.  */
-                            if ((*queued_source_ip == *source_ip) && (queued_source_port == source_port))
-                            {
-
-                                /* Possible duplicate connection request to one that is already queued.  */
-
-                                /* Check for a RST (reset) bit set.  */
-                                if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)
-                                {
-
-                                    /* RST packet matches a previously queued connection request. */
-                                    is_a_RST_request = NX_TRUE;
-                                }
-                                else
-                                {
-#ifndef NX_DISABLE_TCP_INFO
-                                    /* This is a duplicate connection request. Increment the TCP dropped packet count.  */
-                                    ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
-#endif
-                                    /* Simply release the packet and return.  */
-                                    _nx_packet_release(packet_ptr);
-
-                                    /* Return!  */
-                                    return;
-                                }
-                            }
-                        }
-#endif /* !NX_DISABLE_IPV4  */
-
-#ifdef FEATURE_NX_IPV6
-                        if (queued_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
-                        {
-
-                            /*lint -e{929} -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-                            queued_source_ip = (ULONG *)(((ULONG *)queued_ptr -> nx_packet_prepend_ptr) - 8);
-
-                            /* Determine if this matches the current connection request.  */
-                            if ((CHECK_IPV6_ADDRESSES_SAME(queued_source_ip, source_ip)) && (queued_source_port == source_port))
-                            {
-
-                                /* Possible duplicate connection request to one that is already queued.  */
-
-                                /* Check for a RST (reset) bit set.  */
-                                if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)
-                                {
-
-                                    /* RST packet matches a previously queued connection request. */
-                                    is_a_RST_request = NX_TRUE;
-                                }
-                                else
-                                {
-#ifndef NX_DISABLE_TCP_INFO
-                                    /* This is a duplicate connection request. Increment the TCP dropped packet count.  */
-                                    ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
-#endif
-                                    /* Simply release the packet and return.  */
-                                    _nx_packet_release(packet_ptr);
-
-                                    /* Return!  */
-                                    return;
-                                }
-                            }
-                        }
-#endif /* FEATURE_NX_IPV6  */
-
-                        /* Handle the case of the RST packet which cancels a previously received
-                           connection request. */
-                        if (is_a_RST_request)
-                        {
-
-                            /* A previous connection request needs to be removed from the listen queue. */
-                            if (queued_ptr == listen_ptr -> nx_tcp_listen_queue_head)
-                            {
-
-                                /* Reset the front (oldest) of the queue to the next request. */
-                                listen_ptr -> nx_tcp_listen_queue_head = queued_ptr -> nx_packet_queue_next;
-                            }
-                            else
-                            {
-
-                                /* Link around the request we are removing. */
-                                /*lint -e{613} suppress possible use of null pointer, since 'queued_prev_ptr' must not be NULL.  */
-                                queued_prev_ptr -> nx_packet_queue_next = queued_ptr -> nx_packet_queue_next;
-                            }
-
-                            /* Is the request being removed the tail (most recent connection?)   */
-                            if (queued_ptr == listen_ptr -> nx_tcp_listen_queue_tail)
-                            {
-
-                                /* Yes, set the previous connection request as the tail. */
-                                listen_ptr -> nx_tcp_listen_queue_tail = queued_prev_ptr;
-                            }
-
-                            /* Release the connection request packet.  */
-                            _nx_packet_release(queued_ptr);
-
-                            /* Update the listen queue. */
-                            listen_ptr -> nx_tcp_listen_queue_current--;
-
-#ifndef NX_DISABLE_TCP_INFO
-                            /* Increment the TCP dropped packet count.  */
-                            ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
-#endif
-
-                            /* Simply release the packet and return.  */
-                            _nx_packet_release(packet_ptr);
-
-                            /* Return!  */
-                            return;
-                        }
-
-                        /* Move to next item in the queue.  */
-                        queued_prev_ptr = queued_ptr;
-                        queued_ptr = queued_ptr -> nx_packet_queue_next;
-                    }
-
-                    /* Not a duplicate connection request, place this request on the listen queue.  */
-
-                    /* Is this a RST packet? */
-                    if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)
-                    {
-
-                        /* Yes, so not a connection request. Do not place on the listen queue. */
-#ifndef NX_DISABLE_TCP_INFO
-                        /* Increment the TCP dropped packet count.  */
-                        ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
-#endif
-
-                        /* Release the packet.  */
-                        _nx_packet_release(packet_ptr);
-
-                        /* Return!  */
-                        return;
-                    }
-
-                    /* Set the next pointer of the packet to NULL.  */
-                    packet_ptr -> nx_packet_queue_next = NX_NULL;
-
-                    /* Queue the new connection request.  */
-                    if (listen_ptr -> nx_tcp_listen_queue_head)
-                    {
-
-                        /* There is a connection request already queued, just link packet to tail.  */
-                        (listen_ptr -> nx_tcp_listen_queue_tail) -> nx_packet_queue_next = packet_ptr;
-                    }
-                    else
-                    {
-
-                        /* The queue is empty.  Setup head pointer to the new packet.  */
-                        listen_ptr -> nx_tcp_listen_queue_head = packet_ptr;
-                    }
-
-                    /* Setup the tail pointer to the new packet and increment the queue count.  */
-                    listen_ptr -> nx_tcp_listen_queue_tail =  packet_ptr;
-                    listen_ptr -> nx_tcp_listen_queue_current++;
-
-                    /* Add debug information. */
-                    NX_PACKET_DEBUG(NX_PACKET_TCP_LISTEN_QUEUE, __LINE__, packet_ptr);
-
-                    /* Determine if the queue depth has been exceeded.  */
-                    if (listen_ptr -> nx_tcp_listen_queue_current > listen_ptr -> nx_tcp_listen_queue_maximum)
-                    {
-
-#ifndef NX_DISABLE_TCP_INFO
-
-                        /* Increment the TCP connections dropped count.  */
-                        ip_ptr -> nx_ip_tcp_connections_dropped++;
-                        ip_ptr -> nx_ip_tcp_connections--;
-
-                        /* Increment the TCP dropped packet count.  */
-                        ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
-#endif
-
-                        /* Save the head packet pointer, since this will be released below.  */
-                        packet_ptr = listen_ptr -> nx_tcp_listen_queue_head;
-
-                        /* Remove the oldest packet from the queue.  */
-                        listen_ptr -> nx_tcp_listen_queue_head = (listen_ptr -> nx_tcp_listen_queue_head) -> nx_packet_queue_next;
-
-                        /* Decrement the number of packets in the queue.  */
-                        listen_ptr -> nx_tcp_listen_queue_current--;
-
-                        /* We have exceeded the number of connections that can be
-                           queued for this port.  */
-
-                        /* Release the packet.  */
-                        _nx_packet_release(packet_ptr);
-                    }
-
-#ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
-                    /* If extended notify is enabled, call the listen_queue_notify function.
-                       This user-supplied function notifies the host application of
-                       a new connect request in the listen queue. */
-                    queue_callback = listen_ptr -> nx_tcp_listen_queue_notify;
-                    if (queue_callback)
-                    {
-                        (queue_callback)(listen_ptr);
-                    }
-#endif
-                }
+                /* Neither of the three.  */
+                ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
+#endif /* NX_DISABLE_TCP_INFO */
+
+                /* Release the packet.  */
+                _nx_packet_release(packet_ptr);
 
                 /* Finished processing, just return.  */
                 return;

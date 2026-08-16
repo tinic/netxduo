@@ -173,6 +173,12 @@ struct NX_TCP_LISTEN_STRUCT *listen_ptr;
             if (listen_ptr -> nx_tcp_listen_port == port)
             {
 
+                /* Give up the half-open connections this port is holding and
+                   reset the finished ones.  A finished one has a peer that
+                   believes it is established: dropping it silently would
+                   leave that peer retransmitting into nothing.  */
+                _nx_tcp_syncache_flush(ip_ptr, port);
+
                 /* Pickup the socket for the listen request.  */
                 socket_ptr =  listen_ptr -> nx_tcp_listen_socket_ptr;
 
