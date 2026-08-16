@@ -1986,6 +1986,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
 
     /* Track the advertised window size */
     ULONG       nx_tcp_socket_tx_window_advertised;
+
+    /* Max(SND.WND), the largest window this peer has ever advertised.  RFC
+       1122 4.2.3.4 measures the sender's silly-window threshold against it
+       rather than against the current window, so that a peer whose window has
+       run down to a sliver is not judged by the sliver.  */
+    ULONG       nx_tcp_socket_tx_window_advertised_max;
     ULONG       nx_tcp_socket_tx_window_congestion;
     ULONG       nx_tcp_socket_tx_outstanding_bytes; /* Data transmitted but not acked. */
 

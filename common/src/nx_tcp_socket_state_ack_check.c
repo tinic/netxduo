@@ -637,6 +637,17 @@ UINT           dupack_threshold;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
             socket_ptr -> nx_tcp_socket_tx_window_advertised <<= socket_ptr -> nx_tcp_snd_win_scale_value;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+            /* Max(SND.WND), which RFC 1122 4.2.3.4 measures the sender's
+               silly-window threshold against.  Recorded here, after the
+               scaling, so it is a byte count on the same scale as the window
+               the send path compares to it.  */
+            if (socket_ptr -> nx_tcp_socket_tx_window_advertised >
+                socket_ptr -> nx_tcp_socket_tx_window_advertised_max)
+            {
+                socket_ptr -> nx_tcp_socket_tx_window_advertised_max =
+                    socket_ptr -> nx_tcp_socket_tx_window_advertised;
+            }
         }
 
         /* Check advertised window. */
