@@ -2635,6 +2635,53 @@ typedef struct NX_IPV6_MULTICAST_STRUCT
 
 #endif /* NX_ENABLE_IPV6_MULTICAST  */
 
+#ifdef NX_ENABLE_MLD
+
+/* Groups this host may report on at once.  One solicited-node group per IPv6
+   address, plus whatever the application joins, plus ff02::1, which takes an
+   entry and is never reported.  */
+#ifndef NX_MLD_MAX_GROUPS
+#ifdef NX_ENABLE_IPV6_MULTICAST
+#define NX_MLD_MAX_GROUPS       (NX_MAX_IPV6_ADDRESSES + NX_MAX_MULTICAST_GROUPS + 2)
+#else
+#define NX_MLD_MAX_GROUPS       (NX_MAX_IPV6_ADDRESSES + 2)
+#endif /* NX_ENABLE_IPV6_MULTICAST */
+#endif /* NX_MLD_MAX_GROUPS */
+
+/* One joined group, with the listener state RFC 2710 section 3 keeps for it.
+   nx_mld_group_interface is what says the entry is in use: :: is a legal
+   thing to find in a zeroed table and so is a table nothing has written.  */
+typedef struct NX_MLD_GROUP_STRUCT
+{
+    ULONG         nx_mld_group_address[4];
+    NX_INTERFACE *nx_mld_group_interface;
+
+    /* Joins referring to this entry.  Two addresses whose low 24 bits agree
+       share one solicited-node group, and the second leave sends the Done.  */
+    ULONG         nx_mld_group_join_count;
+
+    /* Seconds until the pending report; 0 when none is pending.  */
+    ULONG         nx_mld_group_timer;
+
+    /* Reports still owed after the one already sent.  A state change goes
+       out Robustness Variable times, RFC 9777 section 6.1.  */
+    UCHAR         nx_mld_group_retransmit;
+
+    UCHAR         nx_mld_group_state;
+
+    /* Set when this host sent the last report for the group, cleared when
+       another host's report is seen.  Only the last reporter sends a Done,
+       RFC 2710 section 5.  */
+    UCHAR         nx_mld_group_last_reporter;
+
+    /* What the pending report will say: MODE_IS_EXCLUDE for a query
+       response, CHANGE_TO_EXCLUDE_MODE for a join, CHANGE_TO_INCLUDE_MODE
+       for a leave.  Unused in MLDv1 mode, which has one report message.  */
+    UCHAR         nx_mld_group_record_type;
+} NX_MLD_GROUP;
+
+#endif /* NX_ENABLE_MLD  */
+
 
 /* Determine if the IP control block has an extension defined. If not,
    define the extension to whitespace.  */
@@ -2979,6 +3026,31 @@ typedef struct NX_IP_STRUCT
     ULONG       nx_ipv6_multicast_groups_joined;
 
 #endif /* NX_ENABLE_IPV6_MULTICAST  */
+
+#ifdef NX_ENABLE_MLD
+
+    /* Multicast Listener Discovery, host side.  Non-zero once
+       nx_mld_enable() has run; nothing is sent before that, so an IP
+       instance still being built cannot report on a half-attached
+       interface.  */
+    UINT          nx_ip_mld_enabled;
+
+    /* Every group this host listens to, whether the join came from the
+       application or from nxd_ipv6_address_set() forming a solicited-node
+       address.  Both feed _nx_mld_group_join().  */
+    NX_MLD_GROUP  nx_ip_mld_groups[NX_MLD_MAX_GROUPS];
+
+    /* Seconds left of MLDv1 compatibility on each interface, RFC 9777
+       section 8.2.1.  Zero is MLDv2, which is where a host starts.  */
+    ULONG         nx_ip_mld_v1_querier_present[NX_MAX_PHYSICAL_INTERFACES];
+
+    ULONG         nx_ip_mld_reports_sent;
+    ULONG         nx_ip_mld_done_sent;
+    ULONG         nx_ip_mld_queries_received;
+    ULONG         nx_ip_mld_reports_received;
+    ULONG         nx_ip_mld_invalid_packets;
+
+#endif /* NX_ENABLE_MLD  */
 
     /* Define the ICMP packet receive routine.  This also doubles as a
        mechanism to make sure ICMP is enabled.  If this function is NULL, ICMP
@@ -3398,6 +3470,10 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nxd_icmp_source_ping                            _nxd_icmp_source_ping
 #define nxd_icmpv6_ra_flag_callback_set                 _nxd_icmpv6_ra_flag_callback_set
 
+/* APIs for MLD.  There is no error-checking wrapper: the only argument is
+   the IP instance, which _nx_mld_enable() checks itself.  */
+#define nx_mld_enable                                   _nx_mld_enable
+
 /* APIs for IGMP. */
 #define nx_igmp_enable                                  _nx_igmp_enable
 #define nx_igmp_info_get                                _nx_igmp_info_get
@@ -3592,6 +3668,9 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nxd_icmp_ping                                   _nxde_icmp_ping
 #define nxd_icmp_source_ping                            _nxde_icmp_source_ping
 #define nxd_icmpv6_ra_flag_callback_set                 _nxde_icmpv6_ra_flag_callback_set
+
+/* APIs for MLD.  */
+#define nx_mld_enable                                   _nx_mld_enable
 
 /* APIs for IGMP. */
 #define nx_igmp_enable                                  _nxe_igmp_enable
@@ -3796,6 +3875,9 @@ UINT nxd_icmp_source_ping(NX_IP *ip_ptr, NXD_ADDRESS *ip_address, UINT address_i
                           ULONG data_size, NX_PACKET **response_ptr, ULONG wait_option);
 UINT nxd_icmpv6_ra_flag_callback_set(NX_IP *ip_ptr,
                                      VOID (*icmpv6_ra_flag_callback)(NX_IP *ip_ptr, UINT ra_flag));
+
+/* APIs for MLD. */
+UINT nx_mld_enable(NX_IP *ip_ptr);
 
 /* APIs for IGMP. */
 UINT nx_igmp_enable(NX_IP *ip_ptr);

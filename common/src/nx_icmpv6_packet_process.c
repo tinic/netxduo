@@ -29,6 +29,9 @@
 #include "nx_packet.h"
 #include "nx_ip.h"
 #include "nx_ipv6.h"
+#ifdef NX_ENABLE_MLD
+#include "nx_mld.h"
+#endif /* NX_ENABLE_MLD */
 #include "nx_icmpv6.h"
 
 #ifdef NX_IPSEC_ENABLE
@@ -214,6 +217,21 @@ NX_IPV6_HEADER   *ipv6_header;
         _nx_icmpv6_process_packet_too_big(ip_ptr, packet_ptr);
     }
 #endif /* NX_ENABLE_IPV6_PATH_MTU_DISCOVERY */
+
+#ifdef NX_ENABLE_MLD
+
+    /* Multicast Listener Discovery.  _nx_mld_packet_process() reads the
+       message and never keeps it, so the packet is released here with the
+       rest.  */
+    else if ((header_ptr -> nx_icmpv6_header_type == NX_MLD_QUERY_TYPE) ||
+             (header_ptr -> nx_icmpv6_header_type == NX_MLD_V1_REPORT_TYPE) ||
+             (header_ptr -> nx_icmpv6_header_type == NX_MLD_DONE_TYPE) ||
+             (header_ptr -> nx_icmpv6_header_type == NX_MLD_V2_REPORT_TYPE))
+    {
+        _nx_mld_packet_process(ip_ptr, packet_ptr);
+        _nx_packet_release(packet_ptr);
+    }
+#endif /* NX_ENABLE_MLD */
 
     else
     {

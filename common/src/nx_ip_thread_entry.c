@@ -31,6 +31,9 @@
 #include "nx_igmp.h"
 #ifdef FEATURE_NX_IPV6
 #include "nx_ipv6.h"
+#ifdef NX_ENABLE_MLD
+#include "nx_mld.h"
+#endif /* NX_ENABLE_MLD */
 #include "nx_icmpv6.h"
 #endif /* FEATURE_NX_IPV6 */
 
@@ -454,6 +457,12 @@ NXD_IPV6_ADDRESS *interface_ipv6_address;
                 /* Run the ND Cache update routine.  This is a 1 second timer */
                 ip_ptr -> nx_nd_cache_slow_periodic_update(ip_ptr);
             }
+
+#ifdef NX_ENABLE_MLD
+
+            /* Multicast Listener Discovery report timers, also 1 second.  */
+            _nx_mld_periodic_processing(ip_ptr);
+#endif /* NX_ENABLE_MLD */
 
             _nxd_ipv6_prefix_router_timer_tick(ip_ptr);
 #ifndef NX_DISABLE_ICMPV6_ROUTER_SOLICITATION

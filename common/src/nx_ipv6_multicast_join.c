@@ -29,6 +29,9 @@
 #ifdef FEATURE_NX_IPV6
 #include "nx_ip.h"
 #include "nx_ipv6.h"
+#ifdef NX_ENABLE_MLD
+#include "nx_mld.h"
+#endif /* NX_ENABLE_MLD */
 
 
 /**************************************************************************/
@@ -89,6 +92,19 @@ NX_IP_DRIVER driver_request;
 
     /* Release the protection over the IP instance.  */
     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+#ifdef NX_ENABLE_MLD
+
+    /* Tell the link this host is now listening.  After the driver command,
+       not before: the report is answered by a router that may start
+       forwarding the group immediately, and a frame arriving before the
+       address filter is open is a frame lost.  */
+    /*lint -e{644} suppress variable might not be initialized, since "nx_ip_driver_status" was initialized in nx_interface_link_driver_entry. */
+    if (driver_request.nx_ip_driver_status == NX_SUCCESS)
+    {
+        _nx_mld_group_join(ip_ptr, multicast_addr, nx_interface);
+    }
+#endif /* NX_ENABLE_MLD */
 
     /*lint -e{644} suppress variable might not be initialized, since "nx_ip_driver_status" was initialized in nx_interface_link_driver_entry. */
     return(driver_request.nx_ip_driver_status);

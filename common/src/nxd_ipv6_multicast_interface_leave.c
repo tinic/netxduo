@@ -27,6 +27,9 @@
 
 #include "nx_api.h"
 #include "nx_ipv6.h"
+#ifdef NX_ENABLE_MLD
+#include "nx_mld.h"
+#endif /* NX_ENABLE_MLD */
 
 
 /**************************************************************************/
@@ -108,6 +111,13 @@ NX_INTERFACE *nx_interface;
                 driver_request.nx_ip_driver_physical_address_msw =   0x00003333;
                 driver_request.nx_ip_driver_physical_address_lsw =   group_address -> nxd_ip_address.v6[3];
                 driver_request.nx_ip_driver_interface =              nx_interface;
+
+#ifdef NX_ENABLE_MLD
+
+                /* Announce the leave while the address filter is still
+                   open, so the query a router answers it with is heard.  */
+                _nx_mld_group_leave(ip_ptr, group_address -> nxd_ip_address.v6, nx_interface);
+#endif /* NX_ENABLE_MLD */
 
                 (ip_ptr -> nx_ipv6_multicast_entry[i].nx_ip_mld_join_interface_list -> nx_interface_link_driver_entry)(&driver_request);
 
