@@ -1276,6 +1276,10 @@ UINT  status;
         /* Delete the flag queue.  */
         tx_event_flags_delete(&dhcpv6_ptr -> nx_dhcpv6_events);
 
+        /* Terminate the suspended thread before deleting it.  */
+        tx_thread_terminate(&dhcpv6_ptr -> nx_dhcpv6_thread);
+
+        /* Delete the thread.  */
         tx_thread_delete(&dhcpv6_ptr -> nx_dhcpv6_thread);
 
         /* No, return error status.  */
@@ -1346,10 +1350,13 @@ UINT  status;
         /* Delete the flag queue.  */
         tx_event_flags_delete(&dhcpv6_ptr -> nx_dhcpv6_events);
 
+        /* Terminate the suspended thread before deleting it.  */
+        tx_thread_terminate(&dhcpv6_ptr -> nx_dhcpv6_thread);
+
         /* Delete the thread.  */
         tx_thread_delete(&dhcpv6_ptr -> nx_dhcpv6_thread);
         
-        /* Delete the thread.  */
+        /* Delete the UDP socket.  */
         nx_udp_socket_delete(&(dhcpv6_ptr -> nx_dhcpv6_socket));
 
         /* No, return error status.  */
