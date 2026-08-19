@@ -8109,7 +8109,7 @@ NX_DHCP *dhcp_ptr;
             dhcp_ptr -> nx_dhcp_interface_conflict_flag |= (UINT)(1 << iface_index);
 
             /* Set the address conflict event flag.  */
-            tx_event_flags_set(&(_nx_dhcp_created_ptr -> nx_dhcp_events), NX_DHCP_CLIENT_CONFLICT_EVENT, TX_OR);
+            tx_event_flags_set(&(dhcp_ptr -> nx_dhcp_events), NX_DHCP_CLIENT_CONFLICT_EVENT, TX_OR);
 
             break;
         }

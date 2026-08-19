@@ -100,6 +100,7 @@ set(dhcp_test_cases
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_packet_process_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_client_send_with_zero_source_address_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_multiple_instances_test.c
+    ${SOURCE_DIR}/dhcp_test/netx_dhcp_conflict_routing_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_send_request_internal_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_extract_information_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_get_option_value_test.c
