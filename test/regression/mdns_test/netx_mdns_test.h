@@ -85,6 +85,7 @@
 #define MDNS_SET_HOST_CONFLICT_LIMIT        0x71    /* This entry exhausts host conflict retries. */
 #define MDNS_CHECK_HOST_SUSPENDED           0x72    /* This entry checks that failed host probing stopped. */
 #define MDNS_CHECK_SERVICE_OWNER_NAME       0x73    /* This entry checks that service records share the renamed owner. */
+#define MDNS_SET_TXT_CONFLICT_LIMIT         0x74    /* This entry exhausts TXT conflict retries. */
 
 
 #define MDNS_FLAG_QUERY                     0x0000  /* Define flag for standard query. */

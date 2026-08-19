@@ -10762,6 +10762,14 @@ UINT        rr_name_length;
         return(NX_MDNS_UNSUPPORTED_TYPE); 
     }
 
+    /* A packet can contain more than one member of the same publication.
+       Once the first member exhausts the retry budget, it suspends the whole
+       publication; ignore later members instead of notifying twice. */
+    if (record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_SUSPEND)
+    {
+        return(NX_MDNS_ERROR);
+    }
+
     /* Keep the original owner available for RRSet and reference matching. */
     old_name = record_rr -> nx_mdns_rr_name;
 
@@ -10802,18 +10810,15 @@ UINT        rr_name_length;
             p -> nx_mdns_rr_send_flag = NX_MDNS_RR_SEND_FLAG_CLEAR;
         }
 
-        /* Yes, Receive the confilictiong mDNS, Probing failure.  */
-        if ((record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) ||
-            (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A))
+        /* Notify the application whether a host or service name failed.
+           AAAA and TXT can independently be the record which exhausts the
+           shared retry budget, so they must report the same publication
+           failure as A and SRV respectively. */
+        if (mdns_ptr -> nx_mdns_probing_notify)
         {
-
-            /* Notify the application whether a host or service name failed.  */
-            if (mdns_ptr -> nx_mdns_probing_notify)
-            {
-                (mdns_ptr -> nx_mdns_probing_notify)(mdns_ptr, name,
-                    is_host_type ? NX_MDNS_LOCAL_HOST_REGISTERED_FAILURE :
-                                   NX_MDNS_LOCAL_SERVICE_REGISTERED_FAILURE);
-            }
+            (mdns_ptr -> nx_mdns_probing_notify)(mdns_ptr, name,
+                is_host_type ? NX_MDNS_LOCAL_HOST_REGISTERED_FAILURE :
+                               NX_MDNS_LOCAL_SERVICE_REGISTERED_FAILURE);
         }
 
         /* Return.  */
