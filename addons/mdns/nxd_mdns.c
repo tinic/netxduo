@@ -136,7 +136,7 @@ static VOID         _nx_mdns_query_send(NX_MDNS *mdns_ptr, UINT interface_index)
 static UINT         _nx_mdns_query_check(NX_MDNS *mdns_ptr, UCHAR *name, USHORT type, UINT one_shot, NX_MDNS_RR **search_rr, UINT interface_index);
 static VOID         _nx_mdns_query_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 static VOID         _nx_mdns_query_thread_suspend(TX_THREAD **suspension_list_head, VOID (*suspend_cleanup)(TX_THREAD * NX_CLEANUP_PARAMETER),
-                                                  NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, ULONG wait_option);
+                                                  NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, TX_MUTEX *mutex_ptr, ULONG wait_option);
 static VOID         _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *rr);
 static UINT         _nx_mdns_known_answer_find(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_ptr); 
 static UINT         _nx_mdns_packet_rr_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UINT interface_index);
@@ -3340,11 +3340,12 @@ UINT        name_length;
         /* Set the mDNS timer.  */
         _nx_mdns_timer_set(mdns_ptr, insert_rr, insert_rr -> nx_mdns_rr_timer_count);
 
-        /* Release the mDNS mutex to process response.  */
-        tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
-
-        /* Suspend the thread on this mDNS query attempt.  */
-        _nx_mdns_query_thread_suspend(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), _nx_mdns_query_cleanup, mdns_ptr, out_rr, wait_option);
+        /* Link the thread to the answer wait list before releasing the mDNS
+           mutex.  Otherwise an answer can delete the query after the unlock
+           but before the thread is visible to the response path, leaving the
+           caller asleep until timeout.  */
+        _nx_mdns_query_thread_suspend(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), _nx_mdns_query_cleanup, mdns_ptr, out_rr,
+                                      &(mdns_ptr -> nx_mdns_mutex), wait_option);
 
         /* Get the mDNS mutex.  */
         tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), NX_WAIT_FOREVER);
@@ -13130,7 +13131,7 @@ NX_MDNS     *mdns_ptr;
 /*                                                                        */
 /**************************************************************************/
 VOID  _nx_mdns_query_thread_suspend(TX_THREAD **suspension_list_head, VOID (*suspend_cleanup)(TX_THREAD * NX_CLEANUP_PARAMETER),
-                                    NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, ULONG wait_option)
+                                    NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, TX_MUTEX *mutex_ptr, ULONG wait_option)
 {
 
 TX_INTERRUPT_SAVE_AREA
@@ -13193,6 +13194,10 @@ TX_THREAD *thread_ptr;
 
     /* Restore interrupts.  */
     TX_RESTORE
+
+    /* Release protection only after the caller is visible to the response
+       path.  */
+    tx_mutex_put(mutex_ptr);
 
     /* Call actual thread suspension routine.  */
     _tx_thread_system_suspend(thread_ptr);
