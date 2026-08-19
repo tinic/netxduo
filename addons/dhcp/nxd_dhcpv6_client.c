@@ -10954,7 +10954,10 @@ ULONG       returned_xid;
 UINT  _nx_dhcpv6_extract_packet_information(NX_DHCPV6 *dhcpv6_ptr, NX_PACKET *packet_ptr)
 {
 
-UINT        status;
+/* Unknown options are ignored, as required by RFC 8415 section 16.  Start
+   successful so an unknown option at the head of the packet does not test an
+   indeterminate value after the switch below. */
+UINT        status = NX_SUCCESS;
 ULONG       option_code;
 ULONG       option_length;
 UCHAR       *buffer_ptr;
