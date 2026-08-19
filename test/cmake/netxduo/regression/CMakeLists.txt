@@ -130,6 +130,7 @@ set(dhcp_test_cases
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_extended_api_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_packet_loss_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_client_process_server_duid_test.c
+    ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_client_unknown_option_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_ia_options_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_iana_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_process_repeated_msgs_test.c
