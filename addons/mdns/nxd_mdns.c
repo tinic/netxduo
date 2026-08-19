@@ -420,23 +420,6 @@ UINT    host_name_size;
     /* Set the mDNS announcing max time.  */
     mdns_ptr -> nx_mdns_announcing_max_time = (UCHAR)NX_MDNS_ANNOUNCING_MAX_TIME;
 
-    /* Set the pointer of global variable mDNS.  */
-    _nx_mdns_created_ptr = mdns_ptr;
-
-#ifndef NX_MDNS_DISABLE_SERVER
-
-#ifndef NX_DISABLE_IPV4
-    /* Setup the IP address change callback function. */
-    ip_ptr -> nx_ip_address_change_notify_internal = _nx_mdns_ip_address_change_notify;
-#endif /* NX_DISABLE_IPV4 */
-
-#ifdef NX_MDNS_ENABLE_IPV6
-
-    /* Setup the IPv6 address change callback function. */
-    ip_ptr -> nx_ipv6_address_change_notify_internal =  _nx_mdns_ipv6_address_change_notify;
-#endif /* NX_MDNS_ENABLE_IPV6  */
-#endif /* NX_MDNS_DISABLE_SERVER */
-
     /* Create the Socket and check the status */
     status = nx_udp_socket_create(mdns_ptr -> nx_mdns_ip_ptr, &(mdns_ptr -> nx_mdns_socket), "Multicast DNS",
                                   NX_MDNS_UDP_TYPE_OF_SERVICE, NX_MDNS_UDP_FRAGMENT_OPTION, 
@@ -590,6 +573,23 @@ UINT    host_name_size;
 
     /* The random delay of first probing for RR. */
     mdns_ptr -> nx_mdns_first_probing_delay = (ULONG)(1 + (((ULONG)NX_RAND()) % NX_MDNS_PROBING_TIMER_COUNT));
+
+#ifndef NX_MDNS_DISABLE_SERVER
+
+#ifndef NX_DISABLE_IPV4
+    /* Setup the IP address change callback function. */
+    ip_ptr -> nx_ip_address_change_notify_internal = _nx_mdns_ip_address_change_notify;
+#endif /* NX_DISABLE_IPV4 */
+
+#ifdef NX_MDNS_ENABLE_IPV6
+
+    /* Setup the IPv6 address change callback function. */
+    ip_ptr -> nx_ipv6_address_change_notify_internal =  _nx_mdns_ipv6_address_change_notify;
+#endif /* NX_MDNS_ENABLE_IPV6  */
+#endif /* NX_MDNS_DISABLE_SERVER */
+
+    /* Publish the instance only after every resource is ready.  */
+    _nx_mdns_created_ptr = mdns_ptr;
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
