@@ -739,9 +739,15 @@ NX_IP       *ip_ptr;
     /* Get IP mutex so IP conflict notification can be setup.  */
     tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
 
-    /* Clear the handler to avoid conflict notification callbacks.  */
-    ip_ptr -> nx_ip_interface[auto_ip_ptr -> nx_ip_interface_index].nx_interface_ip_conflict_notify_handler =  NX_NULL;
-    ip_ptr -> nx_ip_interface[auto_ip_ptr -> nx_ip_interface_index].nx_interface_ip_probe_address = 0;
+    /* Clear the conflict state only if AutoIP still owns it.  Another address
+       manager or the application may have replaced the per-interface handler
+       after AutoIP stopped, and its probe address belongs to that new owner.  */
+    if (ip_ptr -> nx_ip_interface[auto_ip_ptr -> nx_ip_interface_index].nx_interface_ip_conflict_notify_handler ==
+        _nx_auto_ip_conflict)
+    {
+        ip_ptr -> nx_ip_interface[auto_ip_ptr -> nx_ip_interface_index].nx_interface_ip_conflict_notify_handler = NX_NULL;
+        ip_ptr -> nx_ip_interface[auto_ip_ptr -> nx_ip_interface_index].nx_interface_ip_probe_address = 0;
+    }
 
     /* Release the IP internal mutex.  */
     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
