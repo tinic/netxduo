@@ -65,6 +65,7 @@ static VOID    probing_notify(NX_MDNS *mdns_ptr, UCHAR *name, UINT state);
 #define SERVICE_PORT            80
 
 #define SERVICE_TYPE_IPP        "_ipp._tcp"
+#define HOST_QUERY_TIMEOUT      10
 
 /* Define what the initial system looks like.  */
 
@@ -135,6 +136,9 @@ void    thread_0_entry(ULONG thread_input)
 {
 UINT       status;
 ULONG      actual_status;
+ULONG      address;
+ULONG      start_time;
+ULONG      elapsed_time;
 
 
     NX_PARAMETER_NOT_USED(thread_input);
@@ -219,6 +223,24 @@ ULONG      actual_status;
     }
 
     tx_thread_sleep(2 * NX_IP_PERIODIC_RATE);
+
+    /* Enable the primary interface as well, then ask for a host that does not
+       exist. The lookup timeout is shared by the two interfaces; it must not
+       restart from its full value when the second interface is tried.  */
+    advanced_packet_process_callback = NX_NULL;
+    status = nx_mdns_enable(&mdns_0, 0);
+    if(status != NX_SUCCESS)
+        error_counter++;
+
+    start_time = tx_time_get();
+    status = nx_mdns_host_address_get(&mdns_0, (UCHAR *)"absent.local",
+                                      &address, NX_NULL,
+                                      HOST_QUERY_TIMEOUT);
+    elapsed_time = tx_time_get() - start_time;
+
+    if((status == NX_SUCCESS) ||
+       (elapsed_time >= (2 * HOST_QUERY_TIMEOUT)))
+        error_counter++;
 
     /* Determine if the test was successful.  */
     if((error_counter) || (packet_count == 0))

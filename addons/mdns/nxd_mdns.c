@@ -4630,7 +4630,7 @@ UINT                status;
 ULONG               start_time; 
 ULONG               current_time;
 ULONG               elapsed_time;
-ULONG               wait_time = timeout;
+ULONG               wait_time;
 NX_MDNS_RR         *a_rr;
 NX_MDNS_RR         *aaaa_rr;
 UCHAR               host_name_query[NX_MDNS_NAME_MAX + 1];
@@ -4688,6 +4688,11 @@ UINT                domain_name_length;
     if (ipv6_address)
         memset(ipv6_address, 0, 16);
 
+    /* The caller supplies one timeout for the lookup, not one timeout per
+       interface.  Keep a single deadline while still checking every
+       interface's cache after it expires.  */
+    start_time = tx_time_get();
+
     /* Start host address query on all enabled interfaces until get the answer or query timeout.  */
     for (i = 0; i < NX_MAX_PHYSICAL_INTERFACES; i++)
     {
@@ -4696,9 +4701,11 @@ UINT                domain_name_length;
         if (!mdns_ptr -> nx_mdns_interface_enabled[i])
             continue;
 
-        /* Get the query start time.  */
-        wait_time = timeout;
-        start_time = tx_time_get();
+        /* Calculate how much of the caller's timeout remains.  Unsigned
+           subtraction handles a tick counter wrap.  */
+        current_time = tx_time_get();
+        elapsed_time = current_time - start_time;
+        wait_time = (timeout > elapsed_time) ? (timeout - elapsed_time) : 0;
          
         /* Get the host IPv4 address.  */
         if (ipv4_address)
@@ -4724,24 +4731,10 @@ UINT                domain_name_length;
             /* How much time has elapsed? */
             current_time = tx_time_get();
 
-            /* Has the time wrapped? */
-            if (current_time >= start_time)
-            {
-                /* No, simply subtract to get the elapsed time.   */
-                elapsed_time =  current_time - start_time;
-            }
-            else
-            {
-
-                /* Yes it has. Time has rolled over the 32-bit boundary.  */
-                elapsed_time =  (((ULONG) 0xFFFFFFFF) - start_time) + current_time;
-            }
+            elapsed_time = current_time - start_time;
 
             /* Update the timeout.  */
-            if (wait_time > elapsed_time)
-                wait_time -= elapsed_time;
-            else
-                wait_time = 0;
+            wait_time = (timeout > elapsed_time) ? (timeout - elapsed_time) : 0;
 
             /* Lookup the service.  */
             status = _nx_mdns_one_shot_query(mdns_ptr, host_name_query, NX_MDNS_RR_TYPE_AAAA, &aaaa_rr, wait_time, i);
