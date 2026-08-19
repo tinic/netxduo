@@ -4773,13 +4773,16 @@ UINT   w, j = 0;
         }
     }
 
-    /* Is there any more data in the buffer? */
-    if (index != option_length)
-    {
+    /* Is there any more data in the buffer?
 
-        /* Yes, not sure what is going on with this packet. Treat as an error. */
-        return NX_DHCPV6_INVALID_OPTION_DATA;
-    }
+       A trailing partial address is ignored rather than treated as an error.
+       _nx_dhcpv6_extract_packet_information() abandons the whole message on
+       any option error and its caller releases the packet, so refusing here
+       costs the client the IA_NA address in the same Reply -- an option 23
+       whose length is not a multiple of 16 would take the address with it.
+       The servers this loop did read are complete and usable, and RFC 8415
+       section 16 says to ignore what cannot be understood, not to discard the
+       message carrying it.  */
 
     return NX_SUCCESS;
 }
