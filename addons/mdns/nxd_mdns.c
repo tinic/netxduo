@@ -127,6 +127,12 @@ static VOID         _nx_mdns_ipv6_address_change_notify(NX_IP *ip_ptr, UINT meth
 #endif /* NX_MDNS_DISABLE_SERVER  */
 
 #ifndef NX_MDNS_DISABLE_CLIENT
+typedef struct NX_MDNS_QUERY_SUSPENSION_STRUCT
+{
+    NX_MDNS_RR  *query_rr;
+    NX_MDNS_RR **answer_rr;
+} NX_MDNS_QUERY_SUSPENSION;
+
 static VOID         _nx_mdns_service_change_notify_process(NX_MDNS *mdns_ptr, NX_MDNS_RR *new_rr, UCHAR is_present);
 static UINT         _nx_mdns_service_addition_info_get(NX_MDNS *mdns_ptr, UCHAR *srv_name, NX_MDNS_SERVICE *service, UINT interface_index);
 static UINT         _nx_mdns_service_mask_match(NX_MDNS *mdns_ptr, UCHAR *service_type, ULONG service_mask);
@@ -136,8 +142,8 @@ static VOID         _nx_mdns_query_send(NX_MDNS *mdns_ptr, UINT interface_index)
 static UINT         _nx_mdns_query_check(NX_MDNS *mdns_ptr, UCHAR *name, USHORT type, UINT one_shot, NX_MDNS_RR **search_rr, UINT interface_index);
 static VOID         _nx_mdns_query_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 static VOID         _nx_mdns_query_thread_suspend(TX_THREAD **suspension_list_head, VOID (*suspend_cleanup)(TX_THREAD * NX_CLEANUP_PARAMETER),
-                                                  NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, ULONG wait_option);
-static VOID         _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *rr);
+                                                  NX_MDNS *mdns_ptr, NX_MDNS_QUERY_SUSPENSION *suspension, TX_MUTEX *mutex_ptr, ULONG wait_option);
+static UINT         _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr);
 static UINT         _nx_mdns_known_answer_find(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_ptr); 
 static UINT         _nx_mdns_packet_rr_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UINT interface_index);
 #endif /* NX_MDNS_DISABLE_CLIENT  */
@@ -2896,18 +2902,8 @@ UINT        rr_ptr_name_length;
                 if ((!_nx_mdns_name_match(p -> nx_mdns_rr_name, (UCHAR *)_nx_mdns_dns_sd, rr_name_length)) &&
                     (!_nx_mdns_name_match(p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name, &temp_string_buffer[type_index], rr_ptr_name_length)))
                 {
-
-                    /* Check the count.  */
-                    if (p -> nx_mdns_rr_count)
-                    {
-                        p -> nx_mdns_rr_count --;
-                    }
-                    else
-                    {
-
-                        /* Delete this resource record directly.  */
-                        _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, p);
-                    }
+                    /* The common delete path owns shared PTR references. */
+                    found = NX_TRUE;
                 }
                 break;
             }
@@ -3270,6 +3266,7 @@ UINT        status;
 NX_MDNS_RR  *rr;
 NX_MDNS_RR  *insert_rr;
 NX_MDNS_RR  temp_resource_record;
+NX_MDNS_QUERY_SUSPENSION suspension;
 UINT        name_length;
 
 
@@ -3350,11 +3347,14 @@ UINT        name_length;
         /* Set the mDNS timer.  */
         _nx_mdns_timer_set(mdns_ptr, insert_rr, insert_rr -> nx_mdns_rr_timer_count);
 
-        /* Release the mDNS mutex to process response.  */
-        tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
-
-        /* Suspend the thread on this mDNS query attempt.  */
-        _nx_mdns_query_thread_suspend(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), _nx_mdns_query_cleanup, mdns_ptr, out_rr, wait_option);
+        /* Link the thread to the answer wait list before releasing the mDNS
+           mutex.  Otherwise an answer can delete the query after the unlock
+           but before the thread is visible to the response path, leaving the
+           caller asleep until timeout.  */
+        suspension.query_rr = insert_rr;
+        suspension.answer_rr = out_rr;
+        _nx_mdns_query_thread_suspend(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), _nx_mdns_query_cleanup, mdns_ptr, &suspension,
+                                      &(mdns_ptr -> nx_mdns_mutex), wait_option);
 
         /* Get the mDNS mutex.  */
         tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), NX_WAIT_FOREVER);
@@ -4639,7 +4639,7 @@ UINT                status;
 ULONG               start_time; 
 ULONG               current_time;
 ULONG               elapsed_time;
-ULONG               wait_time = timeout;
+ULONG               wait_time;
 NX_MDNS_RR         *a_rr;
 NX_MDNS_RR         *aaaa_rr;
 UCHAR               host_name_query[NX_MDNS_NAME_MAX + 1];
@@ -4697,6 +4697,11 @@ UINT                domain_name_length;
     if (ipv6_address)
         memset(ipv6_address, 0, 16);
 
+    /* The caller supplies one timeout for the lookup, not one timeout per
+       interface.  Keep a single deadline while still checking every
+       interface's cache after it expires.  */
+    start_time = tx_time_get();
+
     /* Start host address query on all enabled interfaces until get the answer or query timeout.  */
     for (i = 0; i < NX_MAX_PHYSICAL_INTERFACES; i++)
     {
@@ -4705,9 +4710,11 @@ UINT                domain_name_length;
         if (!mdns_ptr -> nx_mdns_interface_enabled[i])
             continue;
 
-        /* Get the query start time.  */
-        wait_time = timeout;
-        start_time = tx_time_get();
+        /* Calculate how much of the caller's timeout remains.  Unsigned
+           subtraction handles a tick counter wrap.  */
+        current_time = tx_time_get();
+        elapsed_time = current_time - start_time;
+        wait_time = (timeout > elapsed_time) ? (timeout - elapsed_time) : 0;
          
         /* Get the host IPv4 address.  */
         if (ipv4_address)
@@ -4733,24 +4740,10 @@ UINT                domain_name_length;
             /* How much time has elapsed? */
             current_time = tx_time_get();
 
-            /* Has the time wrapped? */
-            if (current_time >= start_time)
-            {
-                /* No, simply subtract to get the elapsed time.   */
-                elapsed_time =  current_time - start_time;
-            }
-            else
-            {
-
-                /* Yes it has. Time has rolled over the 32-bit boundary.  */
-                elapsed_time =  (((ULONG) 0xFFFFFFFF) - start_time) + current_time;
-            }
+            elapsed_time = current_time - start_time;
 
             /* Update the timeout.  */
-            if (wait_time > elapsed_time)
-                wait_time -= elapsed_time;
-            else
-                wait_time = 0;
+            wait_time = (timeout > elapsed_time) ? (timeout - elapsed_time) : 0;
 
             /* Lookup the service.  */
             status = _nx_mdns_one_shot_query(mdns_ptr, host_name_query, NX_MDNS_RR_TYPE_AAAA, &aaaa_rr, wait_time, i);
@@ -5626,6 +5619,10 @@ static UINT _nx_mdns_rr_delete(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_rr)
   
 UINT        status = NX_MDNS_SUCCESS; 
 
+#ifndef NX_MDNS_DISABLE_SERVER
+UINT        rr_name_length;
+#endif /* NX_MDNS_DISABLE_SERVER */
+
 #ifndef NX_MDNS_DISABLE_CLIENT
 ULONG       *head;
 NX_MDNS_RR  *p;        
@@ -5633,7 +5630,25 @@ NX_MDNS_RR  *p;
 
     /* Get the mDNS mutex.  */
     tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
-    
+
+#ifndef NX_MDNS_DISABLE_SERVER
+    /* _services._dns-sd._udp is shared by every local service of one type.
+       A caller deleting one reference must not withdraw the record while
+       another service still owns it.  Keep this rule in the common deletion
+       path so service-add rollback cannot bypass the reference count. */
+    if (!(record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER) &&
+        (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+        (record_rr -> nx_mdns_rr_count != 0) &&
+        (!_nx_utility_string_length_check((CHAR *)(record_rr -> nx_mdns_rr_name),
+                                          &rr_name_length, NX_MDNS_NAME_MAX)) &&
+        (!_nx_mdns_name_match(record_rr -> nx_mdns_rr_name,
+                              (UCHAR *)_nx_mdns_dns_sd, rr_name_length)))
+    {
+        record_rr -> nx_mdns_rr_count --;
+        tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+        return(NX_MDNS_SUCCESS);
+    }
+#endif /* NX_MDNS_DISABLE_SERVER */
 
     /* Check for mDNS started flag.  */
     if (mdns_ptr -> nx_mdns_started)
@@ -5676,6 +5691,18 @@ NX_MDNS_RR  *p;
         {
 
 #ifndef NX_MDNS_DISABLE_CLIENT
+            /* A continuous query can be shared by callers that independently
+               start and stop the same browse. nx_mdns_rr_count stores the
+               additional owners beyond the first.  */
+            if ((record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY) &&
+                (record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_CONTINUOUS_QUERY) &&
+                (record_rr -> nx_mdns_rr_count != 0))
+            {
+                record_rr -> nx_mdns_rr_count--;
+                tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+                return(NX_MDNS_SUCCESS);
+            }
+
             if (record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY)
             {
 
@@ -9975,16 +10002,16 @@ UINT            rr_name_length;
             if (!(p -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_CONTINUOUS_QUERY))
             {
 
-                /* Determine if we need to wake a thread suspended.  */
-                if (mdns_ptr -> nx_mdns_rr_receive_suspension_list)
+                /* Delete the query only when its waiter accepted this
+                   answer. A waiter whose timeout cleanup already won owns
+                   the query and deletes it after reacquiring the mutex.  */
+                if ((mdns_ptr -> nx_mdns_rr_receive_suspension_list) &&
+                    (_nx_mdns_query_thread_resume(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list),
+                                                  mdns_ptr, p, insert_ptr) == NX_TRUE))
                 {
-
-                    /* Resume suspended thread.  */
-                    _nx_mdns_query_thread_resume(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), mdns_ptr, insert_ptr);
+                    /* Get the answer, we need not send the question again.  */
+                    _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_PEER, p);
                 }
-
-                /* Get the answer, we need not send the question again. Delete the resource record.  */
-                _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_PEER, p);
 
             }
             else
@@ -10331,7 +10358,8 @@ UINT            temp_string_length;
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
-/*    None                                                                */
+/*    NX_TRUE                               Matching waiter resumed       */
+/*    NX_FALSE                              No matching waiter            */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -10719,6 +10747,9 @@ UINT        i;
 ULONG       *head;
 NX_MDNS_RR  *p; 
 UCHAR       is_host_type;
+UCHAR       in_scope;
+UCHAR       same_owner;
+UCHAR       suspend_record;
 UINT        temp_string_length;
 UINT        rr_name_length;
 
@@ -10759,28 +10790,68 @@ UINT        rr_name_length;
         return(NX_MDNS_UNSUPPORTED_TYPE); 
     }
 
+    /* A packet can contain more than one member of the same publication.
+       Once the first member exhausts the retry budget, it suspends the whole
+       publication; ignore later members instead of notifying twice. */
+    if (record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_SUSPEND)
+    {
+        return(NX_MDNS_ERROR);
+    }
+
+    /* Keep the original owner available for RRSet and reference matching. */
+    old_name = record_rr -> nx_mdns_rr_name;
+
     /* Check the conflict count.  */
     if (record_rr -> nx_mdns_rr_conflict_count >= NX_MDNS_CONFLICT_COUNT)
     {
 
-        /* Yes, Receive the confilictiong mDNS, Probing failure.  */
-        if ((record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) ||
-            (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A))
+        /* The retry budget is exhausted.  Stop the failed publication before
+           notifying the application; otherwise sibling records can continue
+           probing and later advertise an identity just reported unavailable.
+           A host failure invalidates every local publication because all SRV
+           records target that host.  A service failure only stops records for
+           that instance on the conflicting interface. */
+        head = (ULONG*)mdns_ptr -> nx_mdns_local_service_cache;
+        head = (ULONG*)(*head);
+        for (p = (NX_MDNS_RR*)((UCHAR*)mdns_ptr -> nx_mdns_local_service_cache + sizeof(ULONG));
+             (ULONG*)p < head; p++)
         {
-
-            /* Service name has been registered , invoke the notify function.  */
-            if (mdns_ptr -> nx_mdns_probing_notify)
+            suspend_record = is_host_type;
+            if ((is_host_type == NX_FALSE) &&
+                (p -> nx_mdns_rr_interface_index == record_rr -> nx_mdns_rr_interface_index) &&
+                ((p -> nx_mdns_rr_name == old_name) ||
+                 ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+                  (p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name == old_name))))
             {
-                (mdns_ptr -> nx_mdns_probing_notify)(mdns_ptr, name, NX_MDNS_LOCAL_SERVICE_REGISTERED_FAILURE);
+                suspend_record = NX_TRUE;
             }
+
+            if ((p -> nx_mdns_rr_state == NX_MDNS_RR_STATE_INVALID) ||
+                (suspend_record == NX_FALSE))
+            {
+                continue;
+            }
+
+            p -> nx_mdns_rr_state = NX_MDNS_RR_STATE_SUSPEND;
+            p -> nx_mdns_rr_timer_count = 0;
+            p -> nx_mdns_rr_retransmit_count = 0;
+            p -> nx_mdns_rr_send_flag = NX_MDNS_RR_SEND_FLAG_CLEAR;
+        }
+
+        /* Notify the application whether a host or service name failed.
+           AAAA and TXT can independently be the record which exhausts the
+           shared retry budget, so they must report the same publication
+           failure as A and SRV respectively. */
+        if (mdns_ptr -> nx_mdns_probing_notify)
+        {
+            (mdns_ptr -> nx_mdns_probing_notify)(mdns_ptr, name,
+                is_host_type ? NX_MDNS_LOCAL_HOST_REGISTERED_FAILURE :
+                               NX_MDNS_LOCAL_SERVICE_REGISTERED_FAILURE);
         }
 
         /* Return.  */
         return (NX_MDNS_ERROR);
     }
-
-    /* Record the old name.  */
-    old_name = record_rr -> nx_mdns_rr_name;
 
     /* Set the new name and probing it.  */
     while ((*name) != '\0')
@@ -10873,13 +10944,66 @@ UINT        rr_name_length;
     /* Set the mDNS timer.  */
     _nx_mdns_timer_set(mdns_ptr, record_rr, record_rr -> nx_mdns_rr_timer_count);
 
-    /* Update the PTR/SRV data name.  */
+    /* Update every record in the unique publication, plus records which refer to
+       it.  A service instance owns both SRV and TXT records with the same
+       name; a host owns its A and AAAA records.  Renaming only the record
+       which happened to lose the tie-break leaves the other half probing and
+       advertising the old name.  Host names are global to this mDNS instance,
+       while service names are scoped to the interface on which they conflict. */
     head = (ULONG*)mdns_ptr -> nx_mdns_local_service_cache;
     head = (ULONG*)(*head);
 
     for (p = (NX_MDNS_RR*)((UCHAR*)mdns_ptr -> nx_mdns_local_service_cache + sizeof(ULONG)); (ULONG*)p < head; p++)
     {
-        if ((((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) && (is_host_type == NX_FALSE)) ||
+        in_scope = (UCHAR)((is_host_type == NX_TRUE) ||
+                          (p -> nx_mdns_rr_interface_index == record_rr -> nx_mdns_rr_interface_index));
+        same_owner = (UCHAR)(p -> nx_mdns_rr_name == old_name);
+
+        if ((p != record_rr) && (in_scope == NX_TRUE) && (same_owner == NX_TRUE) &&
+            (((is_host_type == NX_TRUE) &&
+              ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A) ||
+               (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_AAAA))) ||
+             ((is_host_type == NX_FALSE) &&
+              ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) ||
+               (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_TXT)))))
+        {
+
+            /* Give every member the new owner name and restart the publication as
+               one unit with a shared conflict budget. */
+            status = _nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL,
+                                               &temp_string_buffer[0], temp_string_length,
+                                               (VOID **)(&p -> nx_mdns_rr_name), NX_FALSE, NX_TRUE);
+            if (status)
+            {
+                return(status);
+            }
+            _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
+
+            p -> nx_mdns_rr_state = NX_MDNS_RR_STATE_PROBING;
+            p -> nx_mdns_rr_timer_count = mdns_ptr -> nx_mdns_first_probing_delay;
+            p -> nx_mdns_rr_retransmit_count = NX_MDNS_PROBING_RETRANSMIT_COUNT;
+            p -> nx_mdns_rr_conflict_count = record_rr -> nx_mdns_rr_conflict_count;
+            _nx_mdns_timer_set(mdns_ptr, p, p -> nx_mdns_rr_timer_count);
+        }
+        else if ((in_scope == NX_TRUE) && (same_owner == NX_TRUE) &&
+                 (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_NSEC) &&
+                 (p != record_rr))
+        {
+
+            /* NSEC is published with its unique owner, but is not itself
+               probed.  Move its owner without changing its state. */
+            status = _nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL,
+                                               &temp_string_buffer[0], temp_string_length,
+                                               (VOID **)(&p -> nx_mdns_rr_name), NX_FALSE, NX_TRUE);
+            if (status)
+            {
+                return(status);
+            }
+            _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
+        }
+
+        if ((in_scope == NX_TRUE) &&
+            (((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) && (is_host_type == NX_FALSE)) ||
              ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) && (is_host_type == NX_TRUE))) &&
             (p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name == old_name))
         {
@@ -10887,6 +11011,11 @@ UINT        rr_name_length;
             /* Add the new resource records. */
             status = _nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, &temp_string_buffer[0], temp_string_length,
                                                (VOID **)(&(p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name)), NX_FALSE, NX_TRUE);
+
+            if (status)
+            {
+                return(status);
+            }
 
             /* Delete the rdata name.  */
             _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
@@ -11418,6 +11547,8 @@ ULONG       *head;
 NX_MDNS_RR  *p;
 NX_MDNS_RR  *rr;
 UINT        rr_name_length;
+UCHAR       rr_count;
+UCHAR       shared_dns_sd;
 
 #ifndef NX_MDNS_DISABLE_CLIENT
 ULONG       elapsed_time;
@@ -11446,14 +11577,27 @@ ULONG       min_elapsed_time;
             return(NX_MDNS_DATA_SIZE_ERROR);
         }
 
+        /* Preserve the reference count before replacing the cached fields.
+           record_ptr is a newly built record and its count is zero.  Copying
+           it first made the shared DNS-SD PTR count stick at one no matter
+           how many services of that type were registered. */
+        shared_dns_sd = (UCHAR)((rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+                               (!_nx_mdns_name_match(rr -> nx_mdns_rr_name,
+                                                    (UCHAR *)_nx_mdns_dns_sd,
+                                                    rr_name_length)));
+        rr_count = rr -> nx_mdns_rr_count;
+        if ((shared_dns_sd == NX_TRUE) && (rr_count == (UCHAR)0xff))
+        {
+            return(NX_MDNS_CACHE_ERROR);
+        }
+
         /* Copy other informations of record_ptr into insert_rr resource record.  */
         memcpy(rr, record_ptr, sizeof(NX_MDNS_RR)); /* Use case of memcpy is verified. */
         
         /* Special process for _services._dns-sd._udp.local which pointer to same service type.  */
-        if ((rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
-            (!_nx_mdns_name_match(rr -> nx_mdns_rr_name, (UCHAR *)_nx_mdns_dns_sd, rr_name_length)))
+        if (shared_dns_sd == NX_TRUE)
         {
-            rr -> nx_mdns_rr_count ++;
+            rr -> nx_mdns_rr_count = (UCHAR)(rr_count + 1);
         }
 
         /* Delete the resource record same strings. */
@@ -12831,6 +12975,18 @@ UINT        name_length;
     if (same_query == NX_TRUE)
     {
 
+        /* Pair every successful continuous-query start with one stop. The
+           first owner is represented by the record itself and rr_count holds
+           the additional owners. One-shot callers do not own the existing
+           query and still receive NX_MDNS_EXIST_SAME_QUERY.  */
+        if (one_shot == NX_FALSE)
+        {
+            if (rr -> nx_mdns_rr_count == (UCHAR)0xff)
+                return(NX_MDNS_CACHE_ERROR);
+
+            rr -> nx_mdns_rr_count++;
+        }
+
         /* A multicast DNS querier should also delay the first query of the series by
            a randomly chosen amount in the range 20-120ms.  */
         rr -> nx_mdns_rr_timer_count = (ULONG)(NX_MDNS_QUERY_DELAY_MIN + (((ULONG)NX_RAND()) % NX_MDNS_QUERY_DELAY_RANGE));
@@ -13002,7 +13158,7 @@ NX_MDNS     *mdns_ptr;
 /*                                                                        */
 /**************************************************************************/
 VOID  _nx_mdns_query_thread_suspend(TX_THREAD **suspension_list_head, VOID (*suspend_cleanup)(TX_THREAD * NX_CLEANUP_PARAMETER),
-                                    NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, ULONG wait_option)
+                                    NX_MDNS *mdns_ptr, NX_MDNS_QUERY_SUSPENSION *suspension, TX_MUTEX *mutex_ptr, ULONG wait_option)
 {
 
 TX_INTERRUPT_SAVE_AREA
@@ -13045,8 +13201,8 @@ TX_THREAD *thread_ptr;
     /* Setup cleanup information, i.e. this pool control block.  */
     thread_ptr -> tx_thread_suspend_control_block = (void *)mdns_ptr;
 
-    /* Save the return RR pointer address as well.  */
-    thread_ptr -> tx_thread_additional_suspend_info = (void *)rr;
+    /* Save the query identity and the return RR pointer address.  */
+    thread_ptr -> tx_thread_additional_suspend_info = (void *)suspension;
 
     /* Increment the suspended thread count.  */
     mdns_ptr -> nx_mdns_rr_receive_suspended_count++;
@@ -13065,6 +13221,10 @@ TX_THREAD *thread_ptr;
 
     /* Restore interrupts.  */
     TX_RESTORE
+
+    /* Release protection only after the caller is visible to the response
+       path.  */
+    tx_mutex_put(mutex_ptr);
 
     /* Call actual thread suspension routine.  */
     _tx_thread_system_suspend(thread_ptr);
@@ -13105,22 +13265,40 @@ TX_THREAD *thread_ptr;
 /*    _tx_thread_terminate                  Thread terminate processing   */ 
 /*                                                                        */ 
 /**************************************************************************/
-VOID  _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *rr)
+UINT  _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr)
 {
 
 TX_INTERRUPT_SAVE_AREA
 
-TX_THREAD *thread_ptr;
+TX_THREAD                *thread_ptr;
+TX_THREAD                *list_head;
+NX_MDNS_QUERY_SUSPENSION *suspension;
 
 
     /* Disable interrupts.  */
     TX_DISABLE
 
-    /* Pickup the thread pointer.  */
-    thread_ptr =  *suspension_list_head;
+    /* Find the caller waiting for the query this answer matched. Different
+       one-shot queries share this list and may complete out of order.  */
+    list_head = *suspension_list_head;
+    thread_ptr = list_head;
+    suspension = NX_NULL;
+
+    if (thread_ptr)
+    {
+        do
+        {
+            suspension = (NX_MDNS_QUERY_SUSPENSION *)thread_ptr -> tx_thread_additional_suspend_info;
+            if ((suspension) && (suspension -> query_rr == query_rr))
+                break;
+
+            thread_ptr = thread_ptr -> tx_thread_suspended_next;
+            suspension = NX_NULL;
+        } while (thread_ptr != list_head);
+    }
 
     /* Determine if there still is a thread suspended.  */
-    if (thread_ptr)
+    if ((thread_ptr) && (suspension))
     {
 
         /* Remove the suspended thread from the list.  */
@@ -13139,8 +13317,9 @@ TX_THREAD *thread_ptr;
 
             /* At least one more thread is on the same expiration list.  */
 
-            /* Update the list head pointer.  */
-            *suspension_list_head = thread_ptr -> tx_thread_suspended_next;
+            /* Update the list head pointer when removing its current head.  */
+            if (*suspension_list_head == thread_ptr)
+                *suspension_list_head = thread_ptr -> tx_thread_suspended_next;
 
             /* Update the links of the adjacent threads.  */
             (thread_ptr -> tx_thread_suspended_next) -> tx_thread_suspended_previous = thread_ptr -> tx_thread_suspended_previous;
@@ -13160,7 +13339,7 @@ TX_THREAD *thread_ptr;
 
         /* Return this block pointer to the suspended thread waiting for
            a block.  */
-        *((NX_MDNS_RR **) thread_ptr -> tx_thread_additional_suspend_info) =  rr;
+        *(suspension -> answer_rr) = answer_rr;
 
         /* Restore interrupts.  */
         TX_RESTORE
@@ -13170,12 +13349,16 @@ TX_THREAD *thread_ptr;
 
         /* Resume thread.  */
         _tx_thread_system_resume(thread_ptr);
+
+        return(NX_TRUE);
     }
     else
     {
 
         /* Restore interrupts.  */
         TX_RESTORE
+
+        return(NX_FALSE);
     }
 }
 

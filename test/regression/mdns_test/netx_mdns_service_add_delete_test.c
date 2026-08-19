@@ -121,6 +121,13 @@ static void    ntest_0_entry(ULONG thread_input)
 UINT       status;
 ULONG      actual_status;
 CHAR      *pointer = (CHAR*)thread_input;
+ULONG     *cache_head_slot;
+ULONG     *cache_tail_slot;
+UCHAR     *cache_head;
+UCHAR     *cache_tail;
+NX_MDNS_RR *dummy_rr;
+NX_MDNS_RR *dns_sd_rr;
+NX_MDNS_RR *rr;
 
     printf("NetX Test:   MDNS Service Add And Delete Test..........................");
 
@@ -254,6 +261,37 @@ CHAR      *pointer = (CHAR*)thread_input;
     if(mdns_0.nx_mdns_local_rr_count != 0)
         error_counter++;
 
+    /********************************************************************/
+    /* Keep a shared DNS-SD type PTR until its last service is deleted. */
+    /********************************************************************/
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"SHARED_SERVICE1", (UCHAR *)"_share._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8080, NX_MDNS_RR_SET_UNIQUE, 0);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 5))
+        error_counter++;
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"SHARED_SERVICE2", (UCHAR *)"_share._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8081, NX_MDNS_RR_SET_UNIQUE, 0);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 9))
+        error_counter++;
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"SHARED_SERVICE3", (UCHAR *)"_share._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8082, NX_MDNS_RR_SET_UNIQUE, 0);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 13))
+        error_counter++;
+
+    status = nx_mdns_service_delete(&mdns_0, (UCHAR *)"SHARED_SERVICE1", (UCHAR *)"_share._tcp", NX_NULL);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 9))
+        error_counter++;
+
+    status = nx_mdns_service_delete(&mdns_0, (UCHAR *)"SHARED_SERVICE2", (UCHAR *)"_share._tcp", NX_NULL);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 5))
+        error_counter++;
+
+    status = nx_mdns_service_delete(&mdns_0, (UCHAR *)"SHARED_SERVICE3", (UCHAR *)"_share._tcp", NX_NULL);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 0))
+        error_counter++;
+
 
     /*********************************************************/
     /* Delete the service when the MDNS function is enable.  */
@@ -384,6 +422,71 @@ CHAR      *pointer = (CHAR*)thread_input;
     /* Disable the MDNS function.  */
     nx_mdns_disable(&mdns_0, 0);
 
+    /********************************************************************/
+    /* A failed later add must release, not delete, a shared type PTR.  */
+    /********************************************************************/
+
+    nx_mdns_delete(&mdns_0);
+    memset(buffer, 0xFF, BUFFER_SIZE);
+    status = nx_mdns_create(&mdns_0, &ip_0, &pool_0, 2, pointer,
+                            DEMO_STACK_SIZE, "NETX-MDNS", buffer,
+                            current_buffer_size, buffer + current_buffer_size,
+                            current_buffer_size, NX_NULL);
+    if(status)
+        error_counter++;
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"ROLLBACK1", (UCHAR *)"_roll._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8080, NX_MDNS_RR_SET_UNIQUE, 0);
+    if(status)
+        error_counter++;
+
+    /* Reserve all but enough cache space for the second service's owner
+       string and its SRV/TXT records.  Its shared DNS-SD PTR is found and
+       referenced, then allocation of the instance PTR must fail. */
+    cache_head_slot = (ULONG *)mdns_0.nx_mdns_local_service_cache;
+    cache_tail_slot = (ULONG *)(mdns_0.nx_mdns_local_service_cache +
+                                mdns_0.nx_mdns_local_service_cache_size) - 1;
+    cache_head = (UCHAR *)(*cache_head_slot);
+    cache_tail = (UCHAR *)(*cache_tail_slot);
+    while ((ULONG)(cache_tail - cache_head) >=
+           (ULONG)(32 + (3 * sizeof(NX_MDNS_RR))))
+    {
+        dummy_rr = (NX_MDNS_RR *)cache_head;
+        memset(dummy_rr, 0, sizeof(NX_MDNS_RR));
+        dummy_rr -> nx_mdns_rr_state = NX_MDNS_RR_STATE_VALID;
+        dummy_rr -> nx_mdns_rr_type = NX_MDNS_RR_TYPE_A;
+        dummy_rr -> nx_mdns_rr_interface_index = 1;
+        cache_head += sizeof(NX_MDNS_RR);
+        *cache_head_slot = (ULONG)cache_head;
+        mdns_0.nx_mdns_local_rr_count++;
+    }
+
+    dns_sd_rr = NX_NULL;
+    for (rr = (NX_MDNS_RR *)(mdns_0.nx_mdns_local_service_cache + sizeof(ULONG));
+         (UCHAR *)rr < cache_head; rr++)
+    {
+        if ((rr -> nx_mdns_rr_state != NX_MDNS_RR_STATE_INVALID) &&
+            (rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+            (rr -> nx_mdns_rr_name != NX_NULL) &&
+            (strcmp((CHAR *)rr -> nx_mdns_rr_name,
+                    "_services._dns-sd._udp.local") == 0))
+        {
+            dns_sd_rr = rr;
+            break;
+        }
+    }
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"ROLLBACK2", (UCHAR *)"_roll._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8081, NX_MDNS_RR_SET_UNIQUE, 0);
+    if ((status != NX_MDNS_CACHE_ERROR) || (dns_sd_rr == NX_NULL) ||
+        (dns_sd_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_INVALID) ||
+        (dns_sd_rr -> nx_mdns_rr_count != 0))
+    {
+        error_counter++;
+    }
+
+    nx_mdns_delete(&mdns_0);
+
     /* Determine if the test was successful.  */
     if(error_counter)
     {
@@ -407,4 +510,3 @@ void           netx_mdns_service_add_delete_test(void *first_unused_memory)
     test_control_return(3);
 }
 #endif
-

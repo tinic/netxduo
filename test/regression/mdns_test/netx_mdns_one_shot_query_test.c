@@ -12,6 +12,7 @@
 #include   "tx_api.h"
 #include   "nx_api.h"
 #include   "nx_ram_network_driver_test_1500.h" 
+#include   <string.h>
 
 extern void    test_control_return(UINT status);
 
@@ -27,6 +28,8 @@ extern void    test_control_return(UINT status);
 /* Define the ThreadX and NetX object control blocks...  */
 
 static TX_THREAD               ntest_0;
+static TX_THREAD               ntest_1;
+static TX_THREAD               ntest_2;
 
 static NX_PACKET_POOL          pool_0;
 static NX_IP                   ip_0;
@@ -72,6 +75,12 @@ static CHAR                    mdns_data[] = {
 };
 
 static UINT                    query_received;
+static UINT                    concurrent_query_test;
+static UINT                    concurrent_query_first;
+static UINT                    concurrent_query_seen;
+static UINT                    concurrent_query_replied;
+static UINT                    concurrent_query_done;
+static CHAR                    response_data[sizeof(mdns_data)];
 
 
 /* Define the counters used in the test application...  */
@@ -82,9 +91,12 @@ static CHAR                   *pointer;
 /* Define thread prototypes.  */
 
 static void    ntest_0_entry(ULONG thread_input);
+static void    concurrent_query_entry(ULONG thread_input);
 extern VOID    _nx_ram_network_driver_1500(NX_IP_DRIVER *driver_req_ptr);
 extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
 static UINT    my_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
+static VOID    inject_service_response(const CHAR *type);
+static UINT    packet_has_type(NX_PACKET *packet_ptr, const CHAR *type);
 
 /* Define what the initial system looks like.  */
 
@@ -212,6 +224,35 @@ NX_MDNS_SERVICE service;
     /* Sleep 1 second and check whether more queries are sent. */
     tx_thread_sleep(NX_IP_PERIODIC_RATE);
 
+    /* Two different one-shot queries may complete in either order. Make the
+       second query's answer arrive first and verify each waiter receives the
+       record belonging to its own query.  */
+    concurrent_query_test = NX_TRUE;
+    concurrent_query_first = 0;
+    concurrent_query_seen = 0;
+    concurrent_query_replied = NX_FALSE;
+    concurrent_query_done = 0;
+
+    status = tx_thread_create(&ntest_1, "mDNS SMTP query",
+                              concurrent_query_entry, 1,
+                              pointer, DEMO_STACK_SIZE,
+                              3, 3, TX_NO_TIME_SLICE, TX_AUTO_START);
+    pointer = pointer + DEMO_STACK_SIZE;
+    status += tx_thread_create(&ntest_2, "mDNS XMPP query",
+                               concurrent_query_entry, 2,
+                               pointer, DEMO_STACK_SIZE,
+                               3, 3, TX_NO_TIME_SLICE, TX_AUTO_START);
+    pointer = pointer + DEMO_STACK_SIZE;
+    if(status)
+        error_counter++;
+
+    for(status = 0; (status < (10 * NX_IP_PERIODIC_RATE)) &&
+                    (concurrent_query_done != 2); status++)
+        tx_thread_sleep(1);
+
+    if(concurrent_query_done != 2)
+        error_counter++;
+
     /* Determine if the test was successful.  */
     if(error_counter)
     {
@@ -223,6 +264,69 @@ NX_MDNS_SERVICE service;
         printf("SUCCESS!\n");
         test_control_return(0);
     }
+}
+
+static void concurrent_query_entry(ULONG thread_input)
+{
+NX_MDNS_SERVICE service;
+const CHAR     *type = (thread_input == 1) ? "_smtp._tcp" : "_xmpp._tcp";
+
+
+    if(nx_mdns_service_one_shot_query(&mdns_0, NX_NULL, (UCHAR *)type,
+                                      NX_NULL, &service,
+                                      5 * NX_IP_PERIODIC_RATE) ||
+       (service.service_type == NX_NULL) ||
+       strcmp((CHAR *)service.service_type, type))
+        error_counter++;
+
+    concurrent_query_done++;
+}
+
+static UINT packet_has_type(NX_PACKET *packet_ptr, const CHAR *type)
+{
+UCHAR *p;
+
+
+    for(p = packet_ptr -> nx_packet_prepend_ptr;
+        p + 5 <= packet_ptr -> nx_packet_append_ptr; p++)
+    {
+        if(memcmp(p, type, 5) == 0)
+            return NX_TRUE;
+    }
+
+    return NX_FALSE;
+}
+
+static VOID inject_service_response(const CHAR *type)
+{
+NX_PACKET *packet = NX_NULL;
+UINT       i;
+UINT       status;
+
+
+    memcpy(response_data, mdns_data, sizeof(mdns_data));
+    for(i = 0; i + 5 <= sizeof(response_data); i++)
+    {
+        if(memcmp(response_data + i, "_http", 5) == 0)
+            memcpy(response_data + i, type, 5);
+    }
+
+    status = nx_packet_allocate(&pool_0, &packet, 16, 100);
+    if(status == NX_SUCCESS)
+        status = nx_packet_data_append(packet, response_data + 14,
+                                       sizeof(response_data) - 14,
+                                       &pool_0, 100);
+
+    if(status != NX_SUCCESS)
+    {
+        error_counter++;
+        if(packet != NX_NULL)
+            nx_packet_release(packet);
+        return;
+    }
+
+    packet -> nx_packet_ip_interface = &ip_0.nx_ip_interface[0];
+    _nx_ip_packet_deferred_receive(&ip_0, packet);
 }
 
 
@@ -255,6 +359,40 @@ UINT       status;
     /* Check whether this packet is the query. */
     if(((*pointer << 8) + *(pointer + 1)) != NX_MDNS_QUERY_FLAG)
         return NX_TRUE;
+
+    if(concurrent_query_test)
+    {
+        UINT query = 0;
+
+        if(packet_has_type(packet_ptr, "_smtp"))
+            query = 1;
+        else if(packet_has_type(packet_ptr, "_xmpp"))
+            query = 2;
+
+        if(query != 0)
+        {
+            if(concurrent_query_first == 0)
+                concurrent_query_first = query;
+            concurrent_query_seen |= query;
+
+            if((concurrent_query_seen == 3) && !concurrent_query_replied)
+            {
+                concurrent_query_replied = NX_TRUE;
+                if(concurrent_query_first == 1)
+                {
+                    inject_service_response("_xmpp");
+                    inject_service_response("_smtp");
+                }
+                else
+                {
+                    inject_service_response("_smtp");
+                    inject_service_response("_xmpp");
+                }
+            }
+        }
+
+        return NX_TRUE;
+    }
 
     query_received++;
 
@@ -292,4 +430,3 @@ void           netx_mdns_one_shot_query_test(void *first_unused_memory)
     test_control_return(3);
 }
 #endif /* NX_MDNS_DISABLE_CLIENT  */ 
-

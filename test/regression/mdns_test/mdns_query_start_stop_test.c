@@ -140,6 +140,15 @@ MDNS_TEST_SEQ mdns_query_start_stop[] = {
     /* Check the query packet. */
     {MDNS_CHECK_DATA_V4, (char*)&pkt4[0], sizeof(pkt4), 5},
 
+    /* A second caller shares the same continuous query. */
+    {MDNS_QUERY, (char*)&mdns_query_0, 0, 0},
+
+    /* The first caller stops, but the second still owns the query. */
+    {MDNS_QUERY_DELETE, NX_NULL, 0, 0},
+
+    /* Check that the remaining owner keeps the query on the wire. */
+    {MDNS_CHECK_DATA_V4, (char*)&pkt4[0], sizeof(pkt4), 5},
+
     /* Delete the query. */
     {MDNS_QUERY_DELETE, NX_NULL, 0, 0},
 
@@ -197,4 +206,3 @@ MDNS_TEST_SEQ mdns_query_start_stop[] = {
 int mdns_query_start_stop_size = sizeof(mdns_query_start_stop) / sizeof(MDNS_TEST_SEQ);
 
 #endif /* __PRODUCT_NETXDUO__  */
-
