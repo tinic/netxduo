@@ -2896,18 +2896,8 @@ UINT        rr_ptr_name_length;
                 if ((!_nx_mdns_name_match(p -> nx_mdns_rr_name, (UCHAR *)_nx_mdns_dns_sd, rr_name_length)) &&
                     (!_nx_mdns_name_match(p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name, &temp_string_buffer[type_index], rr_ptr_name_length)))
                 {
-
-                    /* Check the count.  */
-                    if (p -> nx_mdns_rr_count)
-                    {
-                        p -> nx_mdns_rr_count --;
-                    }
-                    else
-                    {
-
-                        /* Delete this resource record directly.  */
-                        _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, p);
-                    }
+                    /* The common delete path owns shared PTR references. */
+                    found = NX_TRUE;
                 }
                 break;
             }
@@ -5626,6 +5616,10 @@ static UINT _nx_mdns_rr_delete(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_rr)
   
 UINT        status = NX_MDNS_SUCCESS; 
 
+#ifndef NX_MDNS_DISABLE_SERVER
+UINT        rr_name_length;
+#endif /* NX_MDNS_DISABLE_SERVER */
+
 #ifndef NX_MDNS_DISABLE_CLIENT
 ULONG       *head;
 NX_MDNS_RR  *p;        
@@ -5633,7 +5627,25 @@ NX_MDNS_RR  *p;
 
     /* Get the mDNS mutex.  */
     tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
-    
+
+#ifndef NX_MDNS_DISABLE_SERVER
+    /* _services._dns-sd._udp is shared by every local service of one type.
+       A caller deleting one reference must not withdraw the record while
+       another service still owns it.  Keep this rule in the common deletion
+       path so service-add rollback cannot bypass the reference count. */
+    if (!(record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER) &&
+        (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+        (record_rr -> nx_mdns_rr_count != 0) &&
+        (!_nx_utility_string_length_check((CHAR *)(record_rr -> nx_mdns_rr_name),
+                                          &rr_name_length, NX_MDNS_NAME_MAX)) &&
+        (!_nx_mdns_name_match(record_rr -> nx_mdns_rr_name,
+                              (UCHAR *)_nx_mdns_dns_sd, rr_name_length)))
+    {
+        record_rr -> nx_mdns_rr_count --;
+        tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+        return(NX_MDNS_SUCCESS);
+    }
+#endif /* NX_MDNS_DISABLE_SERVER */
 
     /* Check for mDNS started flag.  */
     if (mdns_ptr -> nx_mdns_started)
