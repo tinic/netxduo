@@ -751,6 +751,33 @@ NX_MDNS_RR *rr;
             }
             tx_mutex_put(&mdns_ptr -> nx_mdns_mutex);
             break;
+        case MDNS_CHECK_HOST_SUSPENDED:
+        {
+        UINT host_found = NX_FALSE;
+
+            tx_mutex_get(&mdns_ptr -> nx_mdns_mutex, TX_WAIT_FOREVER);
+            head = (ULONG *)mdns_ptr -> nx_mdns_local_service_cache;
+            head = (ULONG *)(*head);
+            for (rr = (NX_MDNS_RR *)((ULONG *)mdns_ptr -> nx_mdns_local_service_cache + 1);
+                 (ULONG *)rr < head; rr++)
+            {
+                if (rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A)
+                {
+                    host_found = NX_TRUE;
+                    if ((rr -> nx_mdns_rr_state != NX_MDNS_RR_STATE_SUSPEND) ||
+                        (rr -> nx_mdns_rr_timer_count != 0) ||
+                        (rr -> nx_mdns_rr_retransmit_count != 0) ||
+                        (rr -> nx_mdns_rr_send_flag != NX_MDNS_RR_SEND_FLAG_CLEAR))
+                    {
+                        error_counter++;
+                    }
+                }
+            }
+            tx_mutex_put(&mdns_ptr -> nx_mdns_mutex);
+            if (host_found == NX_FALSE)
+                error_counter++;
+            break;
+        }
         case MDNS_CHECK_PROBING_CALLBACK_INVOKED:
             if(probing_callback_invoked != test_case[steps].timeout)
                 error_counter++;
