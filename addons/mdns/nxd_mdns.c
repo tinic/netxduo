@@ -343,6 +343,7 @@ UCHAR   *ptr;
 /*    tx_mutex_delete                       Delete the mDNS mutex         */ 
 /*    tx_thread_create                      Create the mDNS thread        */ 
 /*    tx_thread_delete                      Delete the mDNS thread        */  
+/*    tx_thread_terminate                   Terminate the mDNS thread     */
 /*    tx_event_flags_create                 Create the ThreadX flag event */
 /*    _nx_mdns_cache_initialize             Initialize the mDNS cache     */ 
 /*                                                                        */ 
@@ -547,6 +548,9 @@ UINT    host_name_size;
     if (status != NX_SUCCESS)
     {
 
+        /* Terminate the running mDNS thread before deleting its resources.  */
+        tx_thread_terminate(&(mdns_ptr -> nx_mdns_thread));
+
         /* Delete the UDP socket.  */
         nx_udp_socket_unbind(&(mdns_ptr -> nx_mdns_socket));
         nx_udp_socket_delete(&(mdns_ptr -> nx_mdns_socket));
@@ -571,6 +575,9 @@ UINT    host_name_size;
     /* Determine if the buffer initialize was successful.  */
     if (status != NX_SUCCESS)
     {
+
+        /* Terminate the running mDNS thread before deleting its resources.  */
+        tx_thread_terminate(&(mdns_ptr -> nx_mdns_thread));
 
         /* Delete the UDP socket.  */
         nx_udp_socket_unbind(&(mdns_ptr -> nx_mdns_socket));
