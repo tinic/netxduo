@@ -1317,12 +1317,20 @@ UINT  status;
        live and the pointer it dereferences was still NULL.  Duplicate address
        detection runs on the IP thread and is in flight while an application is
        creating this client, so the window is reachable.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
     _nx_dhcpv6_DAD_ptr = dhcpv6_ptr;
 
     /* Set the callback function to detect DAD process.
        If DAD failure, automatically set event to send DHCP decline meessage.
        Notice: other modules should not set the address change notify function again.  */
     status = nxd_ipv6_address_change_notify(dhcpv6_ptr -> nx_dhcpv6_ip_ptr, _nx_dhcpv6_ipv6_address_DAD_notify);
+
+    if (status != NX_SUCCESS)
+    {
+        _nx_dhcpv6_DAD_ptr = NX_NULL;
+    }
+
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     /* Was the callback notify fucntion creation successful?  */
     if (status != NX_SUCCESS)
@@ -1345,7 +1353,6 @@ UINT  status;
         nx_udp_socket_delete(&(dhcpv6_ptr -> nx_dhcpv6_socket));
 
         /* No, return error status.  */
-        _nx_dhcpv6_DAD_ptr = NX_NULL;
         return status;
     }
 #endif
@@ -1353,7 +1360,9 @@ UINT  status;
     /* Keep the DHCPv6 instance for DAD callback notify.  Assigned above under
        NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY; repeated here for the build that
        does not compile that block.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
     _nx_dhcpv6_DAD_ptr = dhcpv6_ptr;
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
@@ -1460,12 +1469,37 @@ UINT    status;
 UINT  _nx_dhcpv6_client_delete(NX_DHCPV6 *dhcpv6_ptr)
 {
 
-    
+NX_IP *ip_ptr;
+
+
+    ip_ptr = dhcpv6_ptr -> nx_dhcpv6_ip_ptr;
+
     /* Terminate the DHCPV6 processing thread.  */
     tx_thread_terminate(&(dhcpv6_ptr -> nx_dhcpv6_thread));
 
     /* Delete the DHCPV6 processing thread.  */
     tx_thread_delete(&(dhcpv6_ptr -> nx_dhcpv6_thread));
+
+    /* Unregister and unpublish the DAD callback before deleting its events.
+       The client thread is already gone because it also reads the pointer.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+#if !defined (NX_DISABLE_IPV6_DAD) && defined (NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY)
+    if (ip_ptr -> nx_ipv6_address_change_notify == _nx_dhcpv6_ipv6_address_DAD_notify)
+    {
+        ip_ptr -> nx_ipv6_address_change_notify = NX_NULL;
+    }
+#endif
+
+    if (_nx_dhcpv6_DAD_ptr == dhcpv6_ptr)
+    {
+        _nx_dhcpv6_DAD_ptr = NX_NULL;
+    }
+
+    /* Clear the DHCPv6 structure ID while its callback lifetime is protected. */
+    dhcpv6_ptr -> nx_dhcpv6_id =  0;
+
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     /* Delete the flag event queue. */
     tx_event_flags_delete(&dhcpv6_ptr -> nx_dhcpv6_events);
@@ -1482,19 +1516,6 @@ UINT  _nx_dhcpv6_client_delete(NX_DHCPV6 *dhcpv6_ptr)
 
     /* Delete the UDP socket.  */
     nx_udp_socket_delete(&(dhcpv6_ptr -> nx_dhcpv6_socket));
-
-    /* Clear the dhcpv6 structure ID. */
-    dhcpv6_ptr -> nx_dhcpv6_id =  0;
-
-    /* And the file-static the DAD callback dereferences, which pointed at
-       this instance.  The address change notify slot is deliberately left
-       alone: an application that took it back after the create -- which it
-       must, if it had one of its own -- owns it, and clearing it here would
-       remove the application's callback rather than ours.  */
-    if (_nx_dhcpv6_DAD_ptr == dhcpv6_ptr)
-    {
-        _nx_dhcpv6_DAD_ptr = NX_NULL;
-    }
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
@@ -11407,23 +11428,35 @@ UINT _nx_dhcpv6_user_option_add_callback_set(NX_DHCPV6 *dhcpv6_ptr, UINT (*dhcpv
 /**************************************************************************/
 VOID _nx_dhcpv6_ipv6_address_DAD_notify(NX_IP *ip_ptr, UINT status, UINT interface_index, UINT ipv6_addr_index, ULONG *ipv6_address)
 {
-UINT    ia_index;
+UINT       ia_index;
+NX_DHCPV6 *dhcpv6_ptr;
 
     NX_PARAMETER_NOT_USED(interface_index);
+
+    /* Serialize with create and delete so the event object remains valid.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+    dhcpv6_ptr = _nx_dhcpv6_DAD_ptr;
 
     /* No client, so nothing to tell.  This is not only the window before
        nx_dhcpv6_client_create() finishes: an application that chains this
        callback from its own may call it after nx_dhcpv6_client_delete(), and
        the delete clears the pointer.  */
-    if (_nx_dhcpv6_DAD_ptr == NX_NULL)
+    if (dhcpv6_ptr == NX_NULL)
+    {
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
         return;
+    }
 
     /* Make sure the DHCPv6 DAD instance is normal.  */
-    if((_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_id != NX_DHCPV6_ID) ||        
-       (!_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_name) ||
-       (_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_ip_ptr != ip_ptr) ||
-       (_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_state != NX_DHCPV6_STATE_BOUND_TO_ADDRESS))
+    if((dhcpv6_ptr -> nx_dhcpv6_id != NX_DHCPV6_ID) ||
+       (!dhcpv6_ptr -> nx_dhcpv6_name) ||
+       (dhcpv6_ptr -> nx_dhcpv6_ip_ptr != ip_ptr) ||
+       (dhcpv6_ptr -> nx_dhcpv6_state != NX_DHCPV6_STATE_BOUND_TO_ADDRESS))
+    {
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
         return;
+    }
 
 
     /* Check the DAD status.  */
@@ -11434,15 +11467,15 @@ UINT    ia_index;
         for(ia_index = 0; ia_index < NX_DHCPV6_MAX_IA_ADDRESS; ia_index++)
         {
             
-            if((_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_client_address_index[ia_index] == ipv6_addr_index) &&
-               (!memcmp(&(_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_ia[ia_index].nx_global_address.nxd_ip_address.v6[0]), ipv6_address, 16)))
+            if((dhcpv6_ptr -> nx_dhcpv6_client_address_index[ia_index] == ipv6_addr_index) &&
+               (!memcmp(&(dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_global_address.nxd_ip_address.v6[0]), ipv6_address, 16)))
             {
 
                 /* Set the IPv6 address status DAD failure.  */
-                _nx_dhcpv6_DAD_ptr -> nx_dhcpv6_ia[ia_index].nx_address_status = NX_DHCPV6_IA_ADDRESS_STATE_DAD_FAILURE;
+                dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_address_status = NX_DHCPV6_IA_ADDRESS_STATE_DAD_FAILURE;
 
                 /* Wakeup DHCPv6 thread for processing DAD failure event.  */
-                tx_event_flags_set(&_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_events, NX_DHCPV6_DAD_FAILURE_EVENT, TX_OR);
+                tx_event_flags_set(&dhcpv6_ptr -> nx_dhcpv6_events, NX_DHCPV6_DAD_FAILURE_EVENT, TX_OR);
 
                 break;
             }
@@ -11456,18 +11489,19 @@ UINT    ia_index;
         for(ia_index = 0; ia_index < NX_DHCPV6_MAX_IA_ADDRESS; ia_index++)
         {
             
-            if((_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_client_address_index[ia_index] == ipv6_addr_index) &&
-               (!memcmp(&(_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_ia[ia_index].nx_global_address.nxd_ip_address.v6[0]), ipv6_address, 16)))
+            if((dhcpv6_ptr -> nx_dhcpv6_client_address_index[ia_index] == ipv6_addr_index) &&
+               (!memcmp(&(dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_global_address.nxd_ip_address.v6[0]), ipv6_address, 16)))
             {
 
                 /* Set the IPv6 address status valid.  */
-                _nx_dhcpv6_DAD_ptr -> nx_dhcpv6_ia[ia_index].nx_address_status = NX_DHCPV6_IA_ADDRESS_STATE_VALID;
+                dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_address_status = NX_DHCPV6_IA_ADDRESS_STATE_VALID;
 
                 break;
             }
         }
     }
 
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
     return;
 }
 #endif     
