@@ -10,6 +10,7 @@ set(auto_ip_test_cases
     ${SOURCE_DIR}/auto_ip_test/netx_auto_ip_address_check_test.c
     ${SOURCE_DIR}/auto_ip_test/netx_auto_ip_arp_dest_addr_test.c
     ${SOURCE_DIR}/auto_ip_test/netx_auto_ip_basic_test.c
+    ${SOURCE_DIR}/auto_ip_test/netx_auto_ip_delete_handler_ownership_test.c
     ${SOURCE_DIR}/auto_ip_test/netx_auto_ip_max_conflicts_test.c
     ${SOURCE_DIR}/auto_ip_test/netx_auto_ip_announce_num_test.c)
 
