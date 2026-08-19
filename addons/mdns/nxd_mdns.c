@@ -10719,6 +10719,9 @@ UINT        i;
 ULONG       *head;
 NX_MDNS_RR  *p; 
 UCHAR       is_host_type;
+UCHAR       in_scope;
+UCHAR       same_owner;
+UCHAR       suspend_record;
 UINT        temp_string_length;
 UINT        rr_name_length;
 
@@ -10759,19 +10762,45 @@ UINT        rr_name_length;
         return(NX_MDNS_UNSUPPORTED_TYPE); 
     }
 
+    /* Keep the original owner available for RRSet and reference matching. */
+    old_name = record_rr -> nx_mdns_rr_name;
+
     /* Check the conflict count.  */
     if (record_rr -> nx_mdns_rr_conflict_count >= NX_MDNS_CONFLICT_COUNT)
     {
 
-        /* The retry budget is exhausted.  Stop this record before notifying
-           the application; otherwise its existing probing timer remains
-           armed and the timer thread can later announce the name that was
-           just reported as unavailable.  Keep the record suspended so a
-           later disable/enable cycle can explicitly retry registration.  */
-        record_rr -> nx_mdns_rr_state = NX_MDNS_RR_STATE_SUSPEND;
-        record_rr -> nx_mdns_rr_timer_count = 0;
-        record_rr -> nx_mdns_rr_retransmit_count = 0;
-        record_rr -> nx_mdns_rr_send_flag = NX_MDNS_RR_SEND_FLAG_CLEAR;
+        /* The retry budget is exhausted.  Stop the failed publication before
+           notifying the application; otherwise sibling records can continue
+           probing and later advertise an identity just reported unavailable.
+           A host failure invalidates every local publication because all SRV
+           records target that host.  A service failure only stops records for
+           that instance on the conflicting interface. */
+        head = (ULONG*)mdns_ptr -> nx_mdns_local_service_cache;
+        head = (ULONG*)(*head);
+        for (p = (NX_MDNS_RR*)((UCHAR*)mdns_ptr -> nx_mdns_local_service_cache + sizeof(ULONG));
+             (ULONG*)p < head; p++)
+        {
+            suspend_record = is_host_type;
+            if ((is_host_type == NX_FALSE) &&
+                (p -> nx_mdns_rr_interface_index == record_rr -> nx_mdns_rr_interface_index) &&
+                ((p -> nx_mdns_rr_name == old_name) ||
+                 ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+                  (p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name == old_name))))
+            {
+                suspend_record = NX_TRUE;
+            }
+
+            if ((p -> nx_mdns_rr_state == NX_MDNS_RR_STATE_INVALID) ||
+                (suspend_record == NX_FALSE))
+            {
+                continue;
+            }
+
+            p -> nx_mdns_rr_state = NX_MDNS_RR_STATE_SUSPEND;
+            p -> nx_mdns_rr_timer_count = 0;
+            p -> nx_mdns_rr_retransmit_count = 0;
+            p -> nx_mdns_rr_send_flag = NX_MDNS_RR_SEND_FLAG_CLEAR;
+        }
 
         /* Yes, Receive the confilictiong mDNS, Probing failure.  */
         if ((record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) ||
@@ -10790,9 +10819,6 @@ UINT        rr_name_length;
         /* Return.  */
         return (NX_MDNS_ERROR);
     }
-
-    /* Record the old name.  */
-    old_name = record_rr -> nx_mdns_rr_name;
 
     /* Set the new name and probing it.  */
     while ((*name) != '\0')
@@ -10885,13 +10911,66 @@ UINT        rr_name_length;
     /* Set the mDNS timer.  */
     _nx_mdns_timer_set(mdns_ptr, record_rr, record_rr -> nx_mdns_rr_timer_count);
 
-    /* Update the PTR/SRV data name.  */
+    /* Update every record in the unique publication, plus records which refer to
+       it.  A service instance owns both SRV and TXT records with the same
+       name; a host owns its A and AAAA records.  Renaming only the record
+       which happened to lose the tie-break leaves the other half probing and
+       advertising the old name.  Host names are global to this mDNS instance,
+       while service names are scoped to the interface on which they conflict. */
     head = (ULONG*)mdns_ptr -> nx_mdns_local_service_cache;
     head = (ULONG*)(*head);
 
     for (p = (NX_MDNS_RR*)((UCHAR*)mdns_ptr -> nx_mdns_local_service_cache + sizeof(ULONG)); (ULONG*)p < head; p++)
     {
-        if ((((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) && (is_host_type == NX_FALSE)) ||
+        in_scope = (UCHAR)((is_host_type == NX_TRUE) ||
+                          (p -> nx_mdns_rr_interface_index == record_rr -> nx_mdns_rr_interface_index));
+        same_owner = (UCHAR)(p -> nx_mdns_rr_name == old_name);
+
+        if ((p != record_rr) && (in_scope == NX_TRUE) && (same_owner == NX_TRUE) &&
+            (((is_host_type == NX_TRUE) &&
+              ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A) ||
+               (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_AAAA))) ||
+             ((is_host_type == NX_FALSE) &&
+              ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) ||
+               (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_TXT)))))
+        {
+
+            /* Give every member the new owner name and restart the publication as
+               one unit with a shared conflict budget. */
+            status = _nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL,
+                                               &temp_string_buffer[0], temp_string_length,
+                                               (VOID **)(&p -> nx_mdns_rr_name), NX_FALSE, NX_TRUE);
+            if (status)
+            {
+                return(status);
+            }
+            _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
+
+            p -> nx_mdns_rr_state = NX_MDNS_RR_STATE_PROBING;
+            p -> nx_mdns_rr_timer_count = mdns_ptr -> nx_mdns_first_probing_delay;
+            p -> nx_mdns_rr_retransmit_count = NX_MDNS_PROBING_RETRANSMIT_COUNT;
+            p -> nx_mdns_rr_conflict_count = record_rr -> nx_mdns_rr_conflict_count;
+            _nx_mdns_timer_set(mdns_ptr, p, p -> nx_mdns_rr_timer_count);
+        }
+        else if ((in_scope == NX_TRUE) && (same_owner == NX_TRUE) &&
+                 (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_NSEC) &&
+                 (p != record_rr))
+        {
+
+            /* NSEC is published with its unique owner, but is not itself
+               probed.  Move its owner without changing its state. */
+            status = _nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL,
+                                               &temp_string_buffer[0], temp_string_length,
+                                               (VOID **)(&p -> nx_mdns_rr_name), NX_FALSE, NX_TRUE);
+            if (status)
+            {
+                return(status);
+            }
+            _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
+        }
+
+        if ((in_scope == NX_TRUE) &&
+            (((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) && (is_host_type == NX_FALSE)) ||
              ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) && (is_host_type == NX_TRUE))) &&
             (p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name == old_name))
         {
@@ -10899,6 +10978,11 @@ UINT        rr_name_length;
             /* Add the new resource records. */
             status = _nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, &temp_string_buffer[0], temp_string_length,
                                                (VOID **)(&(p -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name)), NX_FALSE, NX_TRUE);
+
+            if (status)
+            {
+                return(status);
+            }
 
             /* Delete the rdata name.  */
             _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
