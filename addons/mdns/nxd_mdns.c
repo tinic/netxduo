@@ -5691,6 +5691,18 @@ NX_MDNS_RR  *p;
         {
 
 #ifndef NX_MDNS_DISABLE_CLIENT
+            /* A continuous query can be shared by callers that independently
+               start and stop the same browse. nx_mdns_rr_count stores the
+               additional owners beyond the first.  */
+            if ((record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY) &&
+                (record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_CONTINUOUS_QUERY) &&
+                (record_rr -> nx_mdns_rr_count != 0))
+            {
+                record_rr -> nx_mdns_rr_count--;
+                tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+                return(NX_MDNS_SUCCESS);
+            }
+
             if (record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY)
             {
 
@@ -12962,6 +12974,18 @@ UINT        name_length;
     /* Check the same query.  */
     if (same_query == NX_TRUE)
     {
+
+        /* Pair every successful continuous-query start with one stop. The
+           first owner is represented by the record itself and rr_count holds
+           the additional owners. One-shot callers do not own the existing
+           query and still receive NX_MDNS_EXIST_SAME_QUERY.  */
+        if (one_shot == NX_FALSE)
+        {
+            if (rr -> nx_mdns_rr_count == (UCHAR)0xff)
+                return(NX_MDNS_CACHE_ERROR);
+
+            rr -> nx_mdns_rr_count++;
+        }
 
         /* A multicast DNS querier should also delay the first query of the series by
            a randomly chosen amount in the range 20-120ms.  */
