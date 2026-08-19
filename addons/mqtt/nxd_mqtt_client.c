@@ -3069,6 +3069,7 @@ UINT    status;
 /*    tx_mutex_get                                                        */
 /*    tx_mutex_put                                                        */
 /*    tx_event_flag_create                  Create event flag             */
+/*    tx_thread_terminate                   Terminate MQTT client thread  */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -3127,6 +3128,9 @@ UINT                status;
     {
         /* Delete the mutex. */
         tx_mutex_delete(&client_ptr -> nxd_mqtt_protection);
+
+        /* Terminate the suspended client thread. */
+        tx_thread_terminate(&(client_ptr -> nxd_mqtt_thread));
 
         /* Delete the thread. */
         tx_thread_delete(&(client_ptr -> nxd_mqtt_thread));

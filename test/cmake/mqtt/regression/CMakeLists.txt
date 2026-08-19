@@ -8,6 +8,7 @@ get_filename_component(SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../regression
 
 set(mqtt_test_cases
     ${SOURCE_DIR}/mqtt_test/netx_mqtt_api_test.c
+    ${SOURCE_DIR}/mqtt_test/netx_mqtt_create_thread_cleanup_test.c
     ${SOURCE_DIR}/mqtt_test/netx_mqtt_connect_auth_test.c
     ${SOURCE_DIR}/mqtt_test/netx_mqtt_connect_auth_empty_test.c
     ${SOURCE_DIR}/mqtt_test/netx_mqtt_connect_test.c
