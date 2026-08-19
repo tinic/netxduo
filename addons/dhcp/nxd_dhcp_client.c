@@ -451,7 +451,9 @@ UINT    label_length = 0;
     TX_RESTORE
 
     /* Default enable DHCP on the primary interface (0).  */
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_INTERFACE
     _nx_dhcp_interface_enable(dhcp_ptr, 0);
+#endif
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
