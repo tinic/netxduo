@@ -95,6 +95,7 @@ static VOID         _nx_mdns_long_to_network_convert(UCHAR *ptr, ULONG value);
 #ifndef NX_MDNS_DISABLE_SERVER
 static VOID         _nx_mdns_address_change_process(NX_MDNS *mdns_ptr);
 static UINT         _nx_mdns_host_name_register(NX_MDNS *mdns_ptr, UCHAR type, UINT interface_index);
+static VOID         _nx_mdns_host_address_records_delete(NX_MDNS *mdns_ptr, UINT interface_index);
 static UINT         _nx_mdns_service_interface_delete(NX_MDNS *mdns_ptr, UCHAR *name, UCHAR *type, UCHAR *sub_type, UINT interface_index);
 #if !defined NX_DISABLE_IPV4 || defined NX_MDNS_ENABLE_IPV6
 static UINT         _nx_mdns_rr_a_aaaa_add(NX_MDNS *mdns_ptr, UCHAR *name, ULONG *address, UINT addr_length, UCHAR type, UINT interface_index);
@@ -1292,6 +1293,71 @@ UINT _nx_mdns_service_notify_clear(NX_MDNS *mdns_ptr)
 
 
 #ifndef NX_MDNS_DISABLE_SERVER
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_host_address_records_delete               PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function deletes host A and AAAA records for an interface.     */
+/*    It is used to roll back a partially completed host registration.    */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    mdns_ptr                              Pointer to mDNS instance      */
+/*    interface_index                       The interface index           */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_mdns_cache_delete_resource_record Delete the resource record   */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_mdns_enable                       Enable mDNS                   */
+/*                                                                        */
+/**************************************************************************/
+static VOID _nx_mdns_host_address_records_delete(NX_MDNS *mdns_ptr, UINT interface_index)
+{
+
+ULONG       *head;
+NX_MDNS_RR  *p;
+
+
+    /* Get the local buffer head before deleting any records.  Deleted
+       records are zeroed, so scanning to the original head is safe even
+       when deleting the final record moves the live head backwards.  */
+    head = (ULONG *)mdns_ptr -> nx_mdns_local_service_cache;
+    head = (ULONG *)(*head);
+
+    for (p = (NX_MDNS_RR *)((UCHAR *)mdns_ptr -> nx_mdns_local_service_cache + sizeof(ULONG));
+         (ULONG *)p < head; p++)
+    {
+
+        if (p -> nx_mdns_rr_state == NX_MDNS_RR_STATE_INVALID)
+            continue;
+
+        if (p -> nx_mdns_rr_interface_index != interface_index)
+            continue;
+
+        if ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A) ||
+            (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_AAAA))
+        {
+            _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, p);
+        }
+    }
+}
+
+
 /**************************************************************************/ 
 /*                                                                        */ 
 /*  FUNCTION                                               RELEASE        */ 
@@ -1518,8 +1584,11 @@ UINT    status;
 /*    tx_mutex_get                          Get the mDNS mutex            */ 
 /*    tx_mutex_put                          Put the mDNS mutex            */ 
 /*    nx_ipv4_multicast_interface_join      Join the IPv4 Multicast group */ 
+/*    nx_ipv4_multicast_interface_leave     Leave the IPv4 Multicast group*/
 /*    nxd_ipv6_multicast_interface_join     Join the IPv6 Multicast group */ 
+/*    nxd_ipv6_multicast_interface_leave    Leave the IPv6 Multicast group*/
 /*    _nx_mdns_host_name_register           Register the host name        */
+/*    _nx_mdns_host_address_records_delete  Delete partial host records   */
 /*    _nx_mdns_timer_set                    Set the mDNS timer            */
 /*                                                                        */ 
 /*  CALLED BY                                                             */ 
@@ -1547,17 +1616,15 @@ NXD_IPV6_ADDRESS    *ipv6_address;
         return(NX_MDNS_PARAM_ERROR);
     }
 
-    /* Check to see if mDNS is already enabled on this interface.  */
-    if (mdns_ptr -> nx_mdns_interface_enabled[interface_index] == NX_TRUE)
-    {
-        return(NX_MDNS_ALREADY_ENABLED);
-    }
-
     /* Get the mDNS mutex.  */
     tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
 
-    /* Enable the mdns function.  */
-    mdns_ptr -> nx_mdns_interface_enabled[interface_index] = NX_TRUE;
+    /* Check to see if mDNS is already enabled on this interface.  */
+    if (mdns_ptr -> nx_mdns_interface_enabled[interface_index] == NX_TRUE)
+    {
+        tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+        return(NX_MDNS_ALREADY_ENABLED);
+    }
 
 #ifdef NX_MDNS_ENABLE_IPV6
     /* Set the interface pointer.  */
@@ -1600,6 +1667,9 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     if (status)
     {
 
+        /* Undo the IPv4 group membership acquired above.  */
+        nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
+
         /* Release the mDNS mutex.  */
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
         return(status);
@@ -1611,6 +1681,19 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     /* Check status.  */
     if (status)
     {
+
+        /* Host registration can add an A record before a later address
+           exhausts the local cache.  Remove those partial records so an
+           already-running interface cannot advertise them.  */
+        _nx_mdns_host_address_records_delete(mdns_ptr, interface_index);
+
+#ifdef NX_MDNS_ENABLE_IPV6
+        /* Undo the IPv6 group membership acquired above.  */
+        nxd_ipv6_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, &NX_MDNS_IPV6_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_MDNS_ENABLE_IPV6  */
+
+        /* Undo the IPv4 group membership acquired above.  */
+        nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
 
         /* Release the mDNS mutex.  */
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
@@ -1703,6 +1786,9 @@ NXD_IPV6_ADDRESS    *ipv6_address;
         _nx_mdns_timer_set(mdns_ptr, p, p -> nx_mdns_rr_timer_count);
     }
 #endif /* NX_MDNS_DISABLE_SERVER */
+
+    /* Publish the interface only after all setup has succeeded.  */
+    mdns_ptr -> nx_mdns_interface_enabled[interface_index] = NX_TRUE;
 
     /* Set the mdns started flag.  */  
     mdns_ptr -> nx_mdns_started = NX_TRUE;
