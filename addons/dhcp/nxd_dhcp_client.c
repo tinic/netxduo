@@ -1194,6 +1194,13 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
     interface_record -> nx_dhcp_probe_count = 0;
     dhcp_ptr -> nx_dhcp_ip_ptr -> nx_ip_interface[iface_index].nx_interface_ip_probe_address = 0;
 
+    /* Remove the conflict callback when DHCP no longer owns this interface.  */
+    if (dhcp_ptr -> nx_dhcp_ip_ptr -> nx_ip_interface[iface_index].nx_interface_ip_conflict_notify_handler ==
+        _nx_dhcp_ip_conflict)
+    {
+        dhcp_ptr -> nx_dhcp_ip_ptr -> nx_ip_interface[iface_index].nx_interface_ip_conflict_notify_handler = NX_NULL;
+    }
+
 #endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE  */
 
     /* Set the DHCP state to the initial state.  */
@@ -1600,6 +1607,34 @@ NX_DHCP *dhcp_previous;
        }
     }
 
+    /* Stop conflict callbacks from finding this instance before deleting
+       the event group to which they post.  */
+    TX_DISABLE
+
+    /* Clear the DHCP structure ID.  */
+    dhcp_ptr -> nx_dhcp_id =  0;
+
+    /* Remove the DHCP instance from the created list.  */
+    if (_nx_dhcp_created_ptr == dhcp_ptr)
+    {
+        _nx_dhcp_created_ptr = _nx_dhcp_created_ptr -> nx_dhcp_created_next;
+    }
+    else
+    {
+        for (dhcp_previous = _nx_dhcp_created_ptr;
+             dhcp_previous -> nx_dhcp_created_next;
+             dhcp_previous = dhcp_previous -> nx_dhcp_created_next)
+        {
+            if (dhcp_previous -> nx_dhcp_created_next == dhcp_ptr)
+            {
+                dhcp_previous -> nx_dhcp_created_next = dhcp_ptr -> nx_dhcp_created_next;
+                break;
+            }
+        }
+    }
+
+    TX_RESTORE
+
     tx_thread_suspend(&(dhcp_ptr -> nx_dhcp_thread));
 
     /* Terminate the DHCP processing thread.  */
@@ -1631,34 +1666,6 @@ NX_DHCP *dhcp_previous;
 
     /* Delete the DHCP mutex.  */
     tx_mutex_delete(&(dhcp_ptr -> nx_dhcp_mutex));
-
-    /* Disable interrupts.  */
-    TX_DISABLE
-
-    /* Clear the dhcp structure ID. */
-    dhcp_ptr -> nx_dhcp_id =  0;
-
-    /* Remove the DHCP instance from the created list.  */
-    if (_nx_dhcp_created_ptr == dhcp_ptr)
-    {
-        _nx_dhcp_created_ptr = _nx_dhcp_created_ptr -> nx_dhcp_created_next;
-    }
-    else
-    {
-        for (dhcp_previous = _nx_dhcp_created_ptr;
-             dhcp_previous -> nx_dhcp_created_next;
-             dhcp_previous = dhcp_previous -> nx_dhcp_created_next)
-        {
-            if (dhcp_previous -> nx_dhcp_created_next == dhcp_ptr)
-            {
-                dhcp_previous -> nx_dhcp_created_next  = dhcp_ptr -> nx_dhcp_created_next;
-                break;
-            }
-        }
-    }
-
-    /* Restore interrupts.  */
-    TX_RESTORE
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
