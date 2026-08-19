@@ -203,6 +203,7 @@ UINT    status;
 /*    nx_udp_socket_create                  Create the DHCP UDP socket    */ 
 /*    nx_udp_socket_delete                  Delete the DHCP UDP socket    */ 
 /*    tx_thread_create                      Create DHCP processing thread */ 
+/*    tx_thread_terminate                   Terminate DHCP thread         */
 /*                                                                        */ 
 /*  CALLED BY                                                             */ 
 /*                                                                        */ 
@@ -343,6 +344,9 @@ UINT  i, j;
         /* Delete the UDP socket.  */
         nx_udp_socket_delete(&(dhcp_ptr -> nx_dhcp_socket));
 
+        /* Terminate the suspended DHCP thread.  */
+        tx_thread_terminate(&(dhcp_ptr -> nx_dhcp_server_thread));
+
         /* Delete DHCP thead.  */
         tx_thread_delete(&(dhcp_ptr -> nx_dhcp_server_thread));
 
@@ -379,6 +383,9 @@ UINT  i, j;
         /* Delete the UDP socket.  */
         nx_udp_socket_delete(&(dhcp_ptr -> nx_dhcp_socket));
 
+        /* Terminate the suspended DHCP thread.  */
+        tx_thread_terminate(&(dhcp_ptr -> nx_dhcp_server_thread));
+
         /* Delete DHCP thead.  */
         tx_thread_delete(&(dhcp_ptr -> nx_dhcp_server_thread));
 
@@ -402,6 +409,9 @@ UINT  i, j;
 
         /* Delete the UDP socket.  */
         nx_udp_socket_delete(&(dhcp_ptr -> nx_dhcp_socket));
+
+        /* Terminate the suspended DHCP thread.  */
+        tx_thread_terminate(&(dhcp_ptr -> nx_dhcp_server_thread));
 
         /* Delete DHCP thread.  */
         tx_thread_delete(&(dhcp_ptr -> nx_dhcp_server_thread));
