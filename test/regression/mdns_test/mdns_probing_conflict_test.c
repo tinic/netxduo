@@ -315,7 +315,7 @@ static const unsigned char pkt8[261] = {
 static MDNS_SERVICE mdns_service = {"SimpleWebServer", "_http._tcp", NX_NULL, "paper=A4;version=01", 100, 0, 0, 80, NX_MDNS_RR_SET_UNIQUE, 0};
 
 MDNS_TEST_SEQ mdns_probing_conflict[] = {
-    {TITLE, "Probing conflict", 16, 0},
+    {TITLE, "Probing conflict", 17, 0},
     
     /* Wait 5 seconds. */
     {WAIT, NX_NULL, 0, 5},
@@ -349,6 +349,9 @@ MDNS_TEST_SEQ mdns_probing_conflict[] = {
 
     /* A host conflict must not be reported as a service conflict. */
     {MDNS_CHECK_PROBING_CALLBACK_INVOKED, NX_NULL, 0, 1},
+
+    /* A failed host record must not resume probing and announce later. */
+    {MDNS_CHECK_HOST_SUSPENDED, NX_NULL, 0, 0},
 };
 
 int mdns_probing_conflict_size = sizeof(mdns_probing_conflict) / sizeof(MDNS_TEST_SEQ);

@@ -10763,6 +10763,16 @@ UINT        rr_name_length;
     if (record_rr -> nx_mdns_rr_conflict_count >= NX_MDNS_CONFLICT_COUNT)
     {
 
+        /* The retry budget is exhausted.  Stop this record before notifying
+           the application; otherwise its existing probing timer remains
+           armed and the timer thread can later announce the name that was
+           just reported as unavailable.  Keep the record suspended so a
+           later disable/enable cycle can explicitly retry registration.  */
+        record_rr -> nx_mdns_rr_state = NX_MDNS_RR_STATE_SUSPEND;
+        record_rr -> nx_mdns_rr_timer_count = 0;
+        record_rr -> nx_mdns_rr_retransmit_count = 0;
+        record_rr -> nx_mdns_rr_send_flag = NX_MDNS_RR_SEND_FLAG_CLEAR;
+
         /* Yes, Receive the confilictiong mDNS, Probing failure.  */
         if ((record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV) ||
             (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A))

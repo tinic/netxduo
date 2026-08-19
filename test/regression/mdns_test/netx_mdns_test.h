@@ -83,6 +83,7 @@
 #define MDNS_RECREATE                       0x6F    /* This entry deletes and creates mdns instance. */
 #define MDNS_WAIT_TICK                      0x70    /* This entry sleep specified ticks. */
 #define MDNS_SET_HOST_CONFLICT_LIMIT        0x71    /* This entry exhausts host conflict retries. */
+#define MDNS_CHECK_HOST_SUSPENDED           0x72    /* This entry checks that failed host probing stopped. */
 
 
 #define MDNS_FLAG_QUERY                     0x0000  /* Define flag for standard query. */
