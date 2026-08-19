@@ -4451,6 +4451,10 @@ UINT        i;
     buffer_prepend_ptr = &dhcpv6_ptr -> nx_dhcpv6_domain_name[0];
     buffer_size = NX_DHCPV6_DOMAIN_NAME_BUFFER_SIZE;
 
+    /* This option replaces the search list from the previous message. */
+    memset(dhcpv6_ptr -> nx_dhcpv6_domain_name, 0,
+           sizeof(dhcpv6_ptr -> nx_dhcpv6_domain_name));
+
     /* Process the domain search list options.  */
     while(temp_length < option_length)
     {
@@ -4735,6 +4739,16 @@ UINT _nx_dhcpv6_process_DNS_server(NX_DHCPV6 *dhcpv6_ptr, UCHAR *option_data, UI
 UINT   index = 0;
 UINT   w, j = 0;
 
+    /* A DNS server is exactly one IPv6 address. Validate the complete option
+       before replacing the previous list so malformed input cannot erase a
+       working configuration. */
+    if ((option_length & 0x0FU) != 0U)
+    {
+        return NX_DHCPV6_INVALID_OPTION_DATA;
+    }
+
+    memset(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address, 0,
+           sizeof(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address));
 
     /* Loop through the length of the buffer to parse. */
     while ((index + 16) <= option_length)
@@ -11150,6 +11164,27 @@ UINT        index;
     if(index != packet_ptr -> nx_packet_length)
     {
         return(NX_DHCPV6_INVALID_DATA_SIZE);
+    }
+
+    /* An accepted Advertise or Reply replaces the previous server-supplied
+       configuration. Processors above replace options that are present;
+       clear an omitted option only after the entire message is known valid.
+       A Reconfigure message merely requests another exchange and does not
+       carry replacement configuration. */
+    if ((dhcpv6_ptr -> nx_dhcpv6_received_message_type == NX_DHCPV6_MESSAGE_TYPE_ADVERTISE) ||
+        (dhcpv6_ptr -> nx_dhcpv6_received_message_type == NX_DHCPV6_MESSAGE_TYPE_REPLY))
+    {
+        if (!(dhcpv6_ptr -> nx_dhcpv6_reply_option_flags & NX_DHCPV6_INCLUDE_DNS_SERVER_OPTION))
+        {
+            memset(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address, 0,
+                   sizeof(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address));
+        }
+
+        if (!(dhcpv6_ptr -> nx_dhcpv6_reply_option_flags & NX_DHCPV6_INCLUDE_DOMAIN_NAME_OPTION))
+        {
+            memset(dhcpv6_ptr -> nx_dhcpv6_domain_name, 0,
+                   sizeof(dhcpv6_ptr -> nx_dhcpv6_domain_name));
+        }
     }
 
     /* Yes, the packet data processing is completed.  */
