@@ -13,6 +13,10 @@
 #include "nx_ip.h"
 #include "nxd_mqtt_client.h"
 
+extern void test_control_return(UINT status);
+
+#ifndef NXD_MQTT_CLOUD_ENABLE
+
 #define DEMO_STACK_SIZE 2048
 
 static TX_THREAD       test_thread;
@@ -20,8 +24,6 @@ static NX_IP           ip_0;
 static NX_PACKET_POOL  pool_0;
 static NXD_MQTT_CLIENT mqtt_client_0;
 static UCHAR           mqtt_stack[DEMO_STACK_SIZE];
-
-extern void test_control_return(UINT status);
 
 static void test_thread_entry(ULONG thread_input);
 
@@ -86,3 +88,18 @@ UINT status;
     printf("SUCCESS!\n");
     test_control_return(0);
 }
+
+#else
+
+#ifdef CTEST
+VOID test_application_define(void *first_unused_memory)
+#else
+void netx_mqtt_create_thread_cleanup_test(void *first_unused_memory)
+#endif
+{
+    NX_PARAMETER_NOT_USED(first_unused_memory);
+    printf("NetX Test:   MQTT Create Thread Cleanup Test.......................N/A\n");
+    test_control_return(3);
+}
+
+#endif /* NXD_MQTT_CLOUD_ENABLE */
