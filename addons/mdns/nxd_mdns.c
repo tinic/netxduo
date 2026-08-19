@@ -10768,10 +10768,12 @@ UINT        rr_name_length;
             (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A))
         {
 
-            /* Service name has been registered , invoke the notify function.  */
+            /* Notify the application whether a host or service name failed.  */
             if (mdns_ptr -> nx_mdns_probing_notify)
             {
-                (mdns_ptr -> nx_mdns_probing_notify)(mdns_ptr, name, NX_MDNS_LOCAL_SERVICE_REGISTERED_FAILURE);
+                (mdns_ptr -> nx_mdns_probing_notify)(mdns_ptr, name,
+                    is_host_type ? NX_MDNS_LOCAL_HOST_REGISTERED_FAILURE :
+                                   NX_MDNS_LOCAL_SERVICE_REGISTERED_FAILURE);
             }
         }
 
