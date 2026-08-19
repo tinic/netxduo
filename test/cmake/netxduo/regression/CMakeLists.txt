@@ -1199,6 +1199,7 @@ set(telnet_test_cases
 
 set(tftp_test_cases
     ${SOURCE_DIR}/tftp_test/netx_tftp_basic_test.c
+    ${SOURCE_DIR}/tftp_test/netx_tftp_create_thread_cleanup_test.c
     ${SOURCE_DIR}/tftp_test/netx_tftp_write_interaction_test.c
     ${SOURCE_DIR}/tftp_test/netx_tftp_error_file_name_test.c
     ${SOURCE_DIR}/tftp_test/netx_tftp_read_interaction_test.c
