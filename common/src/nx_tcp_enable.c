@@ -107,6 +107,12 @@ struct NX_TCP_LISTEN_STRUCT *listen_ptr;
     /* Set the TCP deferred cleanup check function.  */
     ip_ptr -> nx_tcp_deferred_cleanup_check =  _nx_tcp_deferred_cleanup_check;
 
+    /* Build the SYN cache and draw the keys its cookies are signed with.
+       Here rather than at nx_ip_create because NX_RAND is what seeds them and
+       this is where the rest of TCP is already trusting it, and because a
+       listen request cannot exist before TCP is enabled.  */
+    _nx_tcp_syncache_initialize(ip_ptr);
+
     /* Fill the challenge acknowledgment budget, RFC 5961 section 7.  The
        one-second periodic refills it from here on; without this the first
        second after enable has none.  */

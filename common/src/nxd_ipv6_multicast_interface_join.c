@@ -27,6 +27,9 @@
 /* Include necessary system files.  */
 #include "nx_api.h"
 #include "nx_ipv6.h"
+#ifdef NX_ENABLE_MLD
+#include "nx_mld.h"
+#endif /* NX_ENABLE_MLD */
 
 /**************************************************************************/
 /*                                                                        */
@@ -162,6 +165,12 @@ NX_INTERFACE *nx_interface;
 
     /* Release the protection over the IP instance.  */
     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+#ifdef NX_ENABLE_MLD
+
+    /* Announce the group, after the driver has been told to accept it.  */
+    _nx_mld_group_join(ip_ptr, group_address -> nxd_ip_address.v6, nx_interface);
+#endif /* NX_ENABLE_MLD */
 
     /* Return SUCCESS.  */
     return(NX_SUCCESS);

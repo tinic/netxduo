@@ -163,6 +163,31 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                 }
 #endif /* NX_ENABLE_TCPIP_OFFLOAD */
 
+                /* Keep the port's advertised window in step with the socket
+                   now serving it, so a SYN-ACK the cache sends and the ACK it
+                   is reconstructed against agree on the scale.  */
+                if (socket_ptr -> nx_tcp_socket_rx_window_default)
+                {
+                    listen_ptr -> nx_tcp_listen_rx_window =
+                        socket_ptr -> nx_tcp_socket_rx_window_default;
+                }
+
+                /* A handshake that finished while this listen request had no
+                   socket is waiting in the SYN cache, and this is the socket
+                   it was waiting for.  It goes over before the socket is
+                   parked, because a parked socket is one the next SYN takes
+                   and this connection is older than that SYN.  */
+                if (_nx_tcp_syncache_deliver(ip_ptr, listen_ptr, socket_ptr) == NX_TRUE)
+                {
+
+                    /* Release the protection.  */
+                    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+                    /* Connection pending, which is also a success: the socket
+                       is connected and the next accept returns at once.  */
+                    return(NX_CONNECTION_PENDING);
+                }
+
                 /* Determine if there are any connection requests queued up.  */
                 if (!listen_ptr -> nx_tcp_listen_queue_current)
                 {

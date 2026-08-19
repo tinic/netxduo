@@ -124,14 +124,13 @@ NXD_IPV6_ADDRESS     *ipv6_address;
             continue;
         }
 
-        /* A prefix that is on this list only so its lifetime is counted down
-           says nothing about what is on-link: it was advertised A=1 L=0, and
-           the L bit is what this question asks about. */
-        if (!prefix_entry -> nx_ipv6_prefix_entry_onlink)
-        {
-            prefix_entry = prefix_entry -> nx_ipv6_prefix_entry_next;
-            continue;
-        }
+        /* NO L-BIT TEST HERE, and there is nothing to test it on: this loop
+           walks the manually configured addresses, which carry no prefix
+           information option and were never advertised.  The while loop above
+           leaves prefix_entry NX_NULL on every path that reaches this one --
+           it exits only by running off the end of the list -- so the copy of
+           that test which used to sit here read offset 24 of address zero on
+           every pass.  */
 
         /* Check whether or not the destination address is matched. */
         if (CHECK_IP_ADDRESSES_BY_PREFIX(dest_addr,

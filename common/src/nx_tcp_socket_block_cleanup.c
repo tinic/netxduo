@@ -89,6 +89,11 @@ VOID  _nx_tcp_socket_block_cleanup(NX_TCP_SOCKET *socket_ptr)
     /* Simply clear the timeout.  */
     socket_ptr -> nx_tcp_socket_timeout = 0;
 
+    /* And the stall clock with it, so a socket reused for a second connection
+       does not start it holding the first one's silence.  The fast timer would
+       clear it on the next tick anyway; connect() need not wait for one.  */
+    socket_ptr -> nx_tcp_socket_stall_ticks = 0;
+
     /* Reset duplicated ack received. */
     socket_ptr -> nx_tcp_socket_duplicated_ack_received = 0;
 
@@ -107,6 +112,9 @@ VOID  _nx_tcp_socket_block_cleanup(NX_TCP_SOCKET *socket_ptr)
         socket_ptr -> nx_tcp_socket_rtt_timing    = NX_FALSE;
         socket_ptr -> nx_tcp_socket_timeout_rate  = _nx_tcp_transmit_timer_rate;
     }
+
+    /* The next connection's sequence numbers are its own.  */
+    socket_ptr -> nx_tcp_socket_loss_probe_sequence = 0;
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
 
     /* Connection needs to be closed down immediately.  */

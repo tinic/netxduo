@@ -142,6 +142,11 @@ VOID  _nx_tcp_socket_state_syn_sent(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *tc
 
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+        /* Max(SND.WND) starts at what the SYN offered, so the RFC 1122 4.2.3.4
+           threshold in nx_tcp_socket_send_internal.c has a number to work with
+           before the first acknowledgment arrives.  */
+        socket_ptr -> nx_tcp_socket_tx_window_advertised_max = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+
         /* Initialize the slow start threshold to be the advertised window size. */
         socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = socket_ptr -> nx_tcp_socket_tx_window_advertised;
 
@@ -249,6 +254,11 @@ VOID  _nx_tcp_socket_state_syn_sent(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *tc
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
         socket_ptr -> nx_tcp_socket_tx_window_advertised <<= socket_ptr -> nx_tcp_rcv_win_scale_value;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING  */
+
+        /* Max(SND.WND) starts at what the SYN offered, so the RFC 1122 4.2.3.4
+           threshold in nx_tcp_socket_send_internal.c has a number to work with
+           before the first acknowledgment arrives.  */
+        socket_ptr -> nx_tcp_socket_tx_window_advertised_max = socket_ptr -> nx_tcp_socket_tx_window_advertised;
 
         /* Initialize the slow start threshold to be the advertised window size. */
         socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = socket_ptr -> nx_tcp_socket_tx_window_advertised;

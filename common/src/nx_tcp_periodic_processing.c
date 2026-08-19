@@ -82,6 +82,11 @@ UINT           keepalive_enabled = NX_FALSE;
        the one-second periodic, so the budget is a rate per second.  */
     ip_ptr -> nx_ip_tcp_challenge_ack_budget =  NX_TCP_CHALLENGE_ACK_LIMIT;
 
+    /* Age the half-open connections and send the SYN-ACKs their retry ladder
+       is due.  A half-open connection has no socket, so this is the only
+       timer it has.  */
+    _nx_tcp_syncache_periodic(ip_ptr);
+
 #ifdef NX_ENABLE_TCP_KEEPALIVE
 
     /* Pickup the number of created TCP sockets.  */

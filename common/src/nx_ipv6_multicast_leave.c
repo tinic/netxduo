@@ -29,6 +29,9 @@
 #ifdef FEATURE_NX_IPV6
 #include "nx_ip.h"
 #include "nx_ipv6.h"
+#ifdef NX_ENABLE_MLD
+#include "nx_mld.h"
+#endif /* NX_ENABLE_MLD */
 
 
 /**************************************************************************/
@@ -78,6 +81,14 @@ NX_IP_DRIVER driver_request;
     driver_request.nx_ip_driver_physical_address_msw = 0x00003333;
     driver_request.nx_ip_driver_physical_address_lsw = multicast_addr[3];
     driver_request.nx_ip_driver_interface = nx_interface;
+
+#ifdef NX_ENABLE_MLD
+
+    /* Before the driver command, the mirror of the join: a Done is answered
+       by a query addressed to the group, and the filter has to still be
+       open to hear it.  */
+    _nx_mld_group_leave(ip_ptr, multicast_addr, nx_interface);
+#endif /* NX_ENABLE_MLD */
 
     /* Obtain the IP mutex so we can search the multicast join list.  */
     tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);

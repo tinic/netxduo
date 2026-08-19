@@ -28,6 +28,9 @@
 #include "nx_api.h"
 #include "nx_ip.h"
 #include "nx_ipv6.h"
+#ifdef NX_ENABLE_MLD
+#include "nx_mld.h"
+#endif /* NX_ENABLE_MLD */
 #include "nx_packet.h"
 #include "nx_icmpv6.h"
 
@@ -209,10 +212,28 @@ USHORT                     short_val;
                what goes in the header.  Without this the solicitation was
                dropped here, and stateless autoconfiguration could not start
                until detection on the link-local had finished. */
+            /* A Multicast Listener Report is let out on the same terms and
+               ahead of both of them.  RFC 4862 4.4.2 has a node join the
+               solicited-node group before it sends the detection
+               solicitation, and RFC 9777 6 says a join is reported; behind
+               a snooping switch the report is what makes the answering
+               advertisement reach this port at all.  The address is
+               tentative by definition at that moment, and the source
+               address in the header is :: rather than this entry, which is
+               only how the send path found the interface.
+
+               The message is not ICMPv6 to this check: it carries a
+               Hop-by-Hop Router Alert, so the protocol is 0 and the ICMPv6
+               header is eight octets further in.  _nx_mld_is_message()
+               knows that shape.  */
             if (!((protocol == NX_PROTOCOL_ICMPV6) &&
                   (packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_state == NX_IPV6_ADDR_STATE_TENTATIVE) &&
                   ((icmpv6_header -> nx_icmpv6_header_type == NX_ICMPV6_NEIGHBOR_SOLICITATION_TYPE) ||
-                   (icmpv6_header -> nx_icmpv6_header_type == NX_ICMPV6_ROUTER_SOLICITATION_TYPE))))
+                   (icmpv6_header -> nx_icmpv6_header_type == NX_ICMPV6_ROUTER_SOLICITATION_TYPE)))
+#ifdef NX_ENABLE_MLD
+                && (_nx_mld_is_message(packet_ptr, protocol) == NX_FALSE)
+#endif /* NX_ENABLE_MLD */
+                )
 #endif /* NX_DISABLE_IPV6_DAD */
             {
 #ifndef NX_DISABLE_IP_INFO

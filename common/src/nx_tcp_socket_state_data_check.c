@@ -1279,14 +1279,46 @@ NX_IP         *ip_ptr;
             if ((socket_ptr -> nx_tcp_socket_rx_sequence -
                  socket_ptr -> nx_tcp_socket_rx_sequence_acked) >= ack_threshold)
             {
+            ULONG delivered;
 
                 /* Need to send an immediate ACK.  */
                 need_ack = NX_TRUE;
+
+                /* What arrived since the last acknowledgment.  The ramp fires
+                   when this reaches the threshold, so it is at least the
+                   threshold and is a live measurement of what the sender is
+                   able to keep in flight. */
+                delivered = socket_ptr -> nx_tcp_socket_rx_sequence -
+                            socket_ptr -> nx_tcp_socket_rx_sequence_acked;
 
                 ack_threshold = ack_threshold << 1;
                 if (ack_threshold > ack_limit)
                 {
                     ack_threshold = ack_limit;
+                }
+
+                /* AND NEVER ABOVE WHAT THE SENDER ACTUALLY DELIVERED.
+                   ack_limit is _nx_tcp_socket_window_update_step(), which is
+                   half of OUR receive buffer -- 50176 bytes here, 34 segments.
+                   That number describes what this machine can hold, and the
+                   quantity the threshold has to stay under is what the PEER
+                   can put in flight, which a loss event has just cut to five
+                   or ten segments.  Bytes outstanding when the delayed-ACK
+                   timer actually fired, from this rig's own captures: a
+                   10136-byte median at 5% loss and 26076 at 0.5%, under the
+                   50176 ceiling in every event.  A threshold that only obeys
+                   the ceiling therefore climbs
+                   straight back over the congestion window and stops the
+                   data-driven acknowledgment again, whatever brought it down.
+
+                   Doubling, capped at what just arrived, tracks the sender
+                   instead: it cannot overshoot a flight the sender never
+                   sent, and on a clean link a full chunk arrives at once so
+                   it still reaches the chunk size and the acknowledgment
+                   count stays where it was. */
+                if (ack_threshold > delivered)
+                {
+                    ack_threshold = delivered;
                 }
             }
 

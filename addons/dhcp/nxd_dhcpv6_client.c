@@ -1309,6 +1309,16 @@ UINT  status;
     dhcpv6_ptr -> nx_dhcpv6_server_error_handler = dhcpv6_server_error_handler;
 
 #if !defined (NX_DISABLE_IPV6_DAD) && defined (NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY)
+    /* Keep the DHCPv6 instance for DAD callback notify.
+
+       BEFORE the callback is registered, not after.  It used to be assigned at
+       the end of this function, so between the nxd_ipv6_address_change_notify()
+       below and that assignment there was a window in which the callback was
+       live and the pointer it dereferences was still NULL.  Duplicate address
+       detection runs on the IP thread and is in flight while an application is
+       creating this client, so the window is reachable.  */
+    _nx_dhcpv6_DAD_ptr = dhcpv6_ptr;
+
     /* Set the callback function to detect DAD process.
        If DAD failure, automatically set event to send DHCP decline meessage.
        Notice: other modules should not set the address change notify function again.  */
@@ -1335,11 +1345,14 @@ UINT  status;
         nx_udp_socket_delete(&(dhcpv6_ptr -> nx_dhcpv6_socket));
 
         /* No, return error status.  */
+        _nx_dhcpv6_DAD_ptr = NX_NULL;
         return status;
     }
 #endif
 
-    /* Keep the DHCPv6 instance for DAD callback notify.  */
+    /* Keep the DHCPv6 instance for DAD callback notify.  Assigned above under
+       NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY; repeated here for the build that
+       does not compile that block.  */
     _nx_dhcpv6_DAD_ptr = dhcpv6_ptr;
 
     /* Return a successful status.  */
@@ -1472,6 +1485,16 @@ UINT  _nx_dhcpv6_client_delete(NX_DHCPV6 *dhcpv6_ptr)
 
     /* Clear the dhcpv6 structure ID. */
     dhcpv6_ptr -> nx_dhcpv6_id =  0;
+
+    /* And the file-static the DAD callback dereferences, which pointed at
+       this instance.  The address change notify slot is deliberately left
+       alone: an application that took it back after the create -- which it
+       must, if it had one of its own -- owns it, and clearing it here would
+       remove the application's callback rather than ours.  */
+    if (_nx_dhcpv6_DAD_ptr == dhcpv6_ptr)
+    {
+        _nx_dhcpv6_DAD_ptr = NX_NULL;
+    }
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
@@ -11387,6 +11410,13 @@ VOID _nx_dhcpv6_ipv6_address_DAD_notify(NX_IP *ip_ptr, UINT status, UINT interfa
 UINT    ia_index;
 
     NX_PARAMETER_NOT_USED(interface_index);
+
+    /* No client, so nothing to tell.  This is not only the window before
+       nx_dhcpv6_client_create() finishes: an application that chains this
+       callback from its own may call it after nx_dhcpv6_client_delete(), and
+       the delete clears the pointer.  */
+    if (_nx_dhcpv6_DAD_ptr == NX_NULL)
+        return;
 
     /* Make sure the DHCPv6 DAD instance is normal.  */
     if((_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_id != NX_DHCPV6_ID) ||        

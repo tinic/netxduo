@@ -147,6 +147,7 @@ NX_TCP_SOCKET *tail_ptr;
     socket_ptr -> nx_tcp_socket_rx_window_current =   window_size;
     socket_ptr -> nx_tcp_socket_tx_outstanding_bytes = 0;
     socket_ptr -> nx_tcp_socket_tx_window_advertised = 0;
+    socket_ptr -> nx_tcp_socket_tx_window_advertised_max = 0;
     socket_ptr -> nx_tcp_socket_tx_window_congestion = 0;
 
     /* Off unless the application asks: taking a port early is a decision the

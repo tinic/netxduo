@@ -95,6 +95,7 @@ ULONG          tcp_payload_length;
 ULONG          ts_now;
 #endif
 UINT           wrapped_flag = NX_FALSE;
+UINT           dupack_threshold;
 
 
     /* Determine if the header has an ACK bit set.  This is an
@@ -288,7 +289,38 @@ UINT           wrapped_flag = NX_FALSE;
                     /* Handle duplicated ACK packet.  */
                     socket_ptr -> nx_tcp_socket_duplicated_ack_received++;
 
-                    if (socket_ptr -> nx_tcp_socket_duplicated_ack_received == 3)
+                    /* RFC 5827.  Three duplicate acknowledgments are three
+                       segments arriving past the hole, so a flight of fewer
+                       than four segments cannot produce them and the only
+                       thing left that recovers the segment is the
+                       retransmission timeout -- a second on this port, against
+                       a round trip measured in milliseconds.  A request and its
+                       response is exactly that shape: the capture of a guest
+                       HTTP request is two segments, so at most one duplicate
+                       acknowledgment exists to be had.
+
+                       Section 2 lowers the threshold to one less than the
+                       number of outstanding segments while there are fewer
+                       than four of them, which is the largest threshold the
+                       flight can actually reach.  Section 3.1's precondition
+                       that the sender have no new data to send is structural
+                       here: this stack suspends a sender it cannot transmit
+                       for rather than queueing the data, so nothing is ever
+                       waiting to go out.  Limited transmit, which section 2
+                       asks to be tried first, is already in
+                       nx_tcp_socket_send_internal.c.  */
+                    dupack_threshold = NX_TCP_FAST_RETRANSMIT_THRESHOLD;
+
+#ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
+                    if ((socket_ptr -> nx_tcp_socket_transmit_sent_count <
+                         (ULONG)NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1) &&
+                        (socket_ptr -> nx_tcp_socket_transmit_sent_count > 1))
+                    {
+                        dupack_threshold = (UINT)socket_ptr -> nx_tcp_socket_transmit_sent_count - 1;
+                    }
+#endif /* NX_ENABLE_TCP_EARLY_RETRANSMIT */
+
+                    if (socket_ptr -> nx_tcp_socket_duplicated_ack_received == dupack_threshold)
                     {
                         if ((INT)((tcp_header_ptr -> nx_tcp_acknowledgment_number - 1) -
                                   socket_ptr -> nx_tcp_socket_tx_sequence_recover) > 0)
@@ -311,7 +343,7 @@ UINT           wrapped_flag = NX_FALSE;
                             _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_TRUE);
                         }
                     }
-                    else if ((socket_ptr -> nx_tcp_socket_duplicated_ack_received > 3) &&
+                    else if ((socket_ptr -> nx_tcp_socket_duplicated_ack_received > dupack_threshold) &&
                              (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE))
                     {
 
@@ -605,6 +637,17 @@ UINT           wrapped_flag = NX_FALSE;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
             socket_ptr -> nx_tcp_socket_tx_window_advertised <<= socket_ptr -> nx_tcp_snd_win_scale_value;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+            /* Max(SND.WND), which RFC 1122 4.2.3.4 measures the sender's
+               silly-window threshold against.  Recorded here, after the
+               scaling, so it is a byte count on the same scale as the window
+               the send path compares to it.  */
+            if (socket_ptr -> nx_tcp_socket_tx_window_advertised >
+                socket_ptr -> nx_tcp_socket_tx_window_advertised_max)
+            {
+                socket_ptr -> nx_tcp_socket_tx_window_advertised_max =
+                    socket_ptr -> nx_tcp_socket_tx_window_advertised;
+            }
         }
 
         /* Check advertised window. */
@@ -660,6 +703,13 @@ UINT           wrapped_flag = NX_FALSE;
             /* Setup a new transmit timeout.  */
             socket_ptr -> nx_tcp_socket_timeout =          socket_ptr -> nx_tcp_socket_timeout_rate;
             socket_ptr -> nx_tcp_socket_timeout_retries =  0;
+
+            /* This acknowledgment released packets, so the connection moved.
+               The stall clock restarts with the retry count, or a transfer
+               that is making progress one segment at a time would accumulate
+               a deadline it never deserved: the timer is armed again below and
+               the fast timer would go on adding to it.  */
+            socket_ptr -> nx_tcp_socket_stall_ticks =      0;
         }
         else
         {

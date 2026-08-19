@@ -61,6 +61,7 @@
 /*  CALLS                                                                 */
 /*                                                                        */
 /*    _nx_tcp_socket_thread_resume          Resume suspended thread       */
+/*    _nx_tcp_socket_sws_send_permitted     RFC 1122 4.2.3.4 window test  */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -115,6 +116,17 @@ ULONG tx_window_current;
             tx_window_current = 0;
         }
 
+        /* The same RFC 1122 4.2.3.4 test the send path applies
+           (nx_tcp_socket_send_internal.c).  Without it here the suspended
+           thread is woken by every acknowledgment that reopens a byte, finds
+           the send path still refusing, and suspends again -- and each of
+           those round trips is a context switch and a mutex pair on a machine
+           that has neither to spare.  With it, the wait ends when a segment
+           can actually be sent.  */
+        if (_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE)
+        {
+            tx_window_current = 0;
+        }
 
         /* Determine if the current transmit window (received from the connected socket)
            is large enough to handle the transmit.  */

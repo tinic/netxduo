@@ -183,6 +183,12 @@ UINT                         bound;
     listen_ptr -> nx_tcp_listen_socket_ptr =  socket_ptr;
 
     /* Setup the listen queue information.  */
+    /* What a SYN-ACK from the SYN cache advertises for this port, and so what
+       its window scale is derived from, for as long as this listen request
+       lives.  nx_api.h says why it is recorded rather than read off the
+       socket each time.  */
+    listen_ptr -> nx_tcp_listen_rx_window =      socket_ptr -> nx_tcp_socket_rx_window_default;
+
     listen_ptr -> nx_tcp_listen_queue_maximum =  listen_queue_size;
     listen_ptr -> nx_tcp_listen_queue_current =  0;
     listen_ptr -> nx_tcp_listen_queue_head =     NX_NULL;

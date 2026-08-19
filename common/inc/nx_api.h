@@ -1112,6 +1112,11 @@ typedef struct NX_IPV6_DESTINATION_ENTRY_STRUCT
     /* Cross link to the next hop entry in the ND cache. */
     ND_CACHE_ENTRY *nx_ipv6_destination_entry_nd_entry;
 
+    /* Value of nx_ipv6_destination_table_clock when this entry was last used,
+       so a full table can give up its least recently used slot.  Compared as a
+       signed difference, which is wrap-safe. */
+    ULONG nx_ipv6_destination_entry_last_used;
+
 #ifdef NX_ENABLE_IPV6_PATH_MTU_DISCOVERY
 
     /* Maximum transmission size for this destination. */
@@ -1981,6 +1986,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
 
     /* Track the advertised window size */
     ULONG       nx_tcp_socket_tx_window_advertised;
+
+    /* Max(SND.WND), the largest window this peer has ever advertised.  RFC
+       1122 4.2.3.4 measures the sender's silly-window threshold against it
+       rather than against the current window, so that a peer whose window has
+       run down to a sliver is not judged by the sliver.  */
+    ULONG       nx_tcp_socket_tx_window_advertised_max;
     ULONG       nx_tcp_socket_tx_window_congestion;
     ULONG       nx_tcp_socket_tx_outstanding_bytes; /* Data transmitted but not acked. */
 
@@ -2075,6 +2086,14 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_timeout_rate;
     ULONG       nx_tcp_socket_timeout_retries;
     ULONG       nx_tcp_socket_timeout_max_retries;
+
+    /* Ticks since the peer last acknowledged something this socket was waiting
+       on, counted only while output is outstanding, and the deadline the
+       application put on that.  Zero deadline means the retry ladder alone
+       decides, which is what every socket gets until one asks otherwise.  */
+    ULONG       nx_tcp_socket_stall_ticks;
+    ULONG       nx_tcp_socket_user_timeout;
+
     UCHAR       nx_tcp_socket_timeout_shift;
 
 #ifdef NX_ENABLE_VLAN
@@ -2122,6 +2141,13 @@ typedef struct NX_TCP_SOCKET_STRUCT
 
     /* It is reserved for future use. */
     UCHAR       nx_tcp_socket_rtt_reserved[2];
+
+    /* The transmit sequence a tail loss probe was last sent under, RFC 8985
+       section 7.2.  One probe per high water mark: the timer restarts on every
+       acknowledgment that leaves data outstanding, and without this a socket
+       whose peer has stopped answering would probe on each of them.  Data sent
+       later moves the sequence on and earns another.  */
+    ULONG       nx_tcp_socket_loss_probe_sequence;
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
 
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
@@ -2346,6 +2372,19 @@ typedef struct NX_TCP_LISTEN_STRUCT
     NX_PACKET   *nx_tcp_listen_queue_head,
                 *nx_tcp_listen_queue_tail;
 
+    /* The receive window a SYN-ACK from the SYN cache advertises for this
+       port, recorded when a socket is put on the listen request.
+
+       It is here rather than read off nx_tcp_listen_socket_ptr because that
+       pointer is NULL for as long as a connection is being handed over, and a
+       SYN arriving in that window would otherwise be answered with a
+       different window -- and so with a different window SCALE -- than the
+       one the completing ACK is reconstructed against.  The peer would then
+       shift by a scale this end does not use.  One number per port, stable
+       across the whole handshake, is what makes the cookie path reproduce
+       what the SYN-ACK actually said.  */
+    ULONG       nx_tcp_listen_rx_window;
+
 #ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
     /* Define the callback function for notifying the host application of
        a new connect request in the listen queue. */
@@ -2357,6 +2396,189 @@ typedef struct NX_TCP_LISTEN_STRUCT
                 *nx_tcp_listen_next,
                 *nx_tcp_listen_previous;
 } NX_TCP_LISTEN;
+
+
+/* SYN DEFENCE, RFC 4987.
+
+   A listening port used to answer a SYN by taking the socket the listen
+   request was given, or, once that was gone, by holding the SYN PACKET on a
+   queue until the application handed over another socket.  Both are state an
+   unauthenticated remote allocates by sending one segment, and neither is
+   returned until a timeout: eight SYNs from forged addresses were enough to
+   stop a listening port answering anything for the length of the SYN-ACK
+   retry ladder, and packets held on the listen queues of several ports come
+   out of the one pool the whole stack sends from.
+
+   What replaces it is section 3.4 and section 3.6 of RFC 4987 together.  A
+   half-open connection is a NX_TCP_SYNCACHE_ENTRY, 72 bytes and no packet,
+   which is what the SYN-ACK is built from and what the completing ACK is
+   matched against; the socket is not committed and the listen request is not
+   touched until the handshake finishes.  When the cache is full -- which
+   takes a flood, not a busy server -- the SYN-ACK still goes out, carrying a
+   sequence number that IS the state: a keyed hash of the connection's four
+   addresses, the peer's own sequence number and the TCP options that were
+   negotiated.  Nothing is stored for it at all, and the ACK that comes back
+   one round trip later rebuilds the connection from the number it echoes.
+
+   The options a cookie carries are the reason it is not a downgrade.  The MSS
+   goes in as an index into _nx_tcp_syncache_mss_table, the window scale as
+   its shift, and SACK-Permitted and timestamps as one bit each; the peer's
+   timestamp value comes off the completing ACK, which carries a fresher one
+   than the SYN did.  So a connection settled under a flood negotiates the
+   same options as one settled when the machine is idle.  */
+
+/* Number of half-open connections held with their options recorded exactly.
+   Past this the cookie takes over, so this is not the bound on how many
+   connections can be in flight -- it is how many are served without the
+   quantisation the cookie's MSS table imposes.  An entry is 80 bytes on the
+   target; 512 of them and 128 chain heads cost 41,548 bytes -- about 40 KB --
+   of the IP instance, measured, one percent of the four megabytes the project
+   targets.  */
+#define NX_TCP_SYNCACHE_SIZE                    512
+#define NX_TCP_SYNCACHE_BUCKETS                 128
+
+/* A half-open entry is given up after this many ticks.  Twenty seconds
+   outlasts the SYN retry ladder of every client that matters (Linux gives up
+   at 1, 3, 7 and 15 seconds), so a client whose SYN-ACK was lost still finds
+   its entry when it tries again.  */
+#define NX_TCP_SYNCACHE_TIMEOUT                 (20 * NX_IP_PERIODIC_RATE)
+
+/* A finished handshake nobody has accepted is reset after this long.  The
+   peer believes it is established, so silence would leave it retransmitting
+   data into a connection that no longer exists.  */
+#define NX_TCP_SYNCACHE_ACCEPT_TIMEOUT          (60 * NX_IP_PERIODIC_RATE)
+
+/* Ticks after which a SYN-ACK is sent again, and how many times.  A lost
+   SYN-ACK is otherwise the client's SYN timer to recover, which is a second
+   at best and three at worst; this is what the socket path did with its own
+   one-second retransmit and losing it would be a slower handshake on a lossy
+   link.  The ladder is bounded, so the work a full cache of forged entries
+   can ask for is bounded with it.  */
+#define NX_TCP_SYNCACHE_RETRY_LADDER            { 1, 3, 7 }
+#define NX_TCP_SYNCACHE_RETRIES                 3
+
+/* A cookie's counter steps every 2048 ticks, which at the fifty ticks a
+   second this port runs at is 41 seconds, and a cookie is accepted in the
+   step it was minted in and in the one after -- MAXDIFF is the first value
+   REFUSED.  So a cookie is good for between 41 and 82 seconds depending on
+   where in a step it was minted: long enough for any client's ACK, short
+   enough that a captured one is not worth replaying.  */
+#define NX_TCP_SYNCACHE_COOKIE_SHIFT            11
+#define NX_TCP_SYNCACHE_COOKIE_MAXDIFF          2
+
+/* Handshakes that finished while the application had given the listen request
+   no socket to put them on.  The peer is established and will send data, so
+   these cannot be dropped silently; they are handed over by the next
+   nx_tcp_server_socket_relisten() and reset if they go stale first.  */
+#define NX_TCP_SYNCACHE_ACCEPT_MAX              32
+
+/* Entry states.  */
+#define NX_TCP_SYNCACHE_FREE                    0
+#define NX_TCP_SYNCACHE_SYN_RECEIVED            1
+#define NX_TCP_SYNCACHE_ESTABLISHED             2
+
+/* What the peer's SYN offered, held as bits so a cookie can carry them.  */
+#define NX_TCP_SYNCACHE_OPT_SACK                0x01u
+#define NX_TCP_SYNCACHE_OPT_TIMESTAMP           0x02u
+
+/* Window scale 15 is not a legal shift (RFC 7323 caps it at 14), so it is the
+   "the peer did not offer the option" marker, matching the 0xFF NetX Duo uses
+   in a socket.  Four bits is what a cookie has room for.  */
+#define NX_TCP_SYNCACHE_NO_WINDOW_SCALE         15u
+
+typedef struct NX_TCP_SYNCACHE_ENTRY_STRUCT
+{
+
+    /* Hash chain when in use, free list when not.  */
+    struct NX_TCP_SYNCACHE_ENTRY_STRUCT
+                *nx_tcp_syncache_hash_next;
+
+    /* Oldest first, so ageing and eviction both read one end.  Carries the
+       accept queue once the handshake has finished.  */
+    struct NX_TCP_SYNCACHE_ENTRY_STRUCT
+                *nx_tcp_syncache_age_next;
+
+    /* The connection this entry is half of.  */
+    NXD_ADDRESS  nx_tcp_syncache_peer_ip;
+    UINT         nx_tcp_syncache_peer_port;
+    UINT         nx_tcp_syncache_local_port;
+
+    /* The peer's initial sequence number, ours, and the window the last
+       segment from the peer advertised.  */
+    ULONG        nx_tcp_syncache_irs;
+    ULONG        nx_tcp_syncache_iss;
+    ULONG        nx_tcp_syncache_peer_window;
+
+    /* Where the SYN arrived, which is where the answer goes.  NX_INTERFACE
+       and NXD_IPV6_ADDRESS are both declared below this point, so both are
+       named by their struct tags.  */
+    struct NX_INTERFACE_STRUCT
+                *nx_tcp_syncache_interface;
+    struct NXD_IPV6_ADDRESS_STRUCT
+                *nx_tcp_syncache_ipv6_addr;
+
+    /* RFC 7323 TS.Recent, and the tick the entry was created on.  */
+    ULONG        nx_tcp_syncache_ts_recent;
+    ULONG        nx_tcp_syncache_time;
+
+    /* The receive window the SYN-ACK advertised, kept so a retransmission of
+       it carries the same window and the same scale.  */
+    ULONG        nx_tcp_syncache_rx_window;
+
+    /* The MSS the peer asked for, and the one the two ends settled on.  */
+    USHORT       nx_tcp_syncache_peer_mss;
+    USHORT       nx_tcp_syncache_connect_mss;
+
+    /* The peer's window scale and ours, as shifts.  */
+    UCHAR        nx_tcp_syncache_snd_win_scale;
+    UCHAR        nx_tcp_syncache_rcv_win_scale;
+
+    UCHAR        nx_tcp_syncache_options;
+    UCHAR        nx_tcp_syncache_state;
+    UCHAR        nx_tcp_syncache_retries;
+    UCHAR        nx_tcp_syncache_reserved;
+} NX_TCP_SYNCACHE_ENTRY;
+
+typedef struct NX_TCP_SYNCACHE_STRUCT
+{
+
+    NX_TCP_SYNCACHE_ENTRY
+                 nx_tcp_syncache_entries[NX_TCP_SYNCACHE_SIZE];
+
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_hash[NX_TCP_SYNCACHE_BUCKETS];
+
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_free;
+
+    /* Half-open entries, oldest first.  */
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_age_head,
+                *nx_tcp_syncache_age_tail;
+
+    /* Finished handshakes waiting for a socket, oldest first.  */
+    NX_TCP_SYNCACHE_ENTRY
+                *nx_tcp_syncache_accept_head,
+                *nx_tcp_syncache_accept_tail;
+
+    ULONG        nx_tcp_syncache_count;
+    ULONG        nx_tcp_syncache_accept_count;
+
+    /* The two keys the cookie is built from.  Drawn once, at nx_tcp_enable.  */
+    ULONG        nx_tcp_syncache_key[4];
+
+    /* Counters, so netstat can say whether a machine is under one of these.  */
+    ULONG        nx_tcp_syncache_added;
+    ULONG        nx_tcp_syncache_completed;
+    ULONG        nx_tcp_syncache_evicted;
+    ULONG        nx_tcp_syncache_expired;
+    ULONG        nx_tcp_syncache_cookies_sent;
+    ULONG        nx_tcp_syncache_cookies_valid;
+    ULONG        nx_tcp_syncache_cookies_invalid;
+    ULONG        nx_tcp_syncache_resets_refused;
+
+    UINT         nx_tcp_syncache_initialized;
+} NX_TCP_SYNCACHE;
 
 /* There should be at least one physical interface. */
 #ifndef NX_MAX_PHYSICAL_INTERFACES
@@ -2615,6 +2837,53 @@ typedef struct NX_IPV6_MULTICAST_STRUCT
 
 #endif /* NX_ENABLE_IPV6_MULTICAST  */
 
+#ifdef NX_ENABLE_MLD
+
+/* Groups this host may report on at once.  One solicited-node group per IPv6
+   address, plus whatever the application joins, plus ff02::1, which takes an
+   entry and is never reported.  */
+#ifndef NX_MLD_MAX_GROUPS
+#ifdef NX_ENABLE_IPV6_MULTICAST
+#define NX_MLD_MAX_GROUPS       (NX_MAX_IPV6_ADDRESSES + NX_MAX_MULTICAST_GROUPS + 2)
+#else
+#define NX_MLD_MAX_GROUPS       (NX_MAX_IPV6_ADDRESSES + 2)
+#endif /* NX_ENABLE_IPV6_MULTICAST */
+#endif /* NX_MLD_MAX_GROUPS */
+
+/* One joined group, with the listener state RFC 2710 section 3 keeps for it.
+   nx_mld_group_interface is what says the entry is in use: :: is a legal
+   thing to find in a zeroed table and so is a table nothing has written.  */
+typedef struct NX_MLD_GROUP_STRUCT
+{
+    ULONG         nx_mld_group_address[4];
+    NX_INTERFACE *nx_mld_group_interface;
+
+    /* Joins referring to this entry.  Two addresses whose low 24 bits agree
+       share one solicited-node group, and the second leave sends the Done.  */
+    ULONG         nx_mld_group_join_count;
+
+    /* Seconds until the pending report; 0 when none is pending.  */
+    ULONG         nx_mld_group_timer;
+
+    /* Reports still owed after the one already sent.  A state change goes
+       out Robustness Variable times, RFC 9777 section 6.1.  */
+    UCHAR         nx_mld_group_retransmit;
+
+    UCHAR         nx_mld_group_state;
+
+    /* Set when this host sent the last report for the group, cleared when
+       another host's report is seen.  Only the last reporter sends a Done,
+       RFC 2710 section 5.  */
+    UCHAR         nx_mld_group_last_reporter;
+
+    /* What the pending report will say: MODE_IS_EXCLUDE for a query
+       response, CHANGE_TO_EXCLUDE_MODE for a join, CHANGE_TO_INCLUDE_MODE
+       for a leave.  Unused in MLDv1 mode, which has one report message.  */
+    UCHAR         nx_mld_group_record_type;
+} NX_MLD_GROUP;
+
+#endif /* NX_ENABLE_MLD  */
+
 
 /* Determine if the IP control block has an extension defined. If not,
    define the extension to whitespace.  */
@@ -2676,6 +2945,9 @@ typedef struct NX_IP_STRUCT
 
     /* Define the destination table size. */
     UINT        nx_ipv6_destination_table_size;
+
+    /* Counts uses of the destination table, to order its entries by age. */
+    ULONG       nx_ipv6_destination_table_clock;
 #endif /* FEATURE_NX_IPV6 */
 
     /* Define the statistic and error counters for this IP instance.   */
@@ -2957,6 +3229,31 @@ typedef struct NX_IP_STRUCT
 
 #endif /* NX_ENABLE_IPV6_MULTICAST  */
 
+#ifdef NX_ENABLE_MLD
+
+    /* Multicast Listener Discovery, host side.  Non-zero once
+       nx_mld_enable() has run; nothing is sent before that, so an IP
+       instance still being built cannot report on a half-attached
+       interface.  */
+    UINT          nx_ip_mld_enabled;
+
+    /* Every group this host listens to, whether the join came from the
+       application or from nxd_ipv6_address_set() forming a solicited-node
+       address.  Both feed _nx_mld_group_join().  */
+    NX_MLD_GROUP  nx_ip_mld_groups[NX_MLD_MAX_GROUPS];
+
+    /* Seconds left of MLDv1 compatibility on each interface, RFC 9777
+       section 8.2.1.  Zero is MLDv2, which is where a host starts.  */
+    ULONG         nx_ip_mld_v1_querier_present[NX_MAX_PHYSICAL_INTERFACES];
+
+    ULONG         nx_ip_mld_reports_sent;
+    ULONG         nx_ip_mld_done_sent;
+    ULONG         nx_ip_mld_queries_received;
+    ULONG         nx_ip_mld_reports_received;
+    ULONG         nx_ip_mld_invalid_packets;
+
+#endif /* NX_ENABLE_MLD  */
+
     /* Define the ICMP packet receive routine.  This also doubles as a
        mechanism to make sure ICMP is enabled.  If this function is NULL, ICMP
        is not enabled.  */
@@ -3070,6 +3367,11 @@ typedef struct NX_IP_STRUCT
        by issuing the nx_tcp_server_socket_listen service.  */
     NX_TCP_LISTEN
                 *nx_ip_tcp_active_listen_requests;
+
+    /* Define the SYN cache, which is what a connection to a listening port
+       exists in until its handshake completes.  See NX_TCP_SYNCACHE.  */
+    NX_TCP_SYNCACHE
+                nx_ip_tcp_syncache;
 
 #ifdef NX_ENABLE_HTTP_PROXY
     /* Define the IP address of HTTP proxy server.  */
@@ -3375,6 +3677,10 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nxd_icmp_source_ping                            _nxd_icmp_source_ping
 #define nxd_icmpv6_ra_flag_callback_set                 _nxd_icmpv6_ra_flag_callback_set
 
+/* APIs for MLD.  There is no error-checking wrapper: the only argument is
+   the IP instance, which _nx_mld_enable() checks itself.  */
+#define nx_mld_enable                                   _nx_mld_enable
+
 /* APIs for IGMP. */
 #define nx_igmp_enable                                  _nx_igmp_enable
 #define nx_igmp_info_get                                _nx_igmp_info_get
@@ -3569,6 +3875,9 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nxd_icmp_ping                                   _nxde_icmp_ping
 #define nxd_icmp_source_ping                            _nxde_icmp_source_ping
 #define nxd_icmpv6_ra_flag_callback_set                 _nxde_icmpv6_ra_flag_callback_set
+
+/* APIs for MLD.  */
+#define nx_mld_enable                                   _nx_mld_enable
 
 /* APIs for IGMP. */
 #define nx_igmp_enable                                  _nxe_igmp_enable
@@ -3773,6 +4082,9 @@ UINT nxd_icmp_source_ping(NX_IP *ip_ptr, NXD_ADDRESS *ip_address, UINT address_i
                           ULONG data_size, NX_PACKET **response_ptr, ULONG wait_option);
 UINT nxd_icmpv6_ra_flag_callback_set(NX_IP *ip_ptr,
                                      VOID (*icmpv6_ra_flag_callback)(NX_IP *ip_ptr, UINT ra_flag));
+
+/* APIs for MLD. */
+UINT nx_mld_enable(NX_IP *ip_ptr);
 
 /* APIs for IGMP. */
 UINT nx_igmp_enable(NX_IP *ip_ptr);
