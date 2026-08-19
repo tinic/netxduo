@@ -3064,8 +3064,13 @@ UINT    status;
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
+/*    nx_tcp_socket_create                  Create MQTT client socket     */
+/*    tx_event_flags_delete                 Delete event flags            */
 /*    tx_thread_create                      Create a thread               */
+/*    tx_thread_delete                      Delete MQTT client thread     */
+/*    tx_thread_terminate                   Terminate MQTT client thread  */
 /*    tx_mutex_create                       Create mutex                  */
+/*    tx_mutex_delete                       Delete mutex                  */
 /*    tx_mutex_get                                                        */
 /*    tx_mutex_put                                                        */
 /*    tx_event_flag_create                  Create event flag             */
@@ -3080,9 +3085,7 @@ static UINT _nxd_mqtt_client_create_internal(NXD_MQTT_CLIENT *client_ptr, CHAR *
                                              NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr,
                                              VOID *stack_ptr, ULONG stack_size, UINT mqtt_thread_priority)
 {
-#ifndef NXD_MQTT_CLOUD_ENABLE
 UINT                status;
-#endif /* NXD_MQTT_CLOUD_ENABLE */
 
 #ifdef NXD_MQTT_CLOUD_ENABLE
     NX_PARAMETER_NOT_USED(stack_ptr);
@@ -3144,9 +3147,26 @@ UINT                status;
     client_ptr -> nxd_mqtt_client_name = client_name;
 
     /* Create the socket. */
-    nx_tcp_socket_create(client_ptr -> nxd_mqtt_client_ip_ptr, &(client_ptr -> nxd_mqtt_client_socket), client_ptr -> nxd_mqtt_client_name,
-                         NX_IP_NORMAL, NX_DONT_FRAGMENT, 0x80, NXD_MQTT_CLIENT_SOCKET_WINDOW_SIZE,
-                         NX_NULL, _mqtt_client_disconnect_callback);
+    status = nx_tcp_socket_create(client_ptr -> nxd_mqtt_client_ip_ptr, &(client_ptr -> nxd_mqtt_client_socket), client_ptr -> nxd_mqtt_client_name,
+                                  NX_IP_NORMAL, NX_DONT_FRAGMENT, 0x80, NXD_MQTT_CLIENT_SOCKET_WINDOW_SIZE,
+                                  NX_NULL, _mqtt_client_disconnect_callback);
+
+    if (status != NX_SUCCESS)
+    {
+#ifndef NXD_MQTT_CLOUD_ENABLE
+        /* Delete the event flags. */
+        tx_event_flags_delete(&(client_ptr -> nxd_mqtt_events));
+
+        /* Terminate and delete the suspended client thread. */
+        tx_thread_terminate(&(client_ptr -> nxd_mqtt_thread));
+        tx_thread_delete(&(client_ptr -> nxd_mqtt_thread));
+
+        /* Delete the mutex. */
+        tx_mutex_delete(&(client_ptr -> nxd_mqtt_protection));
+#endif /* NXD_MQTT_CLOUD_ENABLE */
+
+        return(NXD_MQTT_INTERNAL_ERROR);
+    }
 
 
     /* Record the client_ptr in the socket structure. */
