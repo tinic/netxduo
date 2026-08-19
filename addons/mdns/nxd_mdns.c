@@ -65,6 +65,7 @@ static CHAR         *nx_mdns_service_types[] =
 
 /* Define the mDNS internal Function.  */
 static VOID         _nx_mdns_udp_receive_notify(NX_UDP_SOCKET *socket_ptr);
+static VOID         _nx_mdns_event_notify(NX_IP *ip_ptr, ULONG event);
 static VOID         _nx_mdns_timer_entry(ULONG mdns_value);
 static VOID         _nx_mdns_timer_set(NX_MDNS *mdns_ptr, NX_MDNS_RR  *record_rr, ULONG timer_count);
 static VOID         _nx_mdns_timer_event_process(NX_MDNS *mdns_ptr);
@@ -419,8 +420,8 @@ UINT    host_name_size;
     /* Set the mDNS announcing max time.  */
     mdns_ptr -> nx_mdns_announcing_max_time = (UCHAR)NX_MDNS_ANNOUNCING_MAX_TIME;
 
-    /* Set the pointer of global variable mDNS.  */
-    _nx_mdns_created_ptr = mdns_ptr;
+    /* Protect callback registration and instance publication from delete.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
 
 #ifndef NX_MDNS_DISABLE_SERVER
 
@@ -435,6 +436,12 @@ UINT    host_name_size;
     ip_ptr -> nx_ipv6_address_change_notify_internal =  _nx_mdns_ipv6_address_change_notify;
 #endif /* NX_MDNS_ENABLE_IPV6  */
 #endif /* NX_MDNS_DISABLE_SERVER */
+
+    /* Set the pointer of global variable mDNS.  */
+    _nx_mdns_created_ptr = mdns_ptr;
+
+    /* Release the IP protection.  */
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     /* Create the Socket and check the status */
     status = nx_udp_socket_create(mdns_ptr -> nx_mdns_ip_ptr, &(mdns_ptr -> nx_mdns_socket), "Multicast DNS",
@@ -692,16 +699,47 @@ UINT    status;
 /**************************************************************************/
 UINT  _nx_mdns_delete(NX_MDNS *mdns_ptr)
 {
+
+NX_IP *ip_ptr;
+
     
-        
     /* Get the mDNS mutex.  */
     tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
+
+    /* Get the IP instance used to serialize notification callbacks.  */
+    ip_ptr = mdns_ptr -> nx_mdns_ip_ptr;
+
+    /* Stop publishing callbacks before deleting their event flags.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+#ifndef NX_MDNS_DISABLE_SERVER
+
+#ifndef NX_DISABLE_IPV4
+    if (ip_ptr -> nx_ip_address_change_notify_internal == _nx_mdns_ip_address_change_notify)
+    {
+        ip_ptr -> nx_ip_address_change_notify_internal = NX_NULL;
+    }
+#endif /* NX_DISABLE_IPV4 */
+
+#ifdef NX_MDNS_ENABLE_IPV6
+    if (ip_ptr -> nx_ipv6_address_change_notify_internal == _nx_mdns_ipv6_address_change_notify)
+    {
+        ip_ptr -> nx_ipv6_address_change_notify_internal = NX_NULL;
+    }
+#endif /* NX_MDNS_ENABLE_IPV6 */
+#endif /* NX_MDNS_DISABLE_SERVER */
  
     /* Clear the mDNS structure ID. */
     mdns_ptr -> nx_mdns_id =  0;
        
-    /* Set the pointer of global variable mDNS.  */
-    _nx_mdns_created_ptr = NX_NULL;
+    /* Stop publishing this mDNS instance.  */
+    if (_nx_mdns_created_ptr == mdns_ptr)
+    {
+        _nx_mdns_created_ptr = NX_NULL;
+    }
+
+    /* Release callbacks which entered before the instance was unpublished.  */
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
          
     /* Unbind the port.  */
     nx_udp_socket_unbind(&(mdns_ptr -> nx_mdns_socket));
@@ -6980,17 +7018,64 @@ static VOID _nx_mdns_udp_receive_notify(NX_UDP_SOCKET *socket_ptr)
 {
 
 
-    NX_PARAMETER_NOT_USED(socket_ptr);
-
-    /* Check the mDNS.  */
-    if(_nx_mdns_created_ptr)
-    {
-        
-        /* Set the receive UDP packet notify. */
-        tx_event_flags_set(&(_nx_mdns_created_ptr -> nx_mdns_events), NX_MDNS_PKT_RX_EVENT, TX_OR);
-    }
+    /* Set the receive UDP packet notify. */
+    _nx_mdns_event_notify(socket_ptr -> nx_udp_socket_ip_ptr, NX_MDNS_PKT_RX_EVENT);
 
     return;
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_event_notify                              PORTABLE C      */
+/*                                                           6.4.3       */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function safely posts an event to the published mDNS instance.*/
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                Pointer to IP instance        */
+/*    event                                 Event flags to set            */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    tx_event_flags_set                    Set event flags               */
+/*    tx_mutex_get                          Get IP protection mutex       */
+/*    tx_mutex_put                          Put IP protection mutex       */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    mDNS notification callbacks                                         */
+/*                                                                        */
+/**************************************************************************/
+static VOID _nx_mdns_event_notify(NX_IP *ip_ptr, ULONG event)
+{
+
+NX_MDNS *mdns_ptr;
+
+
+    /* Serialize with create and delete so the event object remains valid.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+    mdns_ptr = _nx_mdns_created_ptr;
+    if ((mdns_ptr != NX_NULL) && (mdns_ptr -> nx_mdns_ip_ptr == ip_ptr))
+    {
+        tx_event_flags_set(&(mdns_ptr -> nx_mdns_events), event, TX_OR);
+    }
+
+    /* Release the IP protection.  */
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 }
 
 #ifndef NX_MDNS_DISABLE_SERVER
@@ -7030,16 +7115,10 @@ static VOID _nx_mdns_ip_address_change_notify(NX_IP *ip_ptr, VOID *additional_in
 {
 
 
-    NX_PARAMETER_NOT_USED(ip_ptr);
     NX_PARAMETER_NOT_USED(additional_info);
 
-    /* Check the mDNS.  */
-    if(_nx_mdns_created_ptr)
-    {
-        
-        /* Set the address change event event. */
-        tx_event_flags_set(&(_nx_mdns_created_ptr -> nx_mdns_events), NX_MDNS_ADDRESS_CHANGE_EVENT, TX_OR);
-    }
+    /* Set the address change event. */
+    _nx_mdns_event_notify(ip_ptr, NX_MDNS_ADDRESS_CHANGE_EVENT);
 
     return;
 }
@@ -7081,19 +7160,13 @@ static VOID _nx_mdns_ip_address_change_notify(NX_IP *ip_ptr, VOID *additional_in
 static VOID _nx_mdns_ipv6_address_change_notify(NX_IP *ip_ptr, UINT method, UINT interface_index, UINT index, ULONG *ipv6_address)
 {
 
-    NX_PARAMETER_NOT_USED(ip_ptr);
     NX_PARAMETER_NOT_USED(method);
     NX_PARAMETER_NOT_USED(interface_index);
     NX_PARAMETER_NOT_USED(index);
     NX_PARAMETER_NOT_USED(ipv6_address);
 
-    /* Check the mDNS.  */
-    if(_nx_mdns_created_ptr)
-    {
-        
-        /* Set the address change event. */
-        tx_event_flags_set(&(_nx_mdns_created_ptr -> nx_mdns_events), NX_MDNS_ADDRESS_CHANGE_EVENT, TX_OR);
-    }
+    /* Set the address change event. */
+    _nx_mdns_event_notify(ip_ptr, NX_MDNS_ADDRESS_CHANGE_EVENT);
     return;
 }
 #endif /* NX_MDNS_ENABLE_IPV6  */
