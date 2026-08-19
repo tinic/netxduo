@@ -148,6 +148,7 @@ set(dns_test_cases
     ${SOURCE_DIR}/dns_test/netx_dns_packet_double_release_test.c)
 
 set(ftp_test_cases
+    ${SOURCE_DIR}/ftp_test/netx_ftp_create_thread_cleanup_test.c
     ${SOURCE_DIR}/ftp_test/netx_ftp_access_control_commands_02_test.c
     ${SOURCE_DIR}/ftp_test/netx_ftp_access_control_commands_03_test.c
     ${SOURCE_DIR}/ftp_test/netx_ftp_client_invalid_username_password_length_test.c

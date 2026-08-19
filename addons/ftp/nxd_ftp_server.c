@@ -405,6 +405,7 @@ UINT status;
 /*    tx_event_flags_delete                 Delete event flags            */
 /*    tx_thread_create                      Create FTP server thread      */
 /*    tx_thread_delete                      Delete FTP server thread      */
+/*    tx_thread_terminate                   Terminate FTP server thread   */
 /*    tx_timer_create                       Create FTP server timer       */
 /*    tx_timer_delete                       Delete FTP server timer       */
 /*                                                                        */
@@ -457,6 +458,8 @@ UINT            status;
     if (status)
     {
 
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(ftp_server_ptr -> nx_ftp_server_thread));
 
         /* Delete the server thread.  */
         tx_thread_delete(&(ftp_server_ptr -> nx_ftp_server_thread));
@@ -474,6 +477,9 @@ UINT            status;
     /* Determine if an error occurred creating the timer.  */
     if (status)
     {
+
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(ftp_server_ptr -> nx_ftp_server_thread));
 
         /* Delete the server thread.  */
         tx_thread_delete(&(ftp_server_ptr -> nx_ftp_server_thread));
@@ -518,6 +524,9 @@ UINT            status;
             /* Delete the FTP socket.  */
             nx_tcp_socket_delete(&(ftp_server_ptr -> nx_ftp_server_client_list[i].nx_ftp_client_request_control_socket));
         }
+
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(ftp_server_ptr -> nx_ftp_server_thread));
 
         /* Delete the server thread.  */
         tx_thread_delete(&(ftp_server_ptr -> nx_ftp_server_thread));
