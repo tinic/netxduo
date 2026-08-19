@@ -679,6 +679,8 @@ UINT    status;
 /*                                                                        */  
 /*    nx_udp_socket_unbind                  Unbind the mDNS UDP socket    */
 /*    nx_udp_socket_delete                  Delete the mDNS UDP socket    */ 
+/*    nx_ipv4_multicast_interface_leave     Leave the IPv4 multicast group*/
+/*    nxd_ipv6_multicast_interface_leave    Leave the IPv6 multicast group*/
 /*    tx_mutex_get                          Get the mDNS mutex            */ 
 /*    tx_mutex_put                          Put the mDNS mutex            */ 
 /*    tx_mutex_delete                       Delete the mDNS mutex         */ 
@@ -693,11 +695,32 @@ UINT    status;
 /**************************************************************************/
 UINT  _nx_mdns_delete(NX_MDNS *mdns_ptr)
 {
-    
-        
+
+UINT i;
+
+
     /* Get the mDNS mutex.  */
     tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
- 
+
+    /* Release the memberships held by each enabled interface.  */
+    for (i = 0; i < NX_MAX_PHYSICAL_INTERFACES; i++)
+    {
+        if (mdns_ptr -> nx_mdns_interface_enabled[i] == NX_FALSE)
+            continue;
+
+#ifndef NX_DISABLE_IPV4
+        nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr,
+                                          NX_MDNS_IPV4_MULTICAST_ADDRESS, i);
+#endif /* NX_DISABLE_IPV4  */
+
+#ifdef NX_MDNS_ENABLE_IPV6
+        nxd_ipv6_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr,
+                                           &NX_MDNS_IPV6_MULTICAST_ADDRESS, i);
+#endif /* NX_MDNS_ENABLE_IPV6  */
+
+        mdns_ptr -> nx_mdns_interface_enabled[i] = NX_FALSE;
+    }
+
     /* Clear the mDNS structure ID. */
     mdns_ptr -> nx_mdns_id =  0;
        
