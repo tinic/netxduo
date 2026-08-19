@@ -283,9 +283,6 @@ UINT  i, j;
         return(status);
     }
 
-    /* Update the dhcp structure ID.  */
-    dhcp_ptr -> nx_dhcp_id =  NX_DHCP_SERVER_ID;
-
     /* Create the Socket and check the status */
     status = nx_udp_socket_create(ip_ptr, &(dhcp_ptr -> nx_dhcp_socket), "NetX DHCP Server Socket",
                        NX_DHCP_TYPE_OF_SERVICE, NX_DHCP_FRAGMENT_OPTION, NX_DHCP_TIME_TO_LIVE, NX_DHCP_QUEUE_DEPTH);
@@ -427,6 +424,9 @@ UINT  i, j;
         /* Return the error status. */
         return(status);
     }
+
+    /* Publish the server only after all resources are ready.  */
+    dhcp_ptr -> nx_dhcp_id = NX_DHCP_SERVER_ID;
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
