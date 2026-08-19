@@ -143,7 +143,7 @@ static UINT         _nx_mdns_query_check(NX_MDNS *mdns_ptr, UCHAR *name, USHORT 
 static VOID         _nx_mdns_query_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 static VOID         _nx_mdns_query_thread_suspend(TX_THREAD **suspension_list_head, VOID (*suspend_cleanup)(TX_THREAD * NX_CLEANUP_PARAMETER),
                                                   NX_MDNS *mdns_ptr, NX_MDNS_QUERY_SUSPENSION *suspension, TX_MUTEX *mutex_ptr, ULONG wait_option);
-static VOID         _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr);
+static UINT         _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr);
 static UINT         _nx_mdns_known_answer_find(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_ptr); 
 static UINT         _nx_mdns_packet_rr_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UINT interface_index);
 #endif /* NX_MDNS_DISABLE_CLIENT  */
@@ -9990,16 +9990,16 @@ UINT            rr_name_length;
             if (!(p -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_CONTINUOUS_QUERY))
             {
 
-                /* Determine if we need to wake a thread suspended.  */
-                if (mdns_ptr -> nx_mdns_rr_receive_suspension_list)
+                /* Delete the query only when its waiter accepted this
+                   answer. A waiter whose timeout cleanup already won owns
+                   the query and deletes it after reacquiring the mutex.  */
+                if ((mdns_ptr -> nx_mdns_rr_receive_suspension_list) &&
+                    (_nx_mdns_query_thread_resume(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list),
+                                                  mdns_ptr, p, insert_ptr) == NX_TRUE))
                 {
-
-                    /* Resume suspended thread.  */
-                    _nx_mdns_query_thread_resume(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), mdns_ptr, p, insert_ptr);
+                    /* Get the answer, we need not send the question again.  */
+                    _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_PEER, p);
                 }
-
-                /* Get the answer, we need not send the question again. Delete the resource record.  */
-                _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_PEER, p);
 
             }
             else
@@ -10346,7 +10346,8 @@ UINT            temp_string_length;
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
-/*    None                                                                */
+/*    NX_TRUE                               Matching waiter resumed       */
+/*    NX_FALSE                              No matching waiter            */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -13240,7 +13241,7 @@ TX_THREAD *thread_ptr;
 /*    _tx_thread_terminate                  Thread terminate processing   */ 
 /*                                                                        */ 
 /**************************************************************************/
-VOID  _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr)
+UINT  _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr)
 {
 
 TX_INTERRUPT_SAVE_AREA
@@ -13324,12 +13325,16 @@ NX_MDNS_QUERY_SUSPENSION *suspension;
 
         /* Resume thread.  */
         _tx_thread_system_resume(thread_ptr);
+
+        return(NX_TRUE);
     }
     else
     {
 
         /* Restore interrupts.  */
         TX_RESTORE
+
+        return(NX_FALSE);
     }
 }
 
