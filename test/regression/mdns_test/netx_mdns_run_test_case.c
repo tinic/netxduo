@@ -761,9 +761,10 @@ NX_MDNS_RR *rr;
             for (rr = (NX_MDNS_RR *)((ULONG *)mdns_ptr -> nx_mdns_local_service_cache + 1);
                  (ULONG *)rr < head; rr++)
             {
-                if (rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A)
+                if (rr -> nx_mdns_rr_state != NX_MDNS_RR_STATE_INVALID)
                 {
-                    host_found = NX_TRUE;
+                    if (rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_A)
+                        host_found = NX_TRUE;
                     if ((rr -> nx_mdns_rr_state != NX_MDNS_RR_STATE_SUSPEND) ||
                         (rr -> nx_mdns_rr_timer_count != 0) ||
                         (rr -> nx_mdns_rr_retransmit_count != 0) ||
@@ -775,6 +776,37 @@ NX_MDNS_RR *rr;
             }
             tx_mutex_put(&mdns_ptr -> nx_mdns_mutex);
             if (host_found == NX_FALSE)
+                error_counter++;
+            break;
+        }
+        case MDNS_CHECK_SERVICE_OWNER_NAME:
+        {
+        UCHAR *service_name = NX_NULL;
+        UINT txt_found = NX_FALSE;
+        UINT ptr_found = NX_FALSE;
+
+            tx_mutex_get(&mdns_ptr -> nx_mdns_mutex, TX_WAIT_FOREVER);
+            head = (ULONG *)mdns_ptr -> nx_mdns_local_service_cache;
+            head = (ULONG *)(*head);
+            for (rr = (NX_MDNS_RR *)((ULONG *)mdns_ptr -> nx_mdns_local_service_cache + 1);
+                 (ULONG *)rr < head; rr++)
+            {
+                if (rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_SRV)
+                    service_name = rr -> nx_mdns_rr_name;
+            }
+            for (rr = (NX_MDNS_RR *)((ULONG *)mdns_ptr -> nx_mdns_local_service_cache + 1);
+                 (ULONG *)rr < head; rr++)
+            {
+                if ((rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_TXT) &&
+                    (rr -> nx_mdns_rr_name == service_name))
+                    txt_found = NX_TRUE;
+                if ((rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+                    (rr -> nx_mdns_rr_rdata.nx_mdns_rr_rdata_ptr.nx_mdns_rr_ptr_name == service_name))
+                    ptr_found = NX_TRUE;
+            }
+            tx_mutex_put(&mdns_ptr -> nx_mdns_mutex);
+            if ((service_name == NX_NULL) || (txt_found == NX_FALSE) ||
+                (ptr_found == NX_FALSE))
                 error_counter++;
             break;
         }
