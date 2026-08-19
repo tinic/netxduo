@@ -166,6 +166,7 @@ UINT    status;
 /*    tx_mutex_delete                      Delete DHCPV6 mutex            */ 
 /*    tx_thread_create                     Create DHCPV6 processing thread*/ 
 /*    tx_thread_delete                     Delete DHCPV6 processing thread*/ 
+/*    tx_thread_terminate                  Terminate DHCPV6 thread        */
 /*    tx_timer_create                      Create DHCPV6 timer            */ 
 /*    tx_timer_delete                      Delete DHCPV6 timer            */ 
 /*                                                                        */ 
@@ -258,6 +259,9 @@ NX_DHCPV6_CLIENT    *dhcpv6_client_ptr;
     if (status != NX_SUCCESS)
     {
 
+        /* Terminate the suspended DHCPv6 Server thread. */
+        tx_thread_terminate(&(dhcpv6_server_ptr -> nx_dhcpv6_server_thread));
+
         /* Delete the DHCPv6 Server thread. */
         tx_thread_delete(&(dhcpv6_server_ptr -> nx_dhcpv6_server_thread));
 
@@ -285,6 +289,9 @@ NX_DHCPV6_CLIENT    *dhcpv6_client_ptr;
 
         /* Delete the server lease timer. */
         tx_timer_delete( &(dhcpv6_server_ptr -> nx_dhcpv6_lease_timer));
+
+        /* Terminate the suspended DHCPv6 Server thread. */
+        tx_thread_terminate(&(dhcpv6_server_ptr -> nx_dhcpv6_server_thread));
 
         /* Delete the DHCPv6 Server thread. */
         tx_thread_delete(&(dhcpv6_server_ptr -> nx_dhcpv6_server_thread));

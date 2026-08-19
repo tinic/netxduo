@@ -142,6 +142,7 @@ set(dhcp_test_cases
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_ia_options_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_iana_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_timer_failure_test.c
+    ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_create_thread_cleanup_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_server_process_repeated_msgs_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_user_option_add_test.c)
 
