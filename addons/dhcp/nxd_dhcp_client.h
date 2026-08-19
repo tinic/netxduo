@@ -84,6 +84,12 @@ extern   "C" {
 #define NX_DHCP_CLIENT_ENABLE_HOST_NAME_CHECK
 */
 
+/* Disable the automatic enrollment of the primary interface by
+   nx_dhcp_create().  Applications using this option must explicitly call
+   nx_dhcp_interface_enable() for every interface on which DHCP should run.
+#define NX_DHCP_CLIENT_DISABLE_DEFAULT_INTERFACE
+*/
+
 /* Define the DHCP ID that is used to mark the DHCP structure as created.  */
 #define NX_DHCP_ID                      0x44484350UL
 
