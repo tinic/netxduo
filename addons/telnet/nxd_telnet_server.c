@@ -154,6 +154,7 @@ UINT        status;
 /*    tx_event_flags_delete                 Delete event flags            */ 
 /*    tx_thread_create                      Create TELNET server thread   */ 
 /*    tx_thread_delete                      Delete TELNET server thread   */ 
+/*    tx_thread_terminate                   Terminate TELNET server thread*/
 /*    tx_timer_create                       Create TELNET server timer    */ 
 /*    tx_timer_delete                       Delete TELNET server timer    */ 
 /*                                                                        */ 
@@ -195,6 +196,9 @@ UINT            status;
     if (status != TX_SUCCESS)
     {
 
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(server_ptr -> nx_telnet_server_thread));
+
         /* Delete the server thread.  */
         tx_thread_delete(&(server_ptr -> nx_telnet_server_thread));
 
@@ -212,6 +216,9 @@ UINT            status;
     /* Determine if an error occurred creating the timer.  */
     if (status != TX_SUCCESS)
     {
+
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(server_ptr -> nx_telnet_server_thread));
 
         /* Delete the server thread.  */
         tx_thread_delete(&(server_ptr -> nx_telnet_server_thread));
@@ -259,6 +266,9 @@ UINT            status;
             nx_tcp_socket_delete(&(server_ptr -> nx_telnet_server_client_list[i].nx_telnet_client_request_socket));
         }
 
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(server_ptr -> nx_telnet_server_thread));
+
         /* Delete the server thread.  */
         tx_thread_delete(&(server_ptr -> nx_telnet_server_thread));
 
@@ -292,6 +302,9 @@ UINT            status;
             /* Delete the TELNET socket.  */
             nx_tcp_socket_delete(&(server_ptr -> nx_telnet_server_client_list[i].nx_telnet_client_request_socket));
         }
+
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(server_ptr -> nx_telnet_server_thread));
 
         /* Delete the server thread.  */
         tx_thread_delete(&(server_ptr -> nx_telnet_server_thread));

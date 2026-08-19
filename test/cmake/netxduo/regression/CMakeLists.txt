@@ -1172,6 +1172,7 @@ endif()
 
 set(telnet_test_cases
     ${SOURCE_DIR}/telnet_test/netx_telnet_activity_timeout_test.c
+    ${SOURCE_DIR}/telnet_test/netx_telnet_create_thread_cleanup_test.c
     ${SOURCE_DIR}/telnet_test/netx_telnet_max_connections_test.c
     ${SOURCE_DIR}/telnet_test/netx_telnet_create_packet_pool_test.c
     ${SOURCE_DIR}/telnet_test/netx_telnet_server_options_negotiate_test.c
