@@ -266,6 +266,9 @@ NX_DHCPV6_CLIENT    *dhcpv6_client_ptr;
 
         /* Delete the flag queue.  */
         tx_event_flags_delete(&dhcpv6_server_ptr -> nx_dhcpv6_server_timer_events);
+
+        /* Return error status. */
+        return status;
     }
 
     /* Create the DHCPV6 timer for keeping track of the DHCPv6 Client session time.  */
@@ -291,6 +294,9 @@ NX_DHCPV6_CLIENT    *dhcpv6_client_ptr;
 
         /* Delete the flag queue.  */
         tx_event_flags_delete(&dhcpv6_server_ptr -> nx_dhcpv6_server_timer_events);
+
+        /* Return error status. */
+        return status;
     }
 
     /*  Initialize the DHCPv6 client control blocks */
@@ -302,29 +308,6 @@ NX_DHCPV6_CLIENT    *dhcpv6_client_ptr;
 
         /* Clear the client record. */
         memset(dhcpv6_client_ptr, 0, sizeof(NX_DHCPV6_CLIENT));
-    }
-
-    /* Determine if the timers creation were successful.  */
-    if (status)
-    {
-
-        /* Delete the server lease timer. */
-        tx_timer_delete( &(dhcpv6_server_ptr -> nx_dhcpv6_lease_timer));
-
-        /* Delete the server serssion timer. */
-        tx_timer_delete( &(dhcpv6_server_ptr -> nx_dhcpv6_session_timer));
-
-        /* Delete the DHCPv6 Server thread. */
-        tx_thread_delete(&(dhcpv6_server_ptr -> nx_dhcpv6_server_thread));
-
-        /* Delete the server protection mutex.  */
-        tx_mutex_delete(&(dhcpv6_server_ptr -> nx_dhcpv6_server_mutex));
-
-        /* Delete the flag queue.  */
-        tx_event_flags_delete(&dhcpv6_server_ptr -> nx_dhcpv6_server_timer_events);
-
-        /* Return error status. */
-        return status;
     }
 
     /* Save the DHCPV6 instance pointer in the socket. */
