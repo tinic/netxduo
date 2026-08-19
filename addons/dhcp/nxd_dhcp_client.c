@@ -320,8 +320,21 @@ UINT    label_length = 0;
 #endif /* NX_DHCP_CLIENT_USER_CREATE_PACKET_POOL  */
 
     /* Create the Socket and check the status */
-    nx_udp_socket_create(ip_ptr, &(dhcp_ptr -> nx_dhcp_socket), "NetX DHCP Client",
-                         NX_DHCP_TYPE_OF_SERVICE, NX_DHCP_FRAGMENT_OPTION, NX_DHCP_TIME_TO_LIVE, NX_DHCP_QUEUE_DEPTH);
+    status = nx_udp_socket_create(ip_ptr, &(dhcp_ptr -> nx_dhcp_socket), "NetX DHCP Client",
+                                  NX_DHCP_TYPE_OF_SERVICE, NX_DHCP_FRAGMENT_OPTION,
+                                  NX_DHCP_TIME_TO_LIVE, NX_DHCP_QUEUE_DEPTH);
+
+    /* Determine if the socket was created successfully.  */
+    if (status != NX_SUCCESS)
+    {
+
+#ifndef NX_DHCP_CLIENT_USER_CREATE_PACKET_POOL
+        /* Delete the packet pool.  */
+        nx_packet_pool_delete(dhcp_ptr -> nx_dhcp_packet_pool_ptr);
+#endif /* NX_DHCP_CLIENT_USER_CREATE_PACKET_POOL */
+
+        return(status);
+    }
 
     /* Set the UDP socket receive callback function.  */
     nx_udp_socket_receive_notify(&(dhcp_ptr -> nx_dhcp_socket), _nx_dhcp_udp_receive_notify);
