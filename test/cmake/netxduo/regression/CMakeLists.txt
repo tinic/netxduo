@@ -214,6 +214,7 @@ if(PRODUCT STREQUAL netxduo)
       ${SOURCE_DIR}/mdns_test/netx_mdns_bad_packet_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_buffer_size_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_create_delete_test.c
+      ${SOURCE_DIR}/mdns_test/netx_mdns_disable_serialization_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_domain_name_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_interface_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_second_interface_test.c

@@ -1825,13 +1825,6 @@ NX_MDNS_RR  *p;
         return(NX_MDNS_PARAM_ERROR);
     }
 
-    /* Check to see if mDNS is not enabled on this interface.
-       Note: Only support one interface yet.  */
-    if (mdns_ptr -> nx_mdns_interface_enabled[interface_index] == NX_FALSE)
-    {
-        return(NX_MDNS_NOT_ENABLED);
-    }
-
     /* Check the DNS-SD string.  */
     if (_nx_utility_string_length_check((CHAR *)_nx_mdns_dns_sd, &dns_sd_size, NX_MDNS_DNS_SD_MAX))
     {
@@ -1840,6 +1833,13 @@ NX_MDNS_RR  *p;
 
     /* Get the mDNS mutex.  */
     tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
+
+    /* Check to see if mDNS is not enabled on this interface.  */
+    if (mdns_ptr -> nx_mdns_interface_enabled[interface_index] == NX_FALSE)
+    {
+        tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+        return(NX_MDNS_NOT_ENABLED);
+    }
 
     /* Disable the mdns function.  */
     mdns_ptr -> nx_mdns_interface_enabled[interface_index] = NX_FALSE;
