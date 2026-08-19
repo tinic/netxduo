@@ -21,6 +21,10 @@ extern void test_control_return(UINT status);
 
 extern UINT _nx_dhcpv6_extract_packet_information(NX_DHCPV6 *dhcpv6_ptr,
                                                    NX_PACKET *packet_ptr);
+extern UINT _nx_dhcpv6_process_domain_name(NX_DHCPV6 *dhcpv6_ptr,
+                                            UCHAR *packet_start,
+                                            UCHAR *option_data,
+                                            UINT option_length);
 
 #ifdef CTEST
 VOID test_application_define(void *first_unused_memory)
@@ -35,6 +39,12 @@ void netx_dhcpv6_client_unknown_option_test_application_define(
         0, 0, 0, 0,       /* DHCPv6 message type and transaction ID. */
         0x12, 0x34, 0, 0  /* Unknown option, with no option data. */
     };
+    UCHAR      domain_list[] = {
+        3, 'o', 'n', 'e', 0,
+        3, 't', 'w', 'o', 0,
+        5, 't', 'h', 'r', 'e', 'e', 0
+    };
+    UCHAR      decoded[] = "one\0two\0three";
     UINT       status;
 
     (void)first_unused_memory;
@@ -49,7 +59,16 @@ void netx_dhcpv6_client_unknown_option_test_application_define(
     packet.nx_packet_length = sizeof(message);
 
     status = _nx_dhcpv6_extract_packet_information(&client, &packet);
-    if (status != NX_SUCCESS)
+    if (status == NX_SUCCESS)
+    {
+        memset(&client, 0, sizeof(client));
+        status = _nx_dhcpv6_process_domain_name(&client, domain_list,
+                                                domain_list,
+                                                sizeof(domain_list));
+    }
+
+    if ((status != NX_SUCCESS) ||
+        memcmp(client.nx_dhcpv6_domain_name, decoded, sizeof(decoded)) != 0)
     {
         printf("ERROR!\n");
         test_control_return(1);

@@ -4488,7 +4488,7 @@ UINT        i;
         {
 
             /* Update the buffer value,include the null flag '\0'.  */
-            domain_name_ptr += temp_length;
+            domain_name_ptr += (i + 1);
             buffer_prepend_ptr += (domain_name_length + 1);
             buffer_size -= (domain_name_length + 1);
         }
