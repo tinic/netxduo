@@ -229,6 +229,7 @@ UINT status;
 /*    tx_timer_create                       Create the timeout timer      */
 /*    tx_event_flags_delete                 Delete thread event flags     */
 /*    tx_thread_delete                      Delete the server thread      */
+/*    tx_thread_terminate                   Terminate the server thread   */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -282,6 +283,9 @@ UINT status;
 
     if (status)
     {
+
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(rtsp_server_ptr -> nx_rtsp_server_thread));
 
         /* Delete the thread.  */
         tx_thread_delete(&(rtsp_server_ptr -> nx_rtsp_server_thread));
@@ -4557,4 +4561,3 @@ static VOID _nx_rtsp_server_disconnect(NX_RTSP_SERVER *rtsp_server_ptr, NX_RTSP_
     /* Update the connected client count.  */
     rtsp_server_ptr -> nx_rtsp_server_connected_client_count--;
 }
-
