@@ -73,6 +73,10 @@ UINT                              status;
 NX_SECURE_X509_CERT              *remote_certificate;
 NX_SECURE_X509_CERTIFICATE_STORE *store;
 ULONG                             current_time;
+#ifndef NX_SECURE_X509_DISABLE_KEY_USAGE_CHECK
+USHORT                            key_usage_bitfield;
+USHORT                            required_key_usage;
+#endif
 
 
     /* We need to find the remote certificate that represents the endpoint - the leaf in the PKI. */
@@ -118,6 +122,51 @@ ULONG                             current_time;
         return(status);
     }
 
+#ifndef NX_SECURE_X509_DISABLE_KEY_USAGE_CHECK
+    /*
+     * Chain verification checks keyCertSign on issuers, but the endpoint is
+     * not an issuer and its keyUsage was never enforced here. RFC 8446 4.4.2.2
+     * requires digitalSignature for a TLS 1.3 CertificateVerify key. In TLS
+     * 1.2, (EC)DHE authenticates ServerKeyExchange with a signature, while
+     * static RSA encrypts the premaster secret with the certificate key.
+     * Client certificates always sign CertificateVerify.
+     *
+     * As RFC 5280 specifies, an absent keyUsage is unconstrained. If it is
+     * present, however, the negotiated use has to be one the issuer allowed.
+     */
+    key_usage_bitfield = 0;
+    status = _nx_secure_x509_key_usage_extension_parse(remote_certificate,
+                                                       &key_usage_bitfield);
+    if (status == NX_SECURE_X509_EXTENSION_NOT_FOUND)
+    {
+        status = NX_SECURE_X509_SUCCESS;
+    }
+    else
+    {
+        if (status != NX_SECURE_X509_SUCCESS)
+        {
+            return(status);
+        }
+
+        required_key_usage = NX_SECURE_X509_KEY_USAGE_DIGITAL_SIGNATURE;
+
+        if (tls_session -> nx_secure_tls_socket_type == NX_SECURE_TLS_SESSION_TYPE_CLIENT &&
+            tls_session -> nx_secure_tls_protocol_version < NX_SECURE_TLS_VERSION_TLS_1_3 &&
+            tls_session -> nx_secure_tls_session_ciphersuite != NX_NULL &&
+            tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_public_cipher != NX_NULL &&
+            tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_public_cipher -> nx_crypto_algorithm ==
+                NX_CRYPTO_KEY_EXCHANGE_RSA)
+        {
+            required_key_usage = NX_SECURE_X509_KEY_USAGE_KEY_ENCIPHERMENT;
+        }
+
+        if ((key_usage_bitfield & required_key_usage) == 0)
+        {
+            return(NX_SECURE_X509_KEY_USAGE_ERROR);
+        }
+    }
+#endif
+
     /* Now, see if the application has defined a callback to check additional certificate information. */
     if (tls_session -> nx_secure_tls_session_certificate_callback != NX_NULL)
     {
@@ -141,4 +190,3 @@ ULONG                             current_time;
     return(NX_NOT_SUPPORTED);
 #endif
 }
-
