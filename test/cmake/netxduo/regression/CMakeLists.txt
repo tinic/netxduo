@@ -126,6 +126,7 @@ set(dhcp_test_cases
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_skip_discover_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_client_nxe_api_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_basic_test.c
+    ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_dad_event_routing_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_extended_api_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_packet_loss_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_client_process_server_duid_test.c

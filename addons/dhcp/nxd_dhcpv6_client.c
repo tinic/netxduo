@@ -9633,7 +9633,7 @@ UINT        original_state;
 
 
         /* Pickup IP event flags.  */
-        status = tx_event_flags_get(&(_nx_dhcpv6_DAD_ptr -> nx_dhcpv6_events), NX_IP_ALL_EVENTS, TX_OR_CLEAR, &dhcpv6_events, TX_NO_WAIT);
+        status = tx_event_flags_get(&(dhcpv6_ptr -> nx_dhcpv6_events), NX_IP_ALL_EVENTS, TX_OR_CLEAR, &dhcpv6_events, TX_NO_WAIT);
          
         /* Check for an IP receive packet event.  */
         if ((status == TX_SUCCESS) && (dhcpv6_events & NX_DHCPV6_DAD_FAILURE_EVENT))
