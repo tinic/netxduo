@@ -246,7 +246,7 @@ set(v4_link_cap_build ${IPV4} ${LINK_CAP} ${RX_INTERFACE_CAPABILITY}
                       ${MULTI_INTERFACE} ${TCPIP_OFFLOAD})
 set(v4_address_check_build ${IPV4} ${ADDRESS_CHECK})
 set(v6_build ${IPV6})
-set(v6_only_build ${IPV6} ${NO_IPV4} ${TRACE} ${MDNS_NO_CLIENT})
+set(v6_only_build ${IPV6} ${NO_IPV4} ${TRACE} ${MDNS_IPV6} ${MDNS_NO_CLIENT})
 set(v6_only_link_cap_build ${IPV6} ${NO_IPV4} ${LINK_CAP})
 set(v6_no_checksum_build ${IPV6} ${DISABLE_TX_CHECKSUM} ${DISABLE_RX_CHECKSUM})
 set(v6_dual_pool_build ${IPV6} ${DUAL_POOL})
