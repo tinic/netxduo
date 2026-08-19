@@ -77,6 +77,7 @@ if(PRODUCT STREQUAL netxduo)
   set(cloud_test_cases
       ${SOURCE_DIR}/cloud_test/netx_cloud_api_test.c
       ${SOURCE_DIR}/cloud_test/netx_cloud_basic_test.c
+      ${SOURCE_DIR}/cloud_test/netx_cloud_create_thread_cleanup_test.c
       ${SOURCE_DIR}/cloud_test/netx_cloud_module_event_test.c
       ${SOURCE_DIR}/cloud_test/netx_cloud_module_register_deregister_test.c)
 endif()

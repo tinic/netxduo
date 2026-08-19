@@ -145,6 +145,7 @@ UINT status;
 /*    tx_event_flags_create                 Create cloud event flags      */
 /*    tx_mutex_create                       Create cloud protection mutex */
 /*    tx_thread_create                      Create cloud helper thread    */
+/*    tx_thread_terminate                   Terminate cloud helper thread */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -222,6 +223,7 @@ UINT old_threshold = 0;
     {
         
         /* Release resources.  */
+        tx_thread_terminate(&(cloud_ptr -> nx_cloud_thread));
         tx_thread_delete(&(cloud_ptr -> nx_cloud_thread));
         tx_event_flags_delete(&(cloud_ptr -> nx_cloud_events));
         tx_mutex_delete(&(cloud_ptr -> nx_cloud_mutex));
