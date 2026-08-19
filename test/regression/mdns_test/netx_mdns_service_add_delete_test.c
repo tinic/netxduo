@@ -254,6 +254,37 @@ CHAR      *pointer = (CHAR*)thread_input;
     if(mdns_0.nx_mdns_local_rr_count != 0)
         error_counter++;
 
+    /********************************************************************/
+    /* Keep a shared DNS-SD type PTR until its last service is deleted. */
+    /********************************************************************/
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"SHARED_SERVICE1", (UCHAR *)"_share._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8080, NX_MDNS_RR_SET_UNIQUE, 0);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 5))
+        error_counter++;
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"SHARED_SERVICE2", (UCHAR *)"_share._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8081, NX_MDNS_RR_SET_UNIQUE, 0);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 9))
+        error_counter++;
+
+    status = nx_mdns_service_add(&mdns_0, (UCHAR *)"SHARED_SERVICE3", (UCHAR *)"_share._tcp", NX_NULL,
+                                 NX_NULL, 120, 0, 0, 8082, NX_MDNS_RR_SET_UNIQUE, 0);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 13))
+        error_counter++;
+
+    status = nx_mdns_service_delete(&mdns_0, (UCHAR *)"SHARED_SERVICE1", (UCHAR *)"_share._tcp", NX_NULL);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 9))
+        error_counter++;
+
+    status = nx_mdns_service_delete(&mdns_0, (UCHAR *)"SHARED_SERVICE2", (UCHAR *)"_share._tcp", NX_NULL);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 5))
+        error_counter++;
+
+    status = nx_mdns_service_delete(&mdns_0, (UCHAR *)"SHARED_SERVICE3", (UCHAR *)"_share._tcp", NX_NULL);
+    if(status || (mdns_0.nx_mdns_local_rr_count != 0))
+        error_counter++;
+
 
     /*********************************************************/
     /* Delete the service when the MDNS function is enable.  */
@@ -407,4 +438,3 @@ void           netx_mdns_service_add_delete_test(void *first_unused_memory)
     test_control_return(3);
 }
 #endif
-

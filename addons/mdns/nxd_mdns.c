@@ -11519,6 +11519,8 @@ ULONG       *head;
 NX_MDNS_RR  *p;
 NX_MDNS_RR  *rr;
 UINT        rr_name_length;
+UCHAR       rr_count;
+UCHAR       shared_dns_sd;
 
 #ifndef NX_MDNS_DISABLE_CLIENT
 ULONG       elapsed_time;
@@ -11547,14 +11549,27 @@ ULONG       min_elapsed_time;
             return(NX_MDNS_DATA_SIZE_ERROR);
         }
 
+        /* Preserve the reference count before replacing the cached fields.
+           record_ptr is a newly built record and its count is zero.  Copying
+           it first made the shared DNS-SD PTR count stick at one no matter
+           how many services of that type were registered. */
+        shared_dns_sd = (UCHAR)((rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
+                               (!_nx_mdns_name_match(rr -> nx_mdns_rr_name,
+                                                    (UCHAR *)_nx_mdns_dns_sd,
+                                                    rr_name_length)));
+        rr_count = rr -> nx_mdns_rr_count;
+        if ((shared_dns_sd == NX_TRUE) && (rr_count == (UCHAR)0xff))
+        {
+            return(NX_MDNS_CACHE_ERROR);
+        }
+
         /* Copy other informations of record_ptr into insert_rr resource record.  */
         memcpy(rr, record_ptr, sizeof(NX_MDNS_RR)); /* Use case of memcpy is verified. */
         
         /* Special process for _services._dns-sd._udp.local which pointer to same service type.  */
-        if ((rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
-            (!_nx_mdns_name_match(rr -> nx_mdns_rr_name, (UCHAR *)_nx_mdns_dns_sd, rr_name_length)))
+        if (shared_dns_sd == NX_TRUE)
         {
-            rr -> nx_mdns_rr_count ++;
+            rr -> nx_mdns_rr_count = (UCHAR)(rr_count + 1);
         }
 
         /* Delete the resource record same strings. */
