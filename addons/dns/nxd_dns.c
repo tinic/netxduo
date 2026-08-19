@@ -7404,7 +7404,7 @@ UINT        length, index;
     }
 
     /* Clear the host name buffer.  */
-    memset(host_name_ptr, 0, sizeof(host_name_buffer_size));
+    memset(host_name_ptr, 0, host_name_buffer_size);
 
     /* Get the protection mutex to make sure no other thread interferes.  */
     status =  tx_mutex_get(&(dns_ptr -> nx_dns_mutex), wait_option);
