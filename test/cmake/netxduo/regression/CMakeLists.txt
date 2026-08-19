@@ -883,6 +883,7 @@ set(rtp_test_cases
 
 set(rtsp_test_cases
     ${SOURCE_DIR}/rtsp_test/netx_rtsp_api_test.c
+    ${SOURCE_DIR}/rtsp_test/netx_rtsp_create_thread_cleanup_test.c
     ${SOURCE_DIR}/rtsp_test/netx_rtsp_rtp_basic_test.c
     ${SOURCE_DIR}/rtsp_test/netx_rtsp_rtp_ipv6_basic_test.c
     ${SOURCE_DIR}/rtsp_test/netx_rtsp_rtp_multicast_test.c
