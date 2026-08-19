@@ -160,6 +160,7 @@ NX_PACKET   *packet_ptr;
 /*    nx_udp_socket_delete                  Delete TFTP server socket     */ 
 /*    nx_udp_socket_unbind                  Unbind TFTP server socket     */ 
 /*    tx_thread_create                      Create TFTP server thread     */ 
+/*    tx_thread_terminate                   Terminate TFTP server thread  */
 /*    tx_timer_create                       Create retransmit timer       */
 /*    nx_udp_socket_receive_notify          Set a receive callback        */
 /*                                                                        */ 
@@ -242,6 +243,9 @@ UINT        status;
         /* Delete the UDP socket.  */
         nx_udp_socket_delete(&(tftp_server_ptr -> nx_tftp_server_socket));
 
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(tftp_server_ptr -> nx_tftp_server_thread));
+
         /* Delete the server thread.  */
         tx_thread_delete(&(tftp_server_ptr -> nx_tftp_server_thread));
 
@@ -269,6 +273,9 @@ UINT        status;
 
         /* Delete the event flags.  */
         tx_event_flags_delete(&(tftp_server_ptr -> nx_tftp_server_event_flags));
+
+        /* Terminate the suspended server thread.  */
+        tx_thread_terminate(&(tftp_server_ptr -> nx_tftp_server_thread));
 
         /* Delete the server thread.  */
         tx_thread_delete(&(tftp_server_ptr -> nx_tftp_server_thread));
