@@ -298,6 +298,28 @@ static void    thread_0_entry(ULONG thread_input)
         }
     }
 
+    /* A one-byte output is valid: it can represent the empty string returned
+       on failure.  The reverse path used sizeof(host_name_buffer_size) when
+       clearing it, so this call wrote four bytes and erased the canary before
+       it noticed that the server list was empty. */
+    {
+        struct
+        {
+            UCHAR name[1];
+            UCHAR canary[4];
+        } output = {{0xA5}, {0xA5, 0xA5, 0xA5, 0xA5}};
+
+        status = nx_dns_host_by_address_get(&client_dns,
+                                             IP_ADDRESS(10, 0, 0, 1),
+                                             output.name, 1, NX_NO_WAIT);
+        if ((status != NX_DNS_NO_SERVER) || (output.name[0] != 0) ||
+            (output.canary[0] != 0xA5) || (output.canary[1] != 0xA5) ||
+            (output.canary[2] != 0xA5) || (output.canary[3] != 0xA5))
+        {
+            error_counter++;
+        }
+    }
+
 #ifdef __PRODUCT_NETXDUO__
     /* Add one IPv4 server address.  */
     address_ipv4_0.nxd_ip_address.v4 = IP_ADDRESS(1,1,1,1);
