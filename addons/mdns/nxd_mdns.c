@@ -127,6 +127,12 @@ static VOID         _nx_mdns_ipv6_address_change_notify(NX_IP *ip_ptr, UINT meth
 #endif /* NX_MDNS_DISABLE_SERVER  */
 
 #ifndef NX_MDNS_DISABLE_CLIENT
+typedef struct NX_MDNS_QUERY_SUSPENSION_STRUCT
+{
+    NX_MDNS_RR  *query_rr;
+    NX_MDNS_RR **answer_rr;
+} NX_MDNS_QUERY_SUSPENSION;
+
 static VOID         _nx_mdns_service_change_notify_process(NX_MDNS *mdns_ptr, NX_MDNS_RR *new_rr, UCHAR is_present);
 static UINT         _nx_mdns_service_addition_info_get(NX_MDNS *mdns_ptr, UCHAR *srv_name, NX_MDNS_SERVICE *service, UINT interface_index);
 static UINT         _nx_mdns_service_mask_match(NX_MDNS *mdns_ptr, UCHAR *service_type, ULONG service_mask);
@@ -136,8 +142,8 @@ static VOID         _nx_mdns_query_send(NX_MDNS *mdns_ptr, UINT interface_index)
 static UINT         _nx_mdns_query_check(NX_MDNS *mdns_ptr, UCHAR *name, USHORT type, UINT one_shot, NX_MDNS_RR **search_rr, UINT interface_index);
 static VOID         _nx_mdns_query_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 static VOID         _nx_mdns_query_thread_suspend(TX_THREAD **suspension_list_head, VOID (*suspend_cleanup)(TX_THREAD * NX_CLEANUP_PARAMETER),
-                                                  NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, TX_MUTEX *mutex_ptr, ULONG wait_option);
-static VOID         _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *rr);
+                                                  NX_MDNS *mdns_ptr, NX_MDNS_QUERY_SUSPENSION *suspension, TX_MUTEX *mutex_ptr, ULONG wait_option);
+static VOID         _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr);
 static UINT         _nx_mdns_known_answer_find(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_ptr); 
 static UINT         _nx_mdns_packet_rr_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr, UINT interface_index);
 #endif /* NX_MDNS_DISABLE_CLIENT  */
@@ -3260,6 +3266,7 @@ UINT        status;
 NX_MDNS_RR  *rr;
 NX_MDNS_RR  *insert_rr;
 NX_MDNS_RR  temp_resource_record;
+NX_MDNS_QUERY_SUSPENSION suspension;
 UINT        name_length;
 
 
@@ -3344,7 +3351,9 @@ UINT        name_length;
            mutex.  Otherwise an answer can delete the query after the unlock
            but before the thread is visible to the response path, leaving the
            caller asleep until timeout.  */
-        _nx_mdns_query_thread_suspend(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), _nx_mdns_query_cleanup, mdns_ptr, out_rr,
+        suspension.query_rr = insert_rr;
+        suspension.answer_rr = out_rr;
+        _nx_mdns_query_thread_suspend(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), _nx_mdns_query_cleanup, mdns_ptr, &suspension,
                                       &(mdns_ptr -> nx_mdns_mutex), wait_option);
 
         /* Get the mDNS mutex.  */
@@ -9986,7 +9995,7 @@ UINT            rr_name_length;
                 {
 
                     /* Resume suspended thread.  */
-                    _nx_mdns_query_thread_resume(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), mdns_ptr, insert_ptr);
+                    _nx_mdns_query_thread_resume(&(mdns_ptr -> nx_mdns_rr_receive_suspension_list), mdns_ptr, p, insert_ptr);
                 }
 
                 /* Get the answer, we need not send the question again. Delete the resource record.  */
@@ -13124,7 +13133,7 @@ NX_MDNS     *mdns_ptr;
 /*                                                                        */
 /**************************************************************************/
 VOID  _nx_mdns_query_thread_suspend(TX_THREAD **suspension_list_head, VOID (*suspend_cleanup)(TX_THREAD * NX_CLEANUP_PARAMETER),
-                                    NX_MDNS *mdns_ptr, NX_MDNS_RR **rr, TX_MUTEX *mutex_ptr, ULONG wait_option)
+                                    NX_MDNS *mdns_ptr, NX_MDNS_QUERY_SUSPENSION *suspension, TX_MUTEX *mutex_ptr, ULONG wait_option)
 {
 
 TX_INTERRUPT_SAVE_AREA
@@ -13167,8 +13176,8 @@ TX_THREAD *thread_ptr;
     /* Setup cleanup information, i.e. this pool control block.  */
     thread_ptr -> tx_thread_suspend_control_block = (void *)mdns_ptr;
 
-    /* Save the return RR pointer address as well.  */
-    thread_ptr -> tx_thread_additional_suspend_info = (void *)rr;
+    /* Save the query identity and the return RR pointer address.  */
+    thread_ptr -> tx_thread_additional_suspend_info = (void *)suspension;
 
     /* Increment the suspended thread count.  */
     mdns_ptr -> nx_mdns_rr_receive_suspended_count++;
@@ -13231,22 +13240,40 @@ TX_THREAD *thread_ptr;
 /*    _tx_thread_terminate                  Thread terminate processing   */ 
 /*                                                                        */ 
 /**************************************************************************/
-VOID  _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *rr)
+VOID  _nx_mdns_query_thread_resume(TX_THREAD **suspension_list_head, NX_MDNS *mdns_ptr, NX_MDNS_RR *query_rr, NX_MDNS_RR *answer_rr)
 {
 
 TX_INTERRUPT_SAVE_AREA
 
-TX_THREAD *thread_ptr;
+TX_THREAD                *thread_ptr;
+TX_THREAD                *list_head;
+NX_MDNS_QUERY_SUSPENSION *suspension;
 
 
     /* Disable interrupts.  */
     TX_DISABLE
 
-    /* Pickup the thread pointer.  */
-    thread_ptr =  *suspension_list_head;
+    /* Find the caller waiting for the query this answer matched. Different
+       one-shot queries share this list and may complete out of order.  */
+    list_head = *suspension_list_head;
+    thread_ptr = list_head;
+    suspension = NX_NULL;
+
+    if (thread_ptr)
+    {
+        do
+        {
+            suspension = (NX_MDNS_QUERY_SUSPENSION *)thread_ptr -> tx_thread_additional_suspend_info;
+            if ((suspension) && (suspension -> query_rr == query_rr))
+                break;
+
+            thread_ptr = thread_ptr -> tx_thread_suspended_next;
+            suspension = NX_NULL;
+        } while (thread_ptr != list_head);
+    }
 
     /* Determine if there still is a thread suspended.  */
-    if (thread_ptr)
+    if ((thread_ptr) && (suspension))
     {
 
         /* Remove the suspended thread from the list.  */
@@ -13265,8 +13292,9 @@ TX_THREAD *thread_ptr;
 
             /* At least one more thread is on the same expiration list.  */
 
-            /* Update the list head pointer.  */
-            *suspension_list_head = thread_ptr -> tx_thread_suspended_next;
+            /* Update the list head pointer when removing its current head.  */
+            if (*suspension_list_head == thread_ptr)
+                *suspension_list_head = thread_ptr -> tx_thread_suspended_next;
 
             /* Update the links of the adjacent threads.  */
             (thread_ptr -> tx_thread_suspended_next) -> tx_thread_suspended_previous = thread_ptr -> tx_thread_suspended_previous;
@@ -13286,7 +13314,7 @@ TX_THREAD *thread_ptr;
 
         /* Return this block pointer to the suspended thread waiting for
            a block.  */
-        *((NX_MDNS_RR **) thread_ptr -> tx_thread_additional_suspend_info) =  rr;
+        *(suspension -> answer_rr) = answer_rr;
 
         /* Restore interrupts.  */
         TX_RESTORE
