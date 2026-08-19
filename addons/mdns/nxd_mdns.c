@@ -1660,7 +1660,8 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     }
 #endif /* NX_MDNS_ENABLE_IPV6  */
 
-    /* Join the group.  */  
+#ifndef NX_DISABLE_IPV4
+    /* Join the IPv4 group.  */
     status = nx_ipv4_multicast_interface_join(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
 
     /* Check status.  */
@@ -1674,7 +1675,8 @@ NXD_IPV6_ADDRESS    *ipv6_address;
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
         return(status);
     }
-    
+#endif /* NX_DISABLE_IPV4  */
+
 #ifdef NX_MDNS_ENABLE_IPV6
     status = nxd_ipv6_multicast_interface_join(mdns_ptr -> nx_mdns_ip_ptr, &NX_MDNS_IPV6_MULTICAST_ADDRESS, interface_index);
 
@@ -1700,6 +1702,12 @@ NXD_IPV6_ADDRESS    *ipv6_address;
         return(status);
     }
 #endif /* NX_MDNS_ENABLE_IPV6  */
+
+#if defined(NX_DISABLE_IPV4) && !defined(NX_MDNS_ENABLE_IPV6)
+    /* This build has no address family mDNS can use.  */
+    tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+    return(NX_NOT_SUPPORTED);
+#endif /* NX_DISABLE_IPV4 && !NX_MDNS_ENABLE_IPV6  */
     
 #ifndef NX_MDNS_DISABLE_SERVER
 
@@ -1930,8 +1938,10 @@ NX_MDNS_RR  *p;
     /* Disable the mdns function.  */
     mdns_ptr -> nx_mdns_interface_enabled[interface_index] = NX_FALSE;
 
-    /* Leave the group.  */
+#ifndef NX_DISABLE_IPV4
+    /* Leave the IPv4 group.  */
     nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_DISABLE_IPV4  */
    
 #ifdef NX_MDNS_ENABLE_IPV6
     nxd_ipv6_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, &NX_MDNS_IPV6_MULTICAST_ADDRESS, interface_index);
