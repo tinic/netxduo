@@ -82,7 +82,8 @@ static UINT         _nx_mdns_packet_address_check(NX_PACKET *packet_ptr);
 #endif /* NX_MDNS_ENABLE_ADDRESS_CHECK  */
 static UINT         _nx_mdns_service_name_assemble(UCHAR *name, UCHAR *type, UCHAR *sub_type, UCHAR *domain, UCHAR *record_buffer, UINT buffer_size, UINT *type_index);
 static UINT         _nx_mdns_service_name_resolve(UCHAR *srv_name, UCHAR **name, UCHAR **type, UCHAR **domain);
-static UINT         _nx_mdns_rr_delete(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_rr); 
+static UINT         _nx_mdns_rr_delete(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_rr);
+static UINT         _nx_mdns_rr_delete_internal(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_rr, UINT drop_all_owners);
 static UINT         _nx_mdns_rr_size_get(UCHAR *resource, NX_PACKET *packet_ptr);
 static UINT         _nx_mdns_name_match(UCHAR *src, UCHAR *dst, UINT length);  
 static UINT         _nx_mdns_name_size_calculate(UCHAR *name, NX_PACKET *packet_ptr);
@@ -5595,35 +5596,81 @@ UINT        name_length;
 /*                                                                        */
 /*  DESCRIPTION                                                           */ 
 /*                                                                        */ 
-/*    This function deletes the mDNS resource record from the             */ 
-/*    local bufferor remote buffer according to the resource record set.  */ 
-/*                                                                        */ 
-/*  INPUT                                                                 */ 
-/*                                                                        */ 
-/*    mdns_ptr                              Pointer to mDNS instance      */ 
+/*    This function releases one owner of the mDNS resource record in the */
+/*    local buffer or remote buffer.  The record is deleted once its last */
+/*    owner is released.                                                  */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    mdns_ptr                              Pointer to mDNS instance      */
 /*    record_rr                             The resource record           */
-/*                                                                        */ 
-/*  OUTPUT                                                                */ 
-/*                                                                        */ 
-/*    status                                Completion status             */ 
-/*                                                                        */ 
-/*  CALLS                                                                 */ 
-/*                                                                        */ 
-/*    tx_mutex_get                          Get the mDNS mutex            */ 
-/*    tx_mutex_put                          Put the mDNS mutex            */ 
-/*    _nx_mdns_timer_set                    Set the mDNS timer            */
-/*    _nx_mdns_cache_delete_resource_record Delete the resource record    */
-/*                                            from cache                  */ 
-/*                                                                        */ 
-/*  CALLED BY                                                             */ 
-/*                                                                        */ 
-/*    Application Code                                                    */ 
-/*                                                                        */ 
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    status                                Completion status             */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_mdns_rr_delete_internal           Delete the resource record    */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    Application Code                                                    */
+/*                                                                        */
 /**************************************************************************/
 static UINT _nx_mdns_rr_delete(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_rr)
 {
-  
-UINT        status = NX_MDNS_SUCCESS; 
+    return(_nx_mdns_rr_delete_internal(mdns_ptr, record_rr, NX_FALSE));
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_rr_delete_internal                         PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Yuxin Zhou, Microsoft Corporation                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function deletes the mDNS resource record from the local       */
+/*    buffer or remote buffer according to the resource record set.       */
+/*    Records that can be shared by several owners carry a reference      */
+/*    count; releasing one owner leaves the record in the cache.  A       */
+/*    caller that is discarding the whole cache passes drop_all_owners    */
+/*    so the record is removed regardless of its reference count.         */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    mdns_ptr                              Pointer to mDNS instance      */
+/*    record_rr                             The resource record           */
+/*    drop_all_owners                       Ignore the reference count    */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    status                                Completion status             */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    tx_mutex_get                          Get the mDNS mutex            */
+/*    tx_mutex_put                          Put the mDNS mutex            */
+/*    _nx_mdns_timer_set                    Set the mDNS timer            */
+/*    _nx_mdns_cache_delete_resource_record Delete the resource record    */
+/*                                            from cache                  */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_mdns_rr_delete                    Delete the resource record    */
+/*    _nx_mdns_local_cache_clear            Clear the local cache         */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_mdns_rr_delete_internal(NX_MDNS *mdns_ptr, NX_MDNS_RR *record_rr, UINT drop_all_owners)
+{
+
+UINT        status = NX_MDNS_SUCCESS;
 
 #ifndef NX_MDNS_DISABLE_SERVER
 UINT        rr_name_length;
@@ -5642,7 +5689,8 @@ NX_MDNS_RR  *p;
        A caller deleting one reference must not withdraw the record while
        another service still owns it.  Keep this rule in the common deletion
        path so service-add rollback cannot bypass the reference count. */
-    if (!(record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER) &&
+    if ((drop_all_owners == NX_FALSE) &&
+        !(record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER) &&
         (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
         (record_rr -> nx_mdns_rr_count != 0) &&
         (!_nx_utility_string_length_check((CHAR *)(record_rr -> nx_mdns_rr_name),
@@ -5700,7 +5748,8 @@ NX_MDNS_RR  *p;
             /* A continuous query can be shared by callers that independently
                start and stop the same browse. nx_mdns_rr_count stores the
                additional owners beyond the first.  */
-            if ((record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY) &&
+            if ((drop_all_owners == NX_FALSE) &&
+                (record_rr -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY) &&
                 (record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_CONTINUOUS_QUERY) &&
                 (record_rr -> nx_mdns_rr_count != 0))
             {
@@ -5879,14 +5928,13 @@ UINT    status;
 /*                                                                        */ 
 /*  CALLS                                                                 */ 
 /*                                                                        */ 
-/*    _nx_mdns_timer_set                    Set the mDNS timer            */ 
-/*    _nx_mdns_cache_delete_resource_record Delete the resource record    */
-/*                                            from cache                  */  
-/*                                                                        */ 
-/*  CALLED BY                                                             */ 
-/*                                                                        */ 
-/*    Application Code                                                    */ 
-/*                                                                        */ 
+/*    _nx_mdns_rr_delete_internal           Delete the resource record    */
+/*                                            ignoring shared ownership   */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    Application Code                                                    */
+/*                                                                        */
 /**************************************************************************/
 UINT _nx_mdns_local_cache_clear(NX_MDNS *mdns_ptr)
 {
@@ -5903,10 +5951,13 @@ NX_MDNS_RR      *p;
     head = (ULONG*)(*head);
 
     for (p = (NX_MDNS_RR*)((UCHAR*)mdns_ptr -> nx_mdns_local_service_cache + sizeof(ULONG)); (ULONG*)p < head; p++)
-    {   
+    {
 
-        /* Delete the resource records.  */
-        status = _nx_mdns_rr_delete(mdns_ptr, p);
+        /* Delete the resource records.  One pass over the cache visits each
+           record once, so a record shared by several services would only lose
+           one reference and survive a cache clear.  Clearing the cache drops
+           every owner, so bypass the reference count here.  */
+        status = _nx_mdns_rr_delete_internal(mdns_ptr, p, NX_TRUE);
 
         /* Check the status.  */
         if (status)
