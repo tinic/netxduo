@@ -240,6 +240,7 @@ if(PRODUCT STREQUAL netxduo)
       ${SOURCE_DIR}/mdns_test/netx_mdns_ipv6_only_enable_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_second_interface_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_internal_function_test.c
+      ${SOURCE_DIR}/mdns_test/netx_mdns_local_cache_clear_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_local_cache_continuous_query_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_local_cache_one_shot_query_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_multiple_answers_test.c
