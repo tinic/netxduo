@@ -61,11 +61,11 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_receive.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_reset.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_send.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_sliding_window_check.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_sliding_window_update.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_start.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_trusted_certificate_add.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_trusted_certificate_remove.c
-	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_sliding_window_check.c
-	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_session_sliding_window_update.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_dtls_verify_mac.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_generate_client_key_exchange.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_generate_master_secret.c
@@ -171,6 +171,7 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_session_create_ext.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_session_delete.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_session_end.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_session_hash_capture.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_session_iv_size_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_session_keys_set.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_session_packet_buffer_set.c
@@ -196,6 +197,7 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_verify_mac.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_asn1_tlv_block_parse.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_basic_constraints_extension_parse.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_certificate_chain_verify.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_certificate_initialize.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_certificate_list_add.c
@@ -213,10 +215,10 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_expiration_check.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_extended_key_usage_extension_parse.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_extension_find.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_extension_policy_check.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_find_certificate_methods.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_find_curve_method.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_free_certificate_get.c
-	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_basic_constraints_extension_parse.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_key_usage_extension_parse.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_local_certificate_find.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_x509_local_device_certificate_get.c
@@ -307,7 +309,6 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_secure_x509_extended_key_usage_extension_parse.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_secure_x509_extension_find.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_secure_x509_key_usage_extension_parse.c
-
     # {{END_TARGET_SOURCES}}
 )
 

@@ -96,7 +96,9 @@ static VOID         _nx_mdns_long_to_network_convert(UCHAR *ptr, ULONG value);
 #ifndef NX_MDNS_DISABLE_SERVER
 static VOID         _nx_mdns_address_change_process(NX_MDNS *mdns_ptr);
 static UINT         _nx_mdns_host_name_register(NX_MDNS *mdns_ptr, UCHAR type, UINT interface_index);
+#ifdef NX_MDNS_ENABLE_IPV6
 static VOID         _nx_mdns_host_address_records_delete(NX_MDNS *mdns_ptr, UINT interface_index);
+#endif /* NX_MDNS_ENABLE_IPV6  */
 static UINT         _nx_mdns_service_interface_delete(NX_MDNS *mdns_ptr, UCHAR *name, UCHAR *type, UCHAR *sub_type, UINT interface_index);
 #if !defined NX_DISABLE_IPV4 || defined NX_MDNS_ENABLE_IPV6
 static UINT         _nx_mdns_rr_a_aaaa_add(NX_MDNS *mdns_ptr, UCHAR *name, ULONG *address, UINT addr_length, UCHAR type, UINT interface_index);
@@ -1383,6 +1385,7 @@ UINT _nx_mdns_service_notify_clear(NX_MDNS *mdns_ptr)
 
 
 #ifndef NX_MDNS_DISABLE_SERVER
+#ifdef NX_MDNS_ENABLE_IPV6
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -1446,6 +1449,7 @@ NX_MDNS_RR  *p;
         }
     }
 }
+#endif /* NX_MDNS_ENABLE_IPV6  */
 
 
 /**************************************************************************/ 
@@ -1774,10 +1778,12 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     if (status)
     {
 
+#ifndef NX_MDNS_DISABLE_SERVER
         /* Host registration can add an A record before a later address
            exhausts the local cache.  Remove those partial records so an
            already-running interface cannot advertise them.  */
         _nx_mdns_host_address_records_delete(mdns_ptr, interface_index);
+#endif /* NX_MDNS_DISABLE_SERVER  */
 
 #ifdef NX_MDNS_ENABLE_IPV6
         /* Undo the IPv6 group membership acquired above.  */

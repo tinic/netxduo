@@ -84,7 +84,9 @@ UINT       error_status;
 USHORT     header_length;
 UCHAR      header_data[NX_SECURE_TLS_RECORD_HEADER_SIZE] = {0}; /* DTLS record header is larger than TLS. Allocate enough space for both. */
 USHORT     message_type;
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
 UCHAR      inner_content_type;
+#endif /* (NX_SECURE_TLS_TLS_1_3_ENABLED) */
 UINT       message_length;
 ULONG      bytes_copied;
 UCHAR     *packet_data = NX_NULL;
