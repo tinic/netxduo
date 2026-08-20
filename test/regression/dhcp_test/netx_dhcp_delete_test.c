@@ -297,12 +297,17 @@ UINT        skip_discover_message = NX_FALSE;
     if (status)
         error_counter++;
 
-    /* Create 2 Dummy DHCP instances to test the corner case of _nx_dhcp_delete */
+    /* Create 2 Dummy DHCP instances to test the corner case of _nx_dhcp_delete.
+       These IP instances are never created, only stamped with what nx_dhcp_create
+       reads: the id, and a UDP receive handler, without which the Client would have
+       no way to hear a server and refuses to be created at all. */
     client_dummy1_ip.nx_ip_id = NX_IP_ID;
+    nx_udp_enable(&client_dummy1_ip);
     status =  nx_dhcp_create(&dhcp_client_dummy1, &client_dummy1_ip, "dhcp_client_dummy1");
     if (status)
         error_counter++;
     client_dummy2_ip.nx_ip_id = NX_IP_ID;
+    nx_udp_enable(&client_dummy2_ip);
     status =  nx_dhcp_create(&dhcp_client_dummy2, &client_dummy2_ip, "dhcp_client_dummy2");
     if (status)
         error_counter++;
