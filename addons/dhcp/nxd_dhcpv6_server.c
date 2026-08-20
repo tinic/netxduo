@@ -1438,11 +1438,20 @@ UINT  _nx_dhcpv6_server_delete(NX_DHCPV6_SERVER *dhcpv6_server_ptr)
     /* Delete the mutexes.  */
     tx_mutex_delete(&(dhcpv6_server_ptr -> nx_dhcpv6_server_mutex));
 
-    /* Release the UDP socket port. */
-    nx_udp_socket_unbind(&(dhcpv6_server_ptr -> nx_dhcpv6_server_socket));
+    /* Release the UDP socket port, and delete the socket. The socket belongs to
+       _nx_dhcpv6_server_start, not to create, so a Server that was created and never
+       started has none. This module compiles with error checking forced off, so these
+       are the primitives: they read nx_udp_socket_ip_ptr without testing it, and on a
+       Server that never started that pointer is null.  */
+    if (dhcpv6_server_ptr -> nx_dhcpv6_server_socket.nx_udp_socket_id == NX_UDP_ID)
+    {
 
-    /* Delete the UDP socket.  */
-    nx_udp_socket_delete(&(dhcpv6_server_ptr -> nx_dhcpv6_server_socket));
+        /* Release the UDP socket port. */
+        nx_udp_socket_unbind(&(dhcpv6_server_ptr -> nx_dhcpv6_server_socket));
+
+        /* Delete the UDP socket.  */
+        nx_udp_socket_delete(&(dhcpv6_server_ptr -> nx_dhcpv6_server_socket));
+    }
 
     /* Clear the dhcpv6 structure ID. */
     dhcpv6_server_ptr -> nx_dhcpv6_id =  0;
