@@ -236,6 +236,7 @@ if(PRODUCT STREQUAL netxduo)
       ${SOURCE_DIR}/mdns_test/netx_mdns_create_thread_cleanup_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_domain_name_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_enable_rollback_test.c
+      ${SOURCE_DIR}/mdns_test/netx_mdns_host_address_get_interface_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_interface_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_ipv6_only_enable_test.c
       ${SOURCE_DIR}/mdns_test/netx_mdns_second_interface_test.c
