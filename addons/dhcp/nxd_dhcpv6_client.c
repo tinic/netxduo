@@ -4395,6 +4395,59 @@ UINT    index = 0;
 }
 
 
+/**************************************************************************/
+/* Validate an RFC 3315 domain search list without changing client state. */
+/**************************************************************************/
+static UINT _nx_dhcpv6_domain_name_validate(UCHAR *option_data,
+                                             UINT option_length)
+{
+
+UINT domain_name_length;
+UINT temp_length = 0;
+UINT label_size;
+UINT i;
+
+
+    while (temp_length < option_length)
+    {
+
+        /* Walk the labels of one name, measuring its decoded length. */
+        domain_name_length = 0;
+        i = temp_length;
+
+        while ((i < option_length) && (option_data[i] != '\0'))
+        {
+            label_size = option_data[i];
+
+            /* Section 8 of RFC 3315 forbids compressed names here. */
+            if (label_size > NX_DHCPV6_LABEL_MAX)
+            {
+                return(NX_DHCPV6_PROCESSING_ERROR);
+            }
+
+            /* The label body has to lie inside the option. */
+            if ((label_size + 1) > (option_length - i))
+            {
+                return(NX_DHCPV6_PROCESSING_ERROR);
+            }
+
+            i += (label_size + 1);
+            domain_name_length += (label_size + 1);
+        }
+
+        /* Every name needs a root label inside this option. */
+        if ((i == option_length) || (domain_name_length == 0))
+        {
+            return(NX_DHCPV6_PROCESSING_ERROR);
+        }
+
+        temp_length = i + 1;
+    }
+
+    return(NX_SUCCESS);
+}
+
+
 /**************************************************************************/ 
 /*                                                                        */ 
 /*  FUNCTION                                               RELEASE        */ 
@@ -4443,72 +4496,15 @@ UINT        temp_length;
 UCHAR       *domain_name_ptr;
 UCHAR       *buffer_prepend_ptr;
 UINT        buffer_size;
-UINT        label_size;
 UINT        i;
 
 
-    /* Validate the whole option before touching the search list.
-
-       _nx_dhcpv6_extract_packet_information() abandons the entire message on
-       any option error and its caller releases the packet, so a truncated or
-       compressed option 24 must not be allowed to leave a half written, or
-       emptied, search list behind: the client would then run without one
-       until the next accepted Reply, which is T1 away.  The pass below reads
-       option_data only, and the write pass that follows cannot fail.
-
-       Measuring here rather than decoding into a scratch copy of the buffer
-       keeps this off the DHCPv6 client thread stack; the buffer is user
-       configurable and NX_DHCPV6_DOMAIN_NAME_BUFFER_SIZE is commonly larger
-       than the frame this function is entitled to.  */
-    temp_length = 0;
-
-    while (temp_length < option_length)
+    /* Validate before committing when this processor is called directly.
+       The packet extractor also uses this read-only pass while staging the
+       option, so a later malformed option cannot roll this list forward. */
+    if (_nx_dhcpv6_domain_name_validate(option_data, option_length) != NX_SUCCESS)
     {
-
-        /* Walk the labels of one name, measuring its decoded length.  */
-        domain_name_length = 0;
-        i = temp_length;
-
-        while ((i < option_length) && (option_data[i] != '\0'))
-        {
-
-            label_size = option_data[i];
-
-            /* Section 8 of RFC 3315 forbids compressed names here, and
-               _nx_dhcpv6_name_string_unencode() rejects anything above a
-               plain label length.  */
-            if (label_size > NX_DHCPV6_LABEL_MAX)
-            {
-                return(NX_DHCPV6_PROCESSING_ERROR);
-            }
-
-            /* The label body has to lie inside the option.  */
-            if ((label_size + 1) > (option_length - i))
-            {
-                return(NX_DHCPV6_PROCESSING_ERROR);
-            }
-
-            i += (label_size + 1);
-
-            /* The decoded form is the label plus its separator.  */
-            domain_name_length += (label_size + 1);
-        }
-
-        /* The name has to be terminated by a root label inside the option.  */
-        if (i == option_length)
-        {
-            return(NX_DHCPV6_PROCESSING_ERROR);
-        }
-
-        /* An empty name decodes to nothing, which the decoder reports as a
-           failure.  */
-        if (domain_name_length == 0)
-        {
-            return(NX_DHCPV6_PROCESSING_ERROR);
-        }
-
-        /* Step over the root label.  */
-        temp_length = i + 1;
+        return(NX_DHCPV6_PROCESSING_ERROR);
     }
 
     /* The option parsed cleanly, so it may now replace the search list from
@@ -11048,6 +11044,10 @@ UINT        status = NX_SUCCESS;
 ULONG       option_code;
 ULONG       option_length;
 UCHAR       *buffer_ptr;
+UCHAR       *dns_option_data = NX_NULL;
+UCHAR       *domain_option_data = NX_NULL;
+UINT        dns_option_length = 0;
+UINT        domain_option_length = 0;
 UINT        index;
 
     /* The DHCPv6 header has been processed in preprocess function, so process the options.  */
@@ -11164,14 +11164,29 @@ UINT        index;
             case NX_DHCPV6_OP_DNS_SERVER:
             {
 
-                status = _nx_dhcpv6_process_DNS_server(dhcpv6_ptr, buffer_ptr, option_length);
+                /* Stage the last occurrence, matching the old sequential
+                   replacement result, but do not publish it until every
+                   option in this packet has succeeded. */
+                dns_option_data = buffer_ptr;
+                dns_option_length = (UINT)option_length;
+                status = NX_SUCCESS;
 
                 break;
             }
 
             case NX_DHCPV6_OP_DOMAIN_NAME:
             {
-                status = _nx_dhcpv6_process_domain_name(dhcpv6_ptr, packet_ptr -> nx_packet_prepend_ptr, buffer_ptr, option_length);
+                /* Validate now and commit later.  Every occurrence is
+                   validated even though the last one supplies the final
+                   value, so a malformed duplicate still rejects the packet
+                   exactly as it did before staging. */
+                status = _nx_dhcpv6_domain_name_validate(buffer_ptr,
+                                                          (UINT)option_length);
+                if (status == NX_SUCCESS)
+                {
+                    domain_option_data = buffer_ptr;
+                    domain_option_length = (UINT)option_length;
+                }
                 break;
             }
 
@@ -11209,6 +11224,41 @@ UINT        index;
     if(index != packet_ptr -> nx_packet_length)
     {
         return(NX_DHCPV6_INVALID_DATA_SIZE);
+    }
+
+    /*
+     * DNS servers and the domain search list form server-supplied resolver
+     * configuration.  Their individual processors are atomic, but publishing
+     * them in the parse loop still let a valid option at the front of a bad
+     * Reply replace working configuration before a later option rejected the
+     * packet.  Commit both only after the complete option stream is valid.
+     *
+     * The domain commit is first because it is the only processor with an
+     * error return.  Its identical read-only validation above makes that path
+     * unreachable here; keeping the check makes this ordering safe if the
+     * processor gains another failure mode later.  The DNS processor cannot
+     * fail and therefore cannot leave the pair half committed.
+     */
+    if (domain_option_data != NX_NULL)
+    {
+        status = _nx_dhcpv6_process_domain_name(dhcpv6_ptr,
+                                                 packet_ptr -> nx_packet_prepend_ptr,
+                                                 domain_option_data,
+                                                 domain_option_length);
+        if (status != NX_SUCCESS)
+        {
+            return(status);
+        }
+    }
+
+    if (dns_option_data != NX_NULL)
+    {
+        status = _nx_dhcpv6_process_DNS_server(dhcpv6_ptr, dns_option_data,
+                                                dns_option_length);
+        if (status != NX_SUCCESS)
+        {
+            return(status);
+        }
     }
 
     /* An accepted Advertise or Reply replaces the previous server-supplied

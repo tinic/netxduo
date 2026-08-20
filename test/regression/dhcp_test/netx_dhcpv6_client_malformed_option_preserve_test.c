@@ -15,7 +15,9 @@
    option error and its caller releases the packet, so an option processor
    that clears or partially writes client state before the option is known
    good leaves nothing to restore it until the next accepted Reply, which is
-   T1 away.  This test covers the two options that carry a list:
+   T1 away.  Atomicity is required at both boundaries: inside one option and
+   across the complete packet.  This test covers the two options that carry a
+   list:
 
      - option 24, whose search list must survive a truncated or compressed
        encoding;
@@ -100,6 +102,27 @@ void netx_dhcpv6_client_malformed_option_preserve_test_application_define(
         0, 0, 0, 0
     };
 
+    /* A valid replacement DNS server followed by a malformed search list.
+       The whole Reply is rejected, so neither list may advance. */
+    UCHAR      dns_then_bad_domain_reply[] = {
+        0, 0, 0, 0,
+        0, 23, 0, 16,
+        0x20, 0x01, 0x0d, 0xb8,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0x55,
+        0, 24, 0, 4, 3, 'b', 'a', 'd'
+    };
+
+    /* A valid search list followed by an invalid preference option.  This
+       proves staging lasts to the end of the packet, rather than merely
+       ordering option 24 ahead of option 23. */
+    UCHAR      domain_then_bad_preference_reply[] = {
+        0, 0, 0, 0,
+        0, 24, 0, 5, 3, 't', 'w', 'o', 0,
+        0, 7, 0, 2, 1, 2
+    };
+
     UINT       status;
     UINT       failed = 0;
 
@@ -126,6 +149,42 @@ void netx_dhcpv6_client_malformed_option_preserve_test_application_define(
         failed = 1;
     }
 
+    /* A valid option 23 is still provisional when a later option 24 fails. */
+    if (failed == 0)
+    {
+        client.nx_dhcpv6_reply_option_flags = NX_DHCPV6_INCLUDE_DNS_SERVER_OPTION |
+                                              NX_DHCPV6_INCLUDE_DOMAIN_NAME_OPTION;
+        packet.nx_packet_prepend_ptr = dns_then_bad_domain_reply;
+        packet.nx_packet_append_ptr = dns_then_bad_domain_reply + sizeof(dns_then_bad_domain_reply);
+        packet.nx_packet_length = sizeof(dns_then_bad_domain_reply);
+
+        status = _nx_dhcpv6_extract_packet_information(&client, &packet);
+        if ((status == NX_SUCCESS) ||
+            (dns_server_is(&client, 0, 0x53UL) == 0) ||
+            (memcmp(client.nx_dhcpv6_domain_name, "one", 4) != 0))
+        {
+            failed = 2;
+        }
+    }
+
+    /* Nor may a valid option 24 commit before an unrelated later error. */
+    if (failed == 0)
+    {
+        client.nx_dhcpv6_reply_option_flags = NX_DHCPV6_INCLUDE_DNS_SERVER_OPTION |
+                                              NX_DHCPV6_INCLUDE_DOMAIN_NAME_OPTION;
+        packet.nx_packet_prepend_ptr = domain_then_bad_preference_reply;
+        packet.nx_packet_append_ptr = domain_then_bad_preference_reply + sizeof(domain_then_bad_preference_reply);
+        packet.nx_packet_length = sizeof(domain_then_bad_preference_reply);
+
+        status = _nx_dhcpv6_extract_packet_information(&client, &packet);
+        if ((status == NX_SUCCESS) ||
+            (dns_server_is(&client, 0, 0x53UL) == 0) ||
+            (memcmp(client.nx_dhcpv6_domain_name, "one", 4) != 0))
+        {
+            failed = 3;
+        }
+    }
+
     /* A truncated search list is rejected, and leaves the stored one alone. */
     if (failed == 0)
     {
@@ -138,7 +197,7 @@ void netx_dhcpv6_client_malformed_option_preserve_test_application_define(
         if ((status == NX_SUCCESS) ||
             (memcmp(client.nx_dhcpv6_domain_name, "one", 4) != 0))
         {
-            failed = 2;
+            failed = 4;
         }
     }
 
@@ -154,7 +213,7 @@ void netx_dhcpv6_client_malformed_option_preserve_test_application_define(
         if ((status == NX_SUCCESS) ||
             (memcmp(client.nx_dhcpv6_domain_name, "one", 4) != 0))
         {
-            failed = 3;
+            failed = 5;
         }
     }
 
@@ -172,7 +231,7 @@ void netx_dhcpv6_client_malformed_option_preserve_test_application_define(
         if ((status != NX_SUCCESS) ||
             (dns_server_is(&client, 0, 0x54UL) == 0))
         {
-            failed = 4;
+            failed = 6;
         }
     }
 
@@ -189,7 +248,7 @@ void netx_dhcpv6_client_malformed_option_preserve_test_application_define(
         if ((status != NX_SUCCESS) ||
             (dns_server_is(&client, 0, 0x54UL) == 0))
         {
-            failed = 5;
+            failed = 7;
         }
     }
 
