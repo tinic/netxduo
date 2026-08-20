@@ -181,7 +181,9 @@ UCHAR     *record_header;
 ULONG      length;
 USHORT     iv_size = 0;
 UINT       etm_active = NX_FALSE;
+#ifdef NX_SECURE_KEY_CLEAR
 NX_PACKET *current_packet;
+#endif /* NX_SECURE_KEY_CLEAR  */
 
     /* Length of the data in the packet. */
     length = send_packet -> nx_packet_length;
