@@ -283,9 +283,21 @@ UINT  i, j;
         return(status);
     }
 
-    /* Create the Socket and check the status */
-    status = nx_udp_socket_create(ip_ptr, &(dhcp_ptr -> nx_dhcp_socket), "NetX DHCP Server Socket",
-                       NX_DHCP_TYPE_OF_SERVICE, NX_DHCP_FRAGMENT_OPTION, NX_DHCP_TIME_TO_LIVE, NX_DHCP_QUEUE_DEPTH);
+    /* Create the Socket and check the status. This module compiles with error checking forced
+       off, so nx_udp_socket_create is the primitive: it always succeeds and never looks at
+       whether UDP is enabled on the IP instance. Without a UDP receive handler the IP receive
+       path has nothing to dispatch a datagram to, so a Server created here would never see a
+       Discover, having reported success at every step. Make the same test the error checking
+       shell makes.  */
+    if (ip_ptr -> nx_ip_udp_packet_receive == NX_NULL)
+    {
+        status = NX_NOT_ENABLED;
+    }
+    else
+    {
+        status = nx_udp_socket_create(ip_ptr, &(dhcp_ptr -> nx_dhcp_socket), "NetX DHCP Server Socket",
+                           NX_DHCP_TYPE_OF_SERVICE, NX_DHCP_FRAGMENT_OPTION, NX_DHCP_TIME_TO_LIVE, NX_DHCP_QUEUE_DEPTH);
+    }
 
     /* Was the socket creation successful?  */
     if (status != NX_SUCCESS)
