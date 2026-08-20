@@ -1236,10 +1236,22 @@ UINT  status;
         return status;
     }
 
-    /* Create the DHCP socket. */
-    status = nx_udp_socket_create(dhcpv6_ptr -> nx_dhcpv6_ip_ptr, &(dhcpv6_ptr -> nx_dhcpv6_socket), "NetX DHCPV6 Client",
-                                  NX_DHCPV6_TYPE_OF_SERVICE, NX_DONT_FRAGMENT, 
-                                  NX_DHCPV6_TIME_TO_LIVE, NX_DHCPV6_QUEUE_DEPTH);
+    /* Create the DHCP socket. This module compiles with error checking forced off, so
+       nx_udp_socket_create is the primitive: it always succeeds and never looks at whether
+       UDP is enabled on the IP instance. Without a UDP receive handler the IP receive path
+       has nothing to dispatch a datagram to, so a Client created here would send Solicits
+       and never see a single reply, reporting success the whole way. Make the same test the
+       error checking shell makes.  */
+    if (dhcpv6_ptr -> nx_dhcpv6_ip_ptr -> nx_ip_udp_packet_receive == NX_NULL)
+    {
+        status = NX_NOT_ENABLED;
+    }
+    else
+    {
+        status = nx_udp_socket_create(dhcpv6_ptr -> nx_dhcpv6_ip_ptr, &(dhcpv6_ptr -> nx_dhcpv6_socket), "NetX DHCPV6 Client",
+                                      NX_DHCPV6_TYPE_OF_SERVICE, NX_DONT_FRAGMENT,
+                                      NX_DHCPV6_TIME_TO_LIVE, NX_DHCPV6_QUEUE_DEPTH);
+    }
 
     /* Was the socket creation successful?  */
     if (status != NX_SUCCESS)
