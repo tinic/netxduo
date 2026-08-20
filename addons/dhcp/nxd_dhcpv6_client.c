@@ -5044,6 +5044,131 @@ ULONG   ia_option_code, ia_option_length;
 }
 
 
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_dhcpv6_iana_time_defaults                       PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Tinic Uro                                                           */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function supplies the T1 and/or T2 times the server left to    */
+/*    the Client. RFC 8415 Section 21.4: a T1 or T2 of zero in a server   */
+/*    reply means the Client picks that time itself, not that the time    */
+/*    has already come. The recommended pick is 0.5 and 0.8 of the        */
+/*    shortest preferred lifetime of the addresses in the IA.             */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    dhcpv6_ptr                        Pointer to DHCPV6 Client instance */
+/*    derive_T1                         Server sent T1 as zero            */
+/*    derive_T2                         Server sent T2 as zero            */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_dhcpv6_process_iana           Process IANA option in reply      */
+/*                                                                        */
+/**************************************************************************/
+static VOID  _nx_dhcpv6_iana_time_defaults(NX_DHCPV6 *dhcpv6_ptr, UINT derive_T1, UINT derive_T2)
+{
+
+ULONG   shortest_preferred = 0;
+ULONG   T1;
+ULONG   T2;
+UINT    ia_index;
+
+
+    /* The server supplied both times, so there is nothing to pick. */
+    if ((derive_T1 == NX_FALSE) && (derive_T2 == NX_FALSE))
+    {
+        return;
+    }
+
+    /* Find the shortest preferred lifetime of the addresses in the IA. A zero preferred
+       lifetime is the server deferring to the Client there too, so it carries no time
+       to derive from and does not take part. */
+    for (ia_index = 0; ia_index < NX_DHCPV6_MAX_IA_ADDRESS; ia_index++)
+    {
+
+        if (dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_address_status == NX_DHCPV6_IA_ADDRESS_STATE_INVALID)
+        {
+            continue;
+        }
+
+        if (dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime == 0)
+        {
+            continue;
+        }
+
+        if ((shortest_preferred == 0) ||
+            (dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime < shortest_preferred))
+        {
+            shortest_preferred = dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime;
+        }
+    }
+
+    if ((shortest_preferred == 0) || (shortest_preferred == NX_DHCPV6_INFINITE_LEASE))
+    {
+
+        /* An infinite preferred lifetime never needs extending. No lifetime at all leaves
+           nothing to derive from, and the timer must still not be left at zero: zero reads
+           as "due now" on every pass of the Client thread and spins the state machine at
+           the thread's tick rate. Either way, park the timer. */
+        T1 = NX_DHCPV6_INFINITE_LEASE;
+        T2 = NX_DHCPV6_INFINITE_LEASE;
+    }
+    else
+    {
+
+        /* RFC 8415 Section 21.4. Divide before multiplying so the 0.8 cannot overflow. */
+        T1 = shortest_preferred / 2;
+        T2 = (shortest_preferred / 5) * 4;
+
+        /* A lifetime of a few seconds must not round either time back down to zero. */
+        if (T1 == 0)
+        {
+            T1 = 1;
+        }
+
+        if (T2 == 0)
+        {
+            T2 = 1;
+        }
+    }
+
+    if (derive_T1)
+    {
+        dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1 = T1;
+    }
+
+    if (derive_T2)
+    {
+        dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 = T2;
+    }
+
+    /* The server may have supplied one time and left the other. Rebind must not fall due
+       before renew. */
+    if (dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 < dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1)
+    {
+        dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 = dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1;
+    }
+
+    return;
+}
+
+
 /**************************************************************************/ 
 /*                                                                        */ 
 /*  FUNCTION                                               RELEASE        */ 
@@ -5084,6 +5209,8 @@ ULONG   ia_option_code, ia_option_length;
 /*                                    Parses option header from buffer    */
 /*    _nx_dhcpv6_process_ia           Process IA option in reply buffer   */
 /*    _nx_dhcpv6_process_status       Process status option in buffer     */
+/*    _nx_dhcpv6_iana_time_defaults   Supply a T1 or T2 the server left   */
+/*                                      to the Client                     */
 /*    nx_dhcpv6_server_error_handler  Pointer to server error code handler*/
 /*                                                                        */ 
 /*  CALLED BY                                                             */ 
@@ -5147,8 +5274,10 @@ UINT    ia_status;
     /* Adjust for endianness. */
     NX_CHANGE_ULONG_ENDIAN(T2);
 
-    /* Check for invalid T1/T2 lifetimes. */
-    if (T1 > T2)
+    /* Check for invalid T1/T2 lifetimes. A T2 of zero is not a time smaller than T1, it is the
+       server leaving the rebind time to the Client, RFC 8415 Section 21.4. Only two supplied
+       times can be out of order.  */
+    if ((T2 != 0) && (T1 > T2))
     {
 
         /* Reject the server DHCPv6 response. */
@@ -5175,7 +5304,9 @@ UINT    ia_status;
     if (index == option_length)
     {
 
-        /* Yes, all done. */
+        /* Yes, all done. Supply whichever time the server left to us. */
+        _nx_dhcpv6_iana_time_defaults(dhcpv6_ptr, (UINT)(T1 == 0), (UINT)(T2 == 0));
+
         return NX_SUCCESS;
     }
     
@@ -5318,6 +5449,10 @@ UINT    ia_status;
         /* Keep track of how far into the packet we have parsed. */
         index += iana_option_length;
     }
+
+    /* The addresses in the IA are on record now, so supply whichever time the server
+       left to us. */
+    _nx_dhcpv6_iana_time_defaults(dhcpv6_ptr, (UINT)(T1 == 0), (UINT)(T2 == 0));
 
     return NX_SUCCESS;
 }
@@ -7730,8 +7865,11 @@ UCHAR     original_state;
     else
     {
 
-        /* Check the accrued time to upate the state.  */  
-        if ((dhcpv6_ptr -> nx_dhcpv6_state == NX_DHCPV6_STATE_BOUND_TO_ADDRESS) && ((dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued >= dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2)))
+        /* Check the accrued time to upate the state. A T2 of zero is the Client's to pick, not a
+           rebind that came due while the Client was suspended. RFC 8415 Section 21.4.  */
+        if ((dhcpv6_ptr -> nx_dhcpv6_state == NX_DHCPV6_STATE_BOUND_TO_ADDRESS) &&
+            (dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 != 0) &&
+            (dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued >= dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2))
         {
 
             /* Update the status as NX_DHCPV6_STATE_SENDING_RENEW to send rebinding message in _nx_dhcpv6_thread_entry function.  */
@@ -9641,8 +9779,11 @@ UINT        original_state;
         if (dhcpv6_ptr -> nx_dhcpv6_state == NX_DHCPV6_STATE_BOUND_TO_ADDRESS)
         {
 
-            /* At time T1 for an IA, the client initiates a Renew message exchange to extend the lifetimes. RFC3315,page 42.*/
-            if (dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued >= dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1) 
+            /* At time T1 for an IA, the client initiates a Renew message exchange to extend the lifetimes. RFC3315,page 42.
+               A T1 of zero is not a time that has passed, it is no time at all: the Client picks its own,
+               RFC 8415 Section 21.4. Skip the trigger, exactly as the lease timer already skips the accrual. */
+            if ((dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1 != 0) &&
+                (dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued >= dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1))
             {
                 
                 /* Indicate the DHCP Client process is idle while the handler executes. */
@@ -9660,8 +9801,10 @@ UINT        original_state;
         if (dhcpv6_ptr -> nx_dhcpv6_state == NX_DHCPV6_STATE_SENDING_RENEW)
         {
 
-            /* At time T2 for an IA, The Client initiates a Rebind message exchanges. RFC3315, page 43. */
-            if (dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued >= dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2)
+            /* At time T2 for an IA, The Client initiates a Rebind message exchanges. RFC3315, page 43.
+               A T2 of zero means the Client picks its own, so it is not a rebind that is due. */
+            if ((dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 != 0) &&
+                (dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued >= dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2))
             {
                 
                 /* Indicate the DHCP Client process is idle while the handler executes. */
