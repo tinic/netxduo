@@ -706,6 +706,11 @@ NX_MDNS_RR *rr;
         case MDNS_QUERY_DELETE:
             nx_mdns_service_query_stop(mdns_ptr, query -> name, query -> type, query -> sub_type);
             break;
+        case MDNS_QUERY_DELETE_EXPECT:
+            if (nx_mdns_service_query_stop(mdns_ptr, query -> name, query -> type, query -> sub_type) !=
+                (UINT)test_case[steps].pkt_size)
+                error_counter++;
+            break;
         case MDNS_SET_SERVICE_CALLBACK_STATE:
             service_callback_state = test_case[steps].pkt_size;
             service_callback_invoked = test_case[steps].timeout;

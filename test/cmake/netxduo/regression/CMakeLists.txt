@@ -1298,6 +1298,7 @@ if(PRODUCT STREQUAL netxduo)
       ${SOURCE_DIR}/mdns_test/mdns_query_rr_timeout_test.c
       ${SOURCE_DIR}/mdns_test/mdns_query_smb_tcp_test.c
       ${SOURCE_DIR}/mdns_test/mdns_query_start_stop_test.c
+      ${SOURCE_DIR}/mdns_test/mdns_query_start_stop_unique_test.c
       ${SOURCE_DIR}/mdns_test/mdns_query_with_tc_test.c
       ${SOURCE_DIR}/mdns_test/mdns_response_aggregation_test.c
       ${SOURCE_DIR}/mdns_test/mdns_response_interval_test.c

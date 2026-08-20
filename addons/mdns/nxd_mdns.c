@@ -12963,6 +12963,7 @@ UCHAR       same_query = NX_FALSE;
 NX_MDNS_RR  *rr = NX_NULL;
 UCHAR       srv_flag = NX_FALSE;
 UCHAR       txt_flag = NX_FALSE;
+UINT        exist_status = NX_SUCCESS;
 UINT        name_length;
 
 
@@ -13013,15 +13014,25 @@ UINT        name_length;
                     if ((p -> nx_mdns_rr_type == type) ||
                         ((type == NX_MDNS_RR_TYPE_ALL) && (srv_flag == NX_TRUE) && (txt_flag == NX_TRUE)))
                     {
-                        if (search_rr)
+                        if (search_rr && (exist_status == NX_SUCCESS))
                             *search_rr = p;
 
                         /* Check the query type.  */
                         if (one_shot == NX_TRUE)
                             return(NX_MDNS_EXIST_SHARED_RR);
 
-                        if (p -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_UNIQUE) 
-                            return(NX_MDNS_EXIST_UNIQUE_RR);
+                        if (p -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_UNIQUE)
+                        {
+
+                            /* A cached unique answer does not release the caller
+                               from owning the continuous query.  Returning here
+                               skipped the reference count below, so a second
+                               caller that started a browse already answered from
+                               cache owned nothing and the first caller's stop
+                               deleted the query out from under it.  Record the
+                               answer and finish the scan.  */
+                            exist_status = NX_MDNS_EXIST_UNIQUE_RR;
+                        }
                     }
                 }
             }
@@ -13050,10 +13061,18 @@ UINT        name_length;
         rr -> nx_mdns_rr_retransmit_lifetime = NX_MDNS_TIMER_COUNT_RANGE;
 
         /* Set the mDNS timer.  */
-        _nx_mdns_timer_set(mdns_ptr, rr, rr -> nx_mdns_rr_timer_count);    
+        _nx_mdns_timer_set(mdns_ptr, rr, rr -> nx_mdns_rr_timer_count);
+
+        if (exist_status != NX_SUCCESS)
+            return(exist_status);
 
         return (NX_MDNS_EXIST_SAME_QUERY);
-    }         
+    }
+
+    /* A cached answer without a query record: nothing was started, so there
+       is nothing to own.  */
+    if (exist_status != NX_SUCCESS)
+        return(exist_status);
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
