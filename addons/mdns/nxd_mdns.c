@@ -1851,6 +1851,14 @@ NXD_IPV6_ADDRESS    *ipv6_address;
             continue;
         }
 
+        /* Enabling an interface republishes everything on it, so the conflict
+           retry budget starts over.  A record that _nx_mdns_conflict_process
+           suspended after exhausting the budget is put back into probing
+           below; without this it returns with the budget still spent, and the
+           first conflict suspends and notifies again immediately.  That is
+           the explicit retry a disable/enable cycle is meant to be.  */
+        p -> nx_mdns_rr_conflict_count = 0;
+
         /* Check the resource reocrd type.  */
         if ((p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) ||
             (p -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_NSEC))

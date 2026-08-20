@@ -367,6 +367,14 @@ MDNS_TEST_SEQ mdns_probing_conflict[] = {
 
     /* A failed host record must not resume probing and announce later. */
     {MDNS_CHECK_HOST_SUSPENDED, NX_NULL, 0, 0},
+
+    /* A disable/enable cycle is an explicit retry of the publication, so it
+       has to restore the conflict retry budget.  Without that the record
+       returns to probing with the budget still spent and the next conflict
+       suspends it again at once. */
+    {MDNS_INTERFACE_DISABLE, NX_NULL, 0, 0},
+    {MDNS_INTERFACE_ENABLE, NX_NULL, 0, 0},
+    {MDNS_CHECK_CONFLICT_BUDGET, NX_NULL, 0, 0},
 };
 
 int mdns_probing_conflict_size = sizeof(mdns_probing_conflict) / sizeof(MDNS_TEST_SEQ);
