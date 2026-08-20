@@ -78,6 +78,7 @@ extern MDNS_TEST_SEQ mdns_continuous_query_a[];
 extern MDNS_TEST_SEQ mdns_continuous_query_unique_answer[];
 extern MDNS_TEST_SEQ mdns_continuous_query_interval[];
 extern MDNS_TEST_SEQ mdns_query_start_stop[];
+extern MDNS_TEST_SEQ mdns_query_start_stop_unique[];
 extern MDNS_TEST_SEQ mdns_query_http_tcp[];
 extern MDNS_TEST_SEQ mdns_query_pdl_datastream_tcp[];
 extern MDNS_TEST_SEQ mdns_query_printer_tcp[];
@@ -122,6 +123,7 @@ extern int mdns_continuous_query_a_size;
 extern int mdns_continuous_query_unique_answer_size;
 extern int mdns_continuous_query_interval_size;
 extern int mdns_query_start_stop_size;
+extern int mdns_query_start_stop_unique_size;
 extern int mdns_query_http_tcp_size;
 extern int mdns_query_pdl_datastream_tcp_size;
 extern int mdns_query_printer_tcp_size;
@@ -177,6 +179,7 @@ static MDNS_TEST_SUITE test_suite[] =
     {&mdns_continuous_query_unique_answer[0], &mdns_continuous_query_unique_answer_size},
     {&mdns_continuous_query_interval[0], &mdns_continuous_query_interval_size},
     {&mdns_query_start_stop[0], &mdns_query_start_stop_size},
+    {&mdns_query_start_stop_unique[0], &mdns_query_start_stop_unique_size},
     {&mdns_query_http_tcp[0], &mdns_query_http_tcp_size},
     {&mdns_query_pdl_datastream_tcp[0], &mdns_query_pdl_datastream_tcp_size},
     {&mdns_query_printer_tcp[0], &mdns_query_printer_tcp_size},
