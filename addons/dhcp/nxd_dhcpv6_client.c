@@ -7411,7 +7411,8 @@ UINT    ia_index;
 UINT  _nx_dhcpv6_request_renew(NX_DHCPV6 *dhcpv6_ptr)
 {
 
-UINT status;
+UINT    status;
+ULONG   remaining;
 
 
     /* Is the Client state set to RENEW yet? */
@@ -7434,7 +7435,32 @@ UINT status;
     dhcpv6_ptr -> nx_dhcpv6_init_retransmission_timeout = NX_DHCPV6_INIT_RENEW_TRANSMISSION_TIMEOUT;
     dhcpv6_ptr -> nx_dhcpv6_max_retransmission_count = NX_DHCPV6_MAX_RENEW_RETRANSMISSION_COUNT;
     dhcpv6_ptr -> nx_dhcpv6_max_retransmission_timeout = NX_DHCPV6_MAX_RENEW_RETRANSMISSION_TIMEOUT;
-    dhcpv6_ptr -> nx_dhcpv6_max_retransmission_duration = dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2;
+
+    /* The Renew message exchange is terminated when time T2 is reached, RFC 8415 Section 18.2.4.
+       T2 is measured from the lease, and the Client is already part way through it when Renew
+       starts, so the bound on this exchange is what is left of T2, not the whole of it. Whole
+       T2 lets Renew run past the point where Rebind was supposed to take over.  */
+    if ((dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 == 0) ||
+        (dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 == NX_DHCPV6_INFINITE_LEASE))
+    {
+
+        /* No T2 to reach. Zero is how the retransmission logic spells "no duration bound";
+           the retry count still terminates the exchange.  */
+        remaining = 0;
+    }
+    else if (dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 > dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued)
+    {
+        remaining = dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 - dhcpv6_ptr -> nx_dhcpv6_IP_lifetime_time_accrued;
+    }
+    else
+    {
+
+        /* T2 is already here, so there is no time to renew in. One second rather than zero:
+           zero would read as no bound at all and is the opposite of what is meant.  */
+        remaining = 1;
+    }
+
+    dhcpv6_ptr -> nx_dhcpv6_max_retransmission_duration = remaining;
 
     /* Activate the session timer to update the elapsed time.  */
     tx_timer_activate(&dhcpv6_ptr -> nx_dhcpv6_session_timer);
