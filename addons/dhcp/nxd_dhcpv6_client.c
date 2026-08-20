@@ -5060,7 +5060,9 @@ ULONG   ia_option_code, ia_option_length;
 /*    the Client. RFC 8415 Section 21.4: a T1 or T2 of zero in a server   */
 /*    reply means the Client picks that time itself, not that the time    */
 /*    has already come. The recommended pick is 0.5 and 0.8 of the        */
-/*    shortest preferred lifetime of the addresses in the IA.             */
+/*    shortest preferred lifetime of the addresses in the IA, or of the   */
+/*    shortest valid lifetime when the IA carries no preferred lifetime   */
+/*    to derive from.                                                     */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -5085,6 +5087,8 @@ static VOID  _nx_dhcpv6_iana_time_defaults(NX_DHCPV6 *dhcpv6_ptr, UINT derive_T1
 {
 
 ULONG   shortest_preferred = 0;
+ULONG   shortest_valid = 0;
+ULONG   derive_from;
 ULONG   T1;
 ULONG   T2;
 UINT    ia_index;
@@ -5096,9 +5100,9 @@ UINT    ia_index;
         return;
     }
 
-    /* Find the shortest preferred lifetime of the addresses in the IA. A zero preferred
-       lifetime is the server deferring to the Client there too, so it carries no time
-       to derive from and does not take part. */
+    /* Find the shortest preferred lifetime of the addresses in the IA, and the shortest
+       valid lifetime beside it. A zero lifetime is the server deferring to the Client
+       there too, so it carries no time to derive from and does not take part. */
     for (ia_index = 0; ia_index < NX_DHCPV6_MAX_IA_ADDRESS; ia_index++)
     {
 
@@ -5107,25 +5111,41 @@ UINT    ia_index;
             continue;
         }
 
-        if (dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime == 0)
-        {
-            continue;
-        }
-
-        if ((shortest_preferred == 0) ||
-            (dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime < shortest_preferred))
+        if ((dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime != 0) &&
+            ((shortest_preferred == 0) ||
+             (dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime < shortest_preferred)))
         {
             shortest_preferred = dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_preferred_lifetime;
         }
+
+        if ((dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_valid_lifetime != 0) &&
+            ((shortest_valid == 0) ||
+             (dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_valid_lifetime < shortest_valid)))
+        {
+            shortest_valid = dhcpv6_ptr -> nx_dhcpv6_ia[ia_index].nx_valid_lifetime;
+        }
     }
 
-    if ((shortest_preferred == 0) || (shortest_preferred == NX_DHCPV6_INFINITE_LEASE))
+    /* RFC 8415 Section 21.4 derives from the preferred lifetime. An IA that carries no
+       preferred lifetime still carries a valid lifetime, and the address goes away when
+       that expires: deriving from it renews against the time the Client actually has,
+       instead of never renewing at all. */
+    if (shortest_preferred != 0)
+    {
+        derive_from = shortest_preferred;
+    }
+    else
+    {
+        derive_from = shortest_valid;
+    }
+
+    if ((derive_from == 0) || (derive_from == NX_DHCPV6_INFINITE_LEASE))
     {
 
-        /* An infinite preferred lifetime never needs extending. No lifetime at all leaves
-           nothing to derive from, and the timer must still not be left at zero: zero reads
-           as "due now" on every pass of the Client thread and spins the state machine at
-           the thread's tick rate. Either way, park the timer. */
+        /* An infinite lifetime never needs extending. No lifetime at all leaves nothing to
+           derive from, and the timer must still not be left at zero: zero reads as "due now"
+           on every pass of the Client thread and spins the state machine at the thread's
+           tick rate. Either way, park the timer. */
         T1 = NX_DHCPV6_INFINITE_LEASE;
         T2 = NX_DHCPV6_INFINITE_LEASE;
     }
@@ -5133,8 +5153,8 @@ UINT    ia_index;
     {
 
         /* RFC 8415 Section 21.4. Divide before multiplying so the 0.8 cannot overflow. */
-        T1 = shortest_preferred / 2;
-        T2 = (shortest_preferred / 5) * 4;
+        T1 = derive_from / 2;
+        T2 = (derive_from / 5) * 4;
 
         /* A lifetime of a few seconds must not round either time back down to zero. */
         if (T1 == 0)

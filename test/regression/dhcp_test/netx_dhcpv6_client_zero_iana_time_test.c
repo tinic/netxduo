@@ -144,6 +144,47 @@ UINT    failures = 0;
         failures++;
     }
 
+    /* A zero preferred lifetime beside a real valid lifetime. The address is
+       still the Client's until the valid lifetime expires, so the times come
+       from that rather than from nothing: 0.5 and 0.8 of 5766. Parking here
+       would mean never renewing an address that does go away. */
+    status = process_iana(0, 0, NX_TRUE, 0, 5766);
+    if ((status != NX_SUCCESS) ||
+        (client.nx_dhcpv6_iana.nx_T1 != 2883) ||
+        (client.nx_dhcpv6_iana.nx_T2 != 4612))
+    {
+        printf("\nERROR: zero preferred with valid 5766 gave T1 %lu T2 %lu, expected 2883/4612",
+               (unsigned long)client.nx_dhcpv6_iana.nx_T1,
+               (unsigned long)client.nx_dhcpv6_iana.nx_T2);
+        failures++;
+    }
+
+    /* A zero preferred lifetime beside an infinite valid lifetime is still an
+       address that never needs extending. */
+    status = process_iana(0, 0, NX_TRUE, 0, NX_DHCPV6_INFINITE_LEASE);
+    if ((status != NX_SUCCESS) ||
+        (client.nx_dhcpv6_iana.nx_T1 != NX_DHCPV6_INFINITE_LEASE) ||
+        (client.nx_dhcpv6_iana.nx_T2 != NX_DHCPV6_INFINITE_LEASE))
+    {
+        printf("\nERROR: zero preferred with an infinite valid lifetime gave T1 %lu T2 %lu",
+               (unsigned long)client.nx_dhcpv6_iana.nx_T1,
+               (unsigned long)client.nx_dhcpv6_iana.nx_T2);
+        failures++;
+    }
+
+    /* A preferred lifetime still wins where there is one, and the valid
+       lifetime beside it does not pull the times out. */
+    status = process_iana(0, 0, NX_TRUE, 3066, 5766);
+    if ((status != NX_SUCCESS) ||
+        (client.nx_dhcpv6_iana.nx_T1 != 1533) ||
+        (client.nx_dhcpv6_iana.nx_T2 != 2452))
+    {
+        printf("\nERROR: preferred 3066 beside valid 5766 gave T1 %lu T2 %lu, expected 1533/2452",
+               (unsigned long)client.nx_dhcpv6_iana.nx_T1,
+               (unsigned long)client.nx_dhcpv6_iana.nx_T2);
+        failures++;
+    }
+
     /* Nothing to derive from at all. The times must still not be left at zero,
        which is what spins the state machine. */
     status = process_iana(0, 0, NX_FALSE, 0, 0);
