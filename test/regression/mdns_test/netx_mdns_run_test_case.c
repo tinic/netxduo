@@ -768,6 +768,21 @@ NX_MDNS_RR *rr;
             }
             tx_mutex_put(&mdns_ptr -> nx_mdns_mutex);
             break;
+        case MDNS_CHECK_CONFLICT_BUDGET:
+            tx_mutex_get(&mdns_ptr -> nx_mdns_mutex, TX_WAIT_FOREVER);
+            head = (ULONG *)mdns_ptr -> nx_mdns_local_service_cache;
+            head = (ULONG *)(*head);
+            for (rr = (NX_MDNS_RR *)((ULONG *)mdns_ptr -> nx_mdns_local_service_cache + 1);
+                 (ULONG *)rr < head; rr++)
+            {
+                if ((rr -> nx_mdns_rr_state != NX_MDNS_RR_STATE_INVALID) &&
+                    (rr -> nx_mdns_rr_conflict_count != 0))
+                {
+                    error_counter++;
+                }
+            }
+            tx_mutex_put(&mdns_ptr -> nx_mdns_mutex);
+            break;
         case MDNS_CHECK_HOST_SUSPENDED:
         {
         UINT host_found = NX_FALSE;

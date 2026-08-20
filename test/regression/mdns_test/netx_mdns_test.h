@@ -87,6 +87,7 @@
 #define MDNS_CHECK_SERVICE_OWNER_NAME       0x73    /* This entry checks that service records share the renamed owner. */
 #define MDNS_SET_TXT_CONFLICT_LIMIT         0x74    /* This entry exhausts TXT conflict retries. */
 #define MDNS_QUERY_DELETE_EXPECT            0x75    /* This entry stops a query and checks the status in pkt_size. */
+#define MDNS_CHECK_CONFLICT_BUDGET          0x76    /* This entry checks the conflict retry budget was restored. */
 
 
 #define MDNS_FLAG_QUERY                     0x0000  /* Define flag for standard query. */
