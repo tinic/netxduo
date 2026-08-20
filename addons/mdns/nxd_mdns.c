@@ -10850,6 +10850,7 @@ UCHAR       same_owner;
 UCHAR       suspend_record;
 UINT        temp_string_length;
 UINT        rr_name_length;
+UINT        rename_status = NX_MDNS_SUCCESS;
 
 
     /* Initialize the value.  */
@@ -11073,7 +11074,11 @@ UINT        rr_name_length;
                                                (VOID **)(&p -> nx_mdns_rr_name), NX_FALSE, NX_TRUE);
             if (status)
             {
-                return(status);
+
+                /* Stop renaming, but still release this record's own reference
+                   to the old name below.  Returning from here would leak it. */
+                rename_status = status;
+                break;
             }
             _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
 
@@ -11095,7 +11100,8 @@ UINT        rr_name_length;
                                                (VOID **)(&p -> nx_mdns_rr_name), NX_FALSE, NX_TRUE);
             if (status)
             {
-                return(status);
+                rename_status = status;
+                break;
             }
             _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
         }
@@ -11112,7 +11118,8 @@ UINT        rr_name_length;
 
             if (status)
             {
-                return(status);
+                rename_status = status;
+                break;
             }
 
             /* Delete the rdata name.  */
@@ -11120,10 +11127,12 @@ UINT        rr_name_length;
         }
     }
 
-    /* Delete the old name.  */
+    /* Delete the old name.  This releases record_rr's own reference, which is
+       the reference that kept old_name alive for the comparisons above, so it
+       has to happen after the loop on every path out of it.  */
     _nx_mdns_cache_delete_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, old_name, 0);
 
-    return(NX_MDNS_SUCCESS);
+    return(rename_status);
 }
 #endif /* NX_MDNS_DISABLE_SERVER  */
 
