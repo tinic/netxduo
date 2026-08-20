@@ -140,6 +140,7 @@ static VOID         _nx_mdns_service_change_notify_process(NX_MDNS *mdns_ptr, NX
 static UINT         _nx_mdns_service_addition_info_get(NX_MDNS *mdns_ptr, UCHAR *srv_name, NX_MDNS_SERVICE *service, UINT interface_index);
 static UINT         _nx_mdns_service_mask_match(NX_MDNS *mdns_ptr, UCHAR *service_type, ULONG service_mask);
 static UINT         _nx_mdns_one_shot_query(NX_MDNS *mdns_ptr, UCHAR *name, USHORT type, NX_MDNS_RR **out_rr, ULONG wait_option, UINT interface_index);
+static ULONG        _nx_mdns_query_share_wait(UINT timeout, ULONG start_time, UINT pending_queries);
 static UINT         _nx_mdns_continuous_query(NX_MDNS *mdns_ptr, UCHAR *name, USHORT type, UINT interface_index);
 static VOID         _nx_mdns_query_send(NX_MDNS *mdns_ptr, UINT interface_index);
 static UINT         _nx_mdns_query_check(NX_MDNS *mdns_ptr, UCHAR *name, USHORT type, UINT one_shot, NX_MDNS_RR **search_rr, UINT interface_index);
@@ -4639,18 +4640,45 @@ UINT    status;
 /*    Application Code                                                    */ 
 /*                                                                        */ 
 /**************************************************************************/
+static ULONG _nx_mdns_query_share_wait(UINT timeout, ULONG start_time, UINT pending_queries)
+{
+
+ULONG               elapsed_time;
+ULONG               wait_time;
+
+
+    /* Unsigned subtraction handles a tick counter wrap.  */
+    elapsed_time = tx_time_get() - start_time;
+    wait_time = ((ULONG)timeout > elapsed_time) ? ((ULONG)timeout - elapsed_time) : 0;
+
+    /* Give every query still to be sent an equal share of what is left.  */
+    if (pending_queries > 1)
+        wait_time = wait_time / (ULONG)pending_queries;
+
+    /* _nx_mdns_one_shot_query returns without sending anything when its wait
+       is zero.  A caller that asked for no wait at all keeps that cache-only
+       behaviour; every other caller gets at least one tick, so no interface
+       is skipped.  */
+    if ((wait_time == 0) && (timeout != 0))
+        wait_time = 1;
+
+    return(wait_time);
+}
+
+
 UINT _nx_mdns_host_address_get(NX_MDNS *mdns_ptr, UCHAR *host_name, ULONG *ipv4_address, ULONG *ipv6_address, UINT timeout)
 {
 
 UINT                status;
-ULONG               start_time; 
-ULONG               current_time;
-ULONG               elapsed_time;
+ULONG               start_time;
 ULONG               wait_time;
 NX_MDNS_RR         *a_rr;
 NX_MDNS_RR         *aaaa_rr;
 UCHAR               host_name_query[NX_MDNS_NAME_MAX + 1];
 UINT                i = 0;
+UINT                j;
+UINT                queries_per_interface;
+UINT                pending_queries;
 UCHAR               domain_flag = NX_FALSE;
 UINT                answer = NX_FALSE;
 UINT                domain_name_length;
@@ -4705,9 +4733,20 @@ UINT                domain_name_length;
         memset(ipv6_address, 0, 16);
 
     /* The caller supplies one timeout for the lookup, not one timeout per
-       interface.  Keep a single deadline while still checking every
-       interface's cache after it expires.  */
+       interface.  A single shared deadline is not enough on its own: the
+       first interface can consume all of it, every later interface is then
+       asked with a zero wait, and _nx_mdns_one_shot_query returns without
+       ever sending a query, so a host present only on the second card stops
+       resolving.  Share the budget instead -- each query still to be sent
+       gets an equal slice of what is left, so every enabled interface is
+       really queried and the total stays inside the caller's timeout.  */
     start_time = tx_time_get();
+
+    queries_per_interface = 0;
+    if (ipv4_address)
+        queries_per_interface++;
+    if (ipv6_address)
+        queries_per_interface++;
 
     /* Start host address query on all enabled interfaces until get the answer or query timeout.  */
     for (i = 0; i < NX_MAX_PHYSICAL_INTERFACES; i++)
@@ -4717,15 +4756,21 @@ UINT                domain_name_length;
         if (!mdns_ptr -> nx_mdns_interface_enabled[i])
             continue;
 
-        /* Calculate how much of the caller's timeout remains.  Unsigned
-           subtraction handles a tick counter wrap.  */
-        current_time = tx_time_get();
-        elapsed_time = current_time - start_time;
-        wait_time = (timeout > elapsed_time) ? (timeout - elapsed_time) : 0;
-         
+        /* Count the queries this call has still to send, this one included.  */
+        pending_queries = 0;
+        for (j = i; j < NX_MAX_PHYSICAL_INTERFACES; j++)
+        {
+            if (mdns_ptr -> nx_mdns_interface_enabled[j])
+                pending_queries = pending_queries + queries_per_interface;
+        }
+
         /* Get the host IPv4 address.  */
         if (ipv4_address)
         {
+
+            /* Take this query's share of the remaining budget.  */
+            wait_time = _nx_mdns_query_share_wait(timeout, start_time, pending_queries);
+            pending_queries--;
 
             /* One shot query for host name.  */
             status = _nx_mdns_one_shot_query(mdns_ptr, host_name_query, NX_MDNS_RR_TYPE_A, &a_rr, wait_time, i);
@@ -4744,13 +4789,9 @@ UINT                domain_name_length;
         if (ipv6_address)
         {
 
-            /* How much time has elapsed? */
-            current_time = tx_time_get();
-
-            elapsed_time = current_time - start_time;
-
-            /* Update the timeout.  */
-            wait_time = (timeout > elapsed_time) ? (timeout - elapsed_time) : 0;
+            /* Take this query's share of the remaining budget.  */
+            wait_time = _nx_mdns_query_share_wait(timeout, start_time, pending_queries);
+            pending_queries--;
 
             /* Lookup the service.  */
             status = _nx_mdns_one_shot_query(mdns_ptr, host_name_query, NX_MDNS_RR_TYPE_AAAA, &aaaa_rr, wait_time, i);
