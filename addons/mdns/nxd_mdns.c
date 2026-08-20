@@ -4663,12 +4663,11 @@ ULONG               wait_time;
     if (pending_queries > 1)
         wait_time = wait_time / (ULONG)pending_queries;
 
-    /* _nx_mdns_one_shot_query returns without sending anything when its wait
-       is zero.  A caller that asked for no wait at all keeps that cache-only
-       behaviour; every other caller gets at least one tick, so no interface
-       is skipped.  */
-    if ((wait_time == 0) && (timeout != 0))
-        wait_time = 1;
+    /* A zero share is intentionally cache-only.  There is no way to give
+       every pending query a one-tick wait when fewer ticks than queries
+       remain without exceeding the caller's deadline.  Normal timeouts (at
+       least one tick per pending query) still send on every interface; for an
+       undersized timeout the hard deadline takes precedence. */
 
     return(wait_time);
 }
@@ -4746,8 +4745,10 @@ UINT                domain_name_length;
        asked with a zero wait, and _nx_mdns_one_shot_query returns without
        ever sending a query, so a host present only on the second card stops
        resolving.  Share the budget instead -- each query still to be sent
-       gets an equal slice of what is left, so every enabled interface is
-       really queried and the total stays inside the caller's timeout.  */
+       gets an equal slice of what is left.  Every enabled interface is
+       queried when the budget can supply at least one tick per pending query;
+       an impossibly short budget remains a hard deadline instead of being
+       silently extended one tick for every query. */
     start_time = tx_time_get();
 
     queries_per_interface = 0;

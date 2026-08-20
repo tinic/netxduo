@@ -10,11 +10,11 @@
 /***************************************************************************/
 
 /* nx_mdns_host_address_get() queries every enabled interface within one
-   caller-supplied timeout.  This test checks that the second interface is
-   actually queried: a host present only on the second card is unreachable if
-   the first interface consumes the whole budget and the second is left with
-   no time to send anything.  The total must still stay inside the caller's
-   timeout.  */
+   caller-supplied timeout when that budget can give each pending query at
+   least one tick.  This test checks that the second interface is actually
+   queried under a normal budget, then gives two interfaces a one-tick budget
+   and checks that the mathematically impossible request does not extend the
+   deadline.  */
 
 #include   "tx_api.h"
 #include   "nx_api.h"
@@ -27,6 +27,7 @@ extern void    test_control_return(UINT status);
 #define     DEMO_STACK_SIZE         2048
 #define     BUFFER_SIZE             10240
 #define     HOST_QUERY_TIMEOUT      (4 * NX_IP_PERIODIC_RATE)
+#define     SHORT_QUERY_TIMEOUT     1
 
 /* Define the ThreadX and NetX object control blocks...  */
 
@@ -188,8 +189,22 @@ ULONG      elapsed_time;
     if ((query_count[0] == 0) || (query_count[1] == 0))
         error_counter++;
 
-    /* The caller asked for one timeout, not one per interface.  */
-    if (elapsed_time >= (2 * HOST_QUERY_TIMEOUT))
+    /* The caller asked for one timeout, not one per interface. */
+    if (elapsed_time > HOST_QUERY_TIMEOUT)
+        error_counter++;
+
+    /* Fewer ticks than pending interfaces is an impossible request if every
+       interface must wait at least once.  The timeout is nevertheless a hard
+       deadline: cache-only checks may replace queries, but the implementation
+       must not manufacture one extra tick per interface.  The previous floor
+       took two ticks for this one-tick call. */
+    start_time = tx_time_get();
+    status = nx_mdns_host_address_get(&mdns_0, (UCHAR *)"absent.local",
+                                      &address, NX_NULL,
+                                      SHORT_QUERY_TIMEOUT);
+    elapsed_time = tx_time_get() - start_time;
+
+    if ((status == NX_SUCCESS) || (elapsed_time > SHORT_QUERY_TIMEOUT))
         error_counter++;
 
     nx_mdns_delete(&mdns_0);
