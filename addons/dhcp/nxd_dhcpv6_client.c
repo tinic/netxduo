@@ -506,36 +506,15 @@ ULONG   available_payload;
     (*index) += (ULONG)sizeof(ULONG);    
     NX_CHANGE_ULONG_ENDIAN(dhcpv6_ptr -> nx_dhcpv6_iana.nx_IA_NA_id);
 
-    /* Add the T1 and T2 option.  */
-    if((dhcpv6_ptr -> nx_dhcpv6_message_hdr.nx_message_type == NX_DHCPV6_MESSAGE_TYPE_SOLICIT) ||
-       (dhcpv6_ptr -> nx_dhcpv6_message_hdr.nx_message_type == NX_DHCPV6_MESSAGE_TYPE_CONFIRM) ||
-       (dhcpv6_ptr -> nx_dhcpv6_message_hdr.nx_message_type == NX_DHCPV6_MESSAGE_TYPE_DECLINE) ||
-       (dhcpv6_ptr -> nx_dhcpv6_message_hdr.nx_message_type == NX_DHCPV6_MESSAGE_TYPE_RELEASE))
-    {
-
-        /* When sending a confirm request, DHCPv6 Client should set its T1,T2,preferred-lifetime and
-           valid-lifetime to zero, as the server will ignore these fields, RFC3315,page41.  */
-        memset((buffer_ptr + (*index)), 0, sizeof(ULONG)); /* Use case of memcpy is verified. */
-        (*index) += (ULONG)sizeof(ULONG);
-        memset((buffer_ptr + (*index)), 0, sizeof(ULONG)); /* Use case of memcpy is verified. */
-        (*index) += (ULONG)sizeof(ULONG);
-    }
-    else
-    {
-
-        /* Adjust the data.  */
-        NX_CHANGE_ULONG_ENDIAN(dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1);
-        NX_CHANGE_ULONG_ENDIAN(dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2);
-
-        memcpy((buffer_ptr + (*index)), &(dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1), sizeof(ULONG)); /* Use case of memcpy is verified. */
-        (*index) += (ULONG)sizeof(ULONG);
-        memcpy((buffer_ptr + (*index)), &(dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2), sizeof(ULONG)); /* Use case of memcpy is verified. */
-        (*index) += (ULONG)sizeof(ULONG);
-
-        /* Swap bytes back. */
-        NX_CHANGE_ULONG_ENDIAN(dhcpv6_ptr -> nx_dhcpv6_iana.nx_T1);
-        NX_CHANGE_ULONG_ENDIAN(dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2);
-    }
+    /* Add the T1 and T2 option. RFC 8415 Section 21.4: in a message sent by a client to a
+       server, the T1 and T2 fields are set to zero and the server ignores any other value.
+       The times the Client holds are the server's own, or the Client's derivation from the
+       lifetimes in the IA, and neither is a request. Every message type is the same here:
+       these two words go out as zero. The Client's stored times are untouched.  */
+    memset((buffer_ptr + (*index)), 0, sizeof(ULONG)); /* Use case of memset is verified. */
+    (*index) += (ULONG)sizeof(ULONG);
+    memset((buffer_ptr + (*index)), 0, sizeof(ULONG)); /* Use case of memset is verified. */
+    (*index) += (ULONG)sizeof(ULONG);
 
     for(ia_index = 0; ia_index < NX_DHCPV6_MAX_IA_ADDRESS; ia_index++)
     {
