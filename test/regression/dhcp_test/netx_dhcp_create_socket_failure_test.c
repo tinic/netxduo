@@ -88,7 +88,11 @@ ULONG actual_status;
     status = nx_dhcp_create(&dhcp_0, &ip_0, (CHAR *)"DHCP client");
     if ((status != NX_NOT_ENABLED) ||
         (dhcp_0.nx_dhcp_id == NX_DHCP_ID) ||
+#ifndef NX_DHCP_CLIENT_USER_CREATE_PACKET_POOL
+        /* The Client only owns a packet pool when the application does not
+           supply one, so there is only one to check in that build. */
         (dhcp_0.nx_dhcp_pool.nx_packet_pool_id != 0) ||
+#endif
         (dhcp_0.nx_dhcp_socket.nx_udp_socket_id == NX_UDP_ID) ||
         (ip_0.nx_ip_udp_created_sockets_count != 0))
     {

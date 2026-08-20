@@ -12,6 +12,12 @@
 #include "nx_api.h"
 #include "nx_ip.h"
 
+/* _tx_timer_create, _tx_timer_delete and TX_THREAD_ID are ThreadX internals.
+   The test overrides the error checking shells and reads a thread's id, so it
+   needs the internal headers, not just tx_api.h. */
+#include "tx_timer.h"
+#include "tx_thread.h"
+
 extern void test_control_return(UINT status);
 
 #if defined(FEATURE_NX_IPV6)
