@@ -4420,12 +4420,14 @@ UINT    index = 0;
 /*                                                                        */ 
 /*  OUTPUT                                                                */ 
 /*                                                                        */ 
-/*    NX_SUCCESS                        Successful completion status      */ 
-/*                                                                        */ 
-/*  CALLS                                                                 */ 
+/*    NX_SUCCESS                        Successful completion status      */
+/*    NX_DHCPV6_PROCESSING_ERROR        Domain search list is malformed   */
+/*                                                                        */
+/*  CALLS                                                                 */
 /*                                                                        */
 /*    _nx_dhcpv6_name_string_unencode   Decode the name string            */
-/*                                                                        */ 
+/*    memset                            Clears specified area of memory   */
+/*                                                                        */
 /*  CALLED BY                                                             */ 
 /*                                                                        */ 
 /*    _nx_dhcpv6_extract_packet_information                               */
@@ -4441,19 +4443,85 @@ UINT        temp_length;
 UCHAR       *domain_name_ptr;
 UCHAR       *buffer_prepend_ptr;
 UINT        buffer_size;
+UINT        label_size;
 UINT        i;
 
-    
+
+    /* Validate the whole option before touching the search list.
+
+       _nx_dhcpv6_extract_packet_information() abandons the entire message on
+       any option error and its caller releases the packet, so a truncated or
+       compressed option 24 must not be allowed to leave a half written, or
+       emptied, search list behind: the client would then run without one
+       until the next accepted Reply, which is T1 away.  The pass below reads
+       option_data only, and the write pass that follows cannot fail.
+
+       Measuring here rather than decoding into a scratch copy of the buffer
+       keeps this off the DHCPv6 client thread stack; the buffer is user
+       configurable and NX_DHCPV6_DOMAIN_NAME_BUFFER_SIZE is commonly larger
+       than the frame this function is entitled to.  */
+    temp_length = 0;
+
+    while (temp_length < option_length)
+    {
+
+        /* Walk the labels of one name, measuring its decoded length.  */
+        domain_name_length = 0;
+        i = temp_length;
+
+        while ((i < option_length) && (option_data[i] != '\0'))
+        {
+
+            label_size = option_data[i];
+
+            /* Section 8 of RFC 3315 forbids compressed names here, and
+               _nx_dhcpv6_name_string_unencode() rejects anything above a
+               plain label length.  */
+            if (label_size > NX_DHCPV6_LABEL_MAX)
+            {
+                return(NX_DHCPV6_PROCESSING_ERROR);
+            }
+
+            /* The label body has to lie inside the option.  */
+            if ((label_size + 1) > (option_length - i))
+            {
+                return(NX_DHCPV6_PROCESSING_ERROR);
+            }
+
+            i += (label_size + 1);
+
+            /* The decoded form is the label plus its separator.  */
+            domain_name_length += (label_size + 1);
+        }
+
+        /* The name has to be terminated by a root label inside the option.  */
+        if (i == option_length)
+        {
+            return(NX_DHCPV6_PROCESSING_ERROR);
+        }
+
+        /* An empty name decodes to nothing, which the decoder reports as a
+           failure.  */
+        if (domain_name_length == 0)
+        {
+            return(NX_DHCPV6_PROCESSING_ERROR);
+        }
+
+        /* Step over the root label.  */
+        temp_length = i + 1;
+    }
+
+    /* The option parsed cleanly, so it may now replace the search list from
+       the previous message. */
+    memset(dhcpv6_ptr -> nx_dhcpv6_domain_name, 0,
+           sizeof(dhcpv6_ptr -> nx_dhcpv6_domain_name));
+
     /* Initialize the value.  */
     domain_name_length = 0;
     temp_length = 0;
     domain_name_ptr = option_data;
     buffer_prepend_ptr = &dhcpv6_ptr -> nx_dhcpv6_domain_name[0];
     buffer_size = NX_DHCPV6_DOMAIN_NAME_BUFFER_SIZE;
-
-    /* This option replaces the search list from the previous message. */
-    memset(dhcpv6_ptr -> nx_dhcpv6_domain_name, 0,
-           sizeof(dhcpv6_ptr -> nx_dhcpv6_domain_name));
 
     /* Process the domain search list options.  */
     while(temp_length < option_length)
@@ -4462,40 +4530,23 @@ UINT        i;
         /* Calculate the domain name length in the Domaim Search List option,include the null flag '\0'.  */
         for (i = 0; (i + temp_length < option_length) && (domain_name_ptr[i] != '\0'); i++);
 
-        if (i + temp_length == option_length)
-        {
-            return(NX_DHCPV6_PROCESSING_ERROR);
-        }
-        else
-        {
-            temp_length += (i + 1);
-        }
+        temp_length += (i + 1);
 
-        /* Check buffer size.  */
-        if (buffer_size < 1)
+        /* Out of room for another name. The option is sound, so keep what has
+           been stored rather than failing the message over a buffer this
+           client sized itself.  */
+        if (buffer_size < 2)
         {
-            return(NX_DHCPV6_PROCESSING_ERROR);
+            break;
         }
 
         /* Record the real domain name and return the length, one less for NULL termination. */
         domain_name_length = _nx_dhcpv6_name_string_unencode(packet_start, (UINT)(domain_name_ptr - packet_start), buffer_prepend_ptr, (UINT)((buffer_size - 1) & 0xFFFFFFFF));
 
-        /* Check the domain name length.  */
-        if(!domain_name_length)
-        {
-
-            /* Process error, return.  */
-            return NX_DHCPV6_PROCESSING_ERROR;
-        }
-
-        else
-        {
-
-            /* Update the buffer value,include the null flag '\0'.  */
-            domain_name_ptr += (i + 1);
-            buffer_prepend_ptr += (domain_name_length + 1);
-            buffer_size -= (domain_name_length + 1);
-        }
+        /* Update the buffer value,include the null flag '\0'.  */
+        domain_name_ptr += (i + 1);
+        buffer_prepend_ptr += (domain_name_length + 1);
+        buffer_size -= (domain_name_length + 1);
     }
 
     /* Return successful completion. */
@@ -4718,14 +4769,13 @@ UINT    length = 0;
 /*                                                                        */ 
 /*  OUTPUT                                                                */ 
 /*                                                                        */ 
-/*    NX_SUCCESS                        Successful completion status      */ 
-/*    NX_DHCPV6_INVALID_OPTION_DATA     DNS server option missing data or */
-/*                                            improperly formatted        */
-/*                                                                        */ 
-/*  CALLS                                                                 */ 
+/*    NX_SUCCESS                        Successful completion status      */
+/*                                                                        */
+/*  CALLS                                                                 */
 /*                                                                        */
 /*    memcpy                            Copies specified area of memory   */
-/*                                                                        */ 
+/*    memset                            Clears specified area of memory   */
+/*                                                                        */
 /*  CALLED BY                                                             */ 
 /*                                                                        */ 
 /*    _nx_dhcpv6_extract_packet_information                               */
@@ -4737,66 +4787,58 @@ UINT _nx_dhcpv6_process_DNS_server(NX_DHCPV6 *dhcpv6_ptr, UCHAR *option_data, UI
 {
 
 UINT   index = 0;
-UINT   w, j = 0;
+UINT   w, j;
+UINT   server_count;
 
-    /* A DNS server is exactly one IPv6 address. Validate the complete option
-       before replacing the previous list so malformed input cannot erase a
-       working configuration. */
-    if ((option_length & 0x0FU) != 0U)
-    {
-        return NX_DHCPV6_INVALID_OPTION_DATA;
-    }
 
-    memset(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address, 0,
-           sizeof(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address));
-
-    /* Loop through the length of the buffer to parse. */
-    while ((index + 16) <= option_length)
-    {
-
-        /* Is the DHCPv6 Client configured to store another DNS server address? */
-        if (j < NX_DHCPV6_NUM_DNS_SERVERS)
-        {
-
-            /* Set the IP version. */
-            dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address[j].nxd_ip_version = NX_IP_VERSION_V6;
-
-            /* Get the next IPv6 DNS server address. */
-            for (w = 0; w <= 3; w++)
-            {
-
-                /* Yes; copy the next word into the current DNS server address. */
-                memcpy(&(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address[j].nxd_ip_address.v6[w]), /* Use case of memcpy is verified. */
-                        (option_data + index), sizeof(ULONG));
-
-                /* Adjust for endianness. */
-                NX_CHANGE_ULONG_ENDIAN(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address[j].nxd_ip_address.v6[w]);
-
-                /* Move to the next IPv6 address word. */
-                index += 4;
-            }
-
-            /* Get the next DNS server address in the reply buffer. */
-            j++;
-        }
-        else
-        {
-
-            /* Move to the next IPv6 address. */
-            index += 16;
-        }
-    }
-
-    /* Is there any more data in the buffer?
+    /* A DNS server is exactly one 16 byte IPv6 address, so count the complete
+       addresses before writing anything.
 
        A trailing partial address is ignored rather than treated as an error.
        _nx_dhcpv6_extract_packet_information() abandons the whole message on
        any option error and its caller releases the packet, so refusing here
        costs the client the IA_NA address in the same Reply -- an option 23
        whose length is not a multiple of 16 would take the address with it.
-       The servers this loop did read are complete and usable, and RFC 8415
+       The addresses counted below are complete and usable, and RFC 8415
        section 16 says to ignore what cannot be understood, not to discard the
        message carrying it.  */
+    server_count = option_length >> 4;
+
+    /* A short option carries no address at all. Leave the previous list in
+       place instead of erasing it over malformed input; an option that is
+       genuinely empty still clears it.  */
+    if ((server_count == 0) && (option_length != 0))
+    {
+        return NX_SUCCESS;
+    }
+
+    /* The option is readable, so it may now replace the list from the
+       previous message. */
+    memset(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address, 0,
+           sizeof(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address));
+
+    /* Store as many DNS server addresses as this client is configured for. */
+    for (j = 0; (j < server_count) && (j < NX_DHCPV6_NUM_DNS_SERVERS); j++)
+    {
+
+        /* Set the IP version. */
+        dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address[j].nxd_ip_version = NX_IP_VERSION_V6;
+
+        /* Get the next IPv6 DNS server address. */
+        for (w = 0; w <= 3; w++)
+        {
+
+            /* Copy the next word into the current DNS server address. */
+            memcpy(&(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address[j].nxd_ip_address.v6[w]), /* Use case of memcpy is verified. */
+                    (option_data + index), sizeof(ULONG));
+
+            /* Adjust for endianness. */
+            NX_CHANGE_ULONG_ENDIAN(dhcpv6_ptr -> nx_dhcpv6_DNS_name_server_address[j].nxd_ip_address.v6[w]);
+
+            /* Move to the next IPv6 address word. */
+            index += 4;
+        }
+    }
 
     return NX_SUCCESS;
 }
