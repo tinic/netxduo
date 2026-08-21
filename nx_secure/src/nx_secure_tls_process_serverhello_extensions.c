@@ -168,6 +168,33 @@ USHORT                                supported_version = tls_session -> nx_secu
                 return(status);
             }
             break;
+#else
+        case NX_SECURE_TLS_EXTENSION_SECURE_RENEGOTIATION:
+
+            /* RFC 5746 3.4.  This build cannot renegotiate, so the only
+               ClientHello it ever sends is an initial one carrying an empty
+               renegotiation_info, and the only legal answer is an equally
+               empty one.  A server that answers with client_verify_data is
+               answering a renegotiating ClientHello that was never sent, so
+               it is either confused about which connection this is or an
+               attacker splicing this handshake onto one it made itself --
+               which is the attack RFC 5746 exists to stop.  Ignoring the
+               field, which is what the default case did, throws away the
+               half of the mechanism that is the client's to enforce. */
+            extension_length = (USHORT)((packet_buffer[offset] << 8) + packet_buffer[offset + 1]);
+            offset += 2;
+
+            if (extension_length + offset > message_length)
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
+            if ((extension_length != 1) || (packet_buffer[offset] != 0))
+            {
+                return(NX_SECURE_TLS_RENEGOTIATION_EXTENSION_ERROR);
+            }
+
+            break;
 #endif /* NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION */
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
 #ifdef NX_SECURE_ENABLE_ECC_CIPHERSUITE

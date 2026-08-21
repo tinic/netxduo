@@ -29,7 +29,8 @@
 #ifndef NX_SECURE_DISABLE_X509
 static VOID _nx_secure_tls_get_signature_algorithm(NX_SECURE_TLS_SESSION *tls_session,
                                                    NX_SECURE_X509_CRYPTO *crypto_method,
-                                                   USHORT *signature_algorithm);
+                                                   USHORT *signature_algorithm,
+                                                   USHORT *legacy_algorithm);
 
 static UINT _nx_secure_tls_send_clienthello_sig_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                           UCHAR *packet_buffer, ULONG *packet_offset,
@@ -77,6 +78,13 @@ static UINT _nx_secure_tls_send_clienthello_empty_extension(USHORT extension_id,
                                                             ULONG *packet_offset,
                                                             USHORT *extension_length,
                                                             ULONG available_size);
+
+#ifndef NX_SECURE_TLS_USE_SCSV_CIPHPERSUITE
+static UINT _nx_secure_tls_send_clienthello_initial_reneg_extension(UCHAR *packet_buffer,
+                                                                    ULONG *packet_offset,
+                                                                    USHORT *extension_length,
+                                                                    ULONG available_size);
+#endif
 
 #ifndef NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION
 static UINT _nx_secure_tls_send_clienthello_sec_reneg_extension(NX_SECURE_TLS_SESSION *tls_session,
@@ -157,9 +165,40 @@ UINT   status;
     total_extensions_length = (USHORT)(total_extensions_length + extension_length);
 #endif
 
+    /* RFC 5746 3.4.  EVERY INITIAL ClientHello CARRIES ff 01 00 01 00, whether
+       or not this build can renegotiate.  A client that sends neither the
+       empty renegotiation_info nor TLS_EMPTY_RENEGOTIATION_INFO_SCSV tells the
+       server nothing about whether it is patched against the 2009
+       renegotiation attack, and a server configured to require the indication
+       refuses the connection.  It is one extension, five bytes, and it is not
+       conditional on being able to renegotiate: it is a statement about this
+       handshake being the first one.
+
+       Before this, the extension went out only when
+       nx_secure_tls_renegotation_enabled was already set, and that flag is
+       cleared for the whole of any session that offers TLS 1.3 -- which is
+       every session here -- and set only after a server declines 1.3.  So the
+       flag is false at exactly the moment the ClientHello is built, and the
+       indication never left the machine on any connection.  Confirmed on the
+       wire against tls-v1-2.badssl.com: no 0xFF01, no 0x00FF in the suite
+       list. */
+#ifndef NX_SECURE_TLS_USE_SCSV_CIPHPERSUITE
+    if (!tls_session -> nx_secure_tls_local_session_active)
+    {
+        status = _nx_secure_tls_send_clienthello_initial_reneg_extension(packet_buffer, &length,
+                                                                        &extension_length, available_size);
+        if (status != NX_SUCCESS)
+        {
+            return(status);
+        }
+        total_extensions_length = (USHORT)(total_extensions_length + extension_length);
+    }
+#endif
+
 #ifndef NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION
-    /* We have to add renegotiation extensions in both initial sessions and renegotiating sessions. */
-    if (tls_session -> nx_secure_tls_renegotation_enabled == NX_TRUE)
+    /* A renegotiating ClientHello carries client_verify_data instead. */
+    if ((tls_session -> nx_secure_tls_renegotation_enabled == NX_TRUE) &&
+        (tls_session -> nx_secure_tls_local_session_active))
     {
         status = _nx_secure_tls_send_clienthello_sec_reneg_extension(tls_session, packet_buffer, &length, &extension_length, available_size);
         if(status != NX_SUCCESS)
@@ -346,6 +385,7 @@ ULONG  offset, ext_pos;
 USHORT ext_len, sig_len, sighash_len, ext;
 UINT i;
 USHORT signature_algorithm;
+USHORT legacy_algorithm;
 NX_SECURE_X509_CRYPTO *cipher_table;
 
     /* Signature Extensions structure:
@@ -354,10 +394,13 @@ NX_SECURE_X509_CRYPTO *cipher_table;
      *
      * Each algorithm pair has a hash ID and a public key operation ID represented
      * by a single octet. Therefore each entry in the list is 2 bytes long.
+     *
+     * A row of the X.509 table can put two of them on the wire, so the size
+     * check above reserves four bytes per row rather than two.
      */
 
     if (available_size < (*packet_offset + 6u +
-                          (ULONG)(tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size << 1)))
+                          (ULONG)(tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size << 2)))
     {
 
         /* Packet buffer too small. */
@@ -378,8 +421,11 @@ NX_SECURE_X509_CRYPTO *cipher_table;
     for (i = 0; i < tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size; i++)
     {
 
-        /* Map crypto method to signature algorithm. */
-        _nx_secure_tls_get_signature_algorithm(tls_session, &cipher_table[i], &signature_algorithm);
+        /* Map crypto method to signature algorithm.  A row can produce two
+           code points; see _nx_secure_tls_get_signature_algorithm(). */
+        legacy_algorithm = 0;
+        _nx_secure_tls_get_signature_algorithm(tls_session, &cipher_table[i],
+                                               &signature_algorithm, &legacy_algorithm);
         if (signature_algorithm == 0)
         {
             continue;
@@ -390,6 +436,15 @@ NX_SECURE_X509_CRYPTO *cipher_table;
 
         offset += 2;
         sighash_len = (USHORT)(sighash_len + 2);
+
+        if (legacy_algorithm != 0)
+        {
+            packet_buffer[offset] = (UCHAR)((legacy_algorithm & 0xFF00) >> 8);
+            packet_buffer[offset + 1] = (UCHAR)(legacy_algorithm & 0x00FF);
+
+            offset += 2;
+            sighash_len = (USHORT)(sighash_len + 2);
+        }
     }
 
     ext = NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS;  /* Signature algorithms */
@@ -421,7 +476,8 @@ NX_SECURE_X509_CRYPTO *cipher_table;
 
 VOID _nx_secure_tls_get_signature_algorithm(NX_SECURE_TLS_SESSION *tls_session,
                                             NX_SECURE_X509_CRYPTO *crypto_method,
-                                            USHORT *signature_algorithm)
+                                            USHORT *signature_algorithm,
+                                            USHORT *legacy_algorithm)
 {
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
 UINT j;
@@ -431,6 +487,7 @@ UCHAR hash_algo = 0;
 UCHAR sig_algo = 0;
 
     *signature_algorithm = 0;
+    *legacy_algorithm = 0;
 
     switch (crypto_method -> nx_secure_x509_public_cipher_method -> nx_crypto_algorithm)
     {
@@ -485,8 +542,22 @@ UCHAR sig_algo = 0;
         }
     }
 
-    /* TLS 1.3 requires RSA-PSS instead of PKCS#1 v1.5 (RFC 8446 §4.2.3).
-       Map RSA + SHA-256/384/512 to rsa_pss_rsae_sha256/384/512 (0x0804/0805/0806). */
+    /* TLS 1.3 signs handshake messages with RSA-PSS rather than PKCS#1 v1.5
+       (RFC 8446 4.2.3).  Map RSA + SHA-256/384/512 to rsa_pss_rsae_sha256/
+       384/512 (0x0804/0805/0806).
+
+       THE PKCS#1 CODE POINT GOES OUT BESIDE IT, NOT INSTEAD OF IT.  One
+       signature_algorithms list serves both versions this ClientHello can
+       land on: it offers supported_versions with TLS 1.3 in it and a legacy
+       version of TLS 1.2, and a server that picks 1.2 signs the
+       ServerKeyExchange from this same list.  A 1.2 server with no PSS --
+       every OpenSSL before 1.1.1, and tls-v1-2.badssl.com today -- finds
+       nothing in a PSS-only list it can use with an RSA key, and falls back
+       to the RFC 5246 default of (SHA-1, RSA).  This stack removed SHA-1 from
+       the X.509 table on purpose, so that arrives as
+       NX_SECURE_TLS_UNSUPPORTED_SIGNATURE_ALGORITHM and the handshake dies at
+       the ServerKeyExchange against a current Let's Encrypt host.  PSS first,
+       PKCS#1 after it, which is the order every browser sends. */
     if (tls_session -> nx_secure_tls_1_3 &&
         sig_algo == NX_SECURE_TLS_SIGNATURE_ALGORITHM_RSA)
     {
@@ -503,7 +574,10 @@ UCHAR sig_algo = 0;
             break;
         default:
             *signature_algorithm = 0;
+            return;
         }
+
+        *legacy_algorithm = (USHORT)((hash_algo << 8) + sig_algo);
         return;
     }
 
@@ -1481,6 +1555,55 @@ ULONG offset = *packet_offset;
 
     return(NX_SUCCESS);
 }
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_secure_tls_send_clienthello_initial_reneg_extension             */
+/*                                                         PORTABLE C     */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Write the five bytes RFC 5746 3.4 requires of an initial            */
+/*    ClientHello: ff 01 00 01 00 -- the renegotiation_info identifier, an */
+/*    extension length of one, and a zero-length renegotiated_connection.  */
+/*    It says "this is a first handshake and I implement RFC 5746", which  */
+/*    is a statement a client that never renegotiates still has to make.   */
+/*                                                                        */
+/*    Deliberately takes no session: there is nothing about this handshake */
+/*    that can change what it writes, and a version that read the session  */
+/*    is how the old path came to depend on a flag that is false here.     */
+/*                                                                        */
+/**************************************************************************/
+#ifndef NX_SECURE_TLS_USE_SCSV_CIPHPERSUITE
+static UINT _nx_secure_tls_send_clienthello_initial_reneg_extension(UCHAR *packet_buffer,
+                                                                    ULONG *packet_offset,
+                                                                    USHORT *extension_length,
+                                                                    ULONG available_size)
+{
+ULONG offset = *packet_offset;
+
+    if (available_size < (offset + 5u))
+    {
+        return(NX_SECURE_TLS_PACKET_BUFFER_TOO_SMALL);
+    }
+
+    packet_buffer[offset]     = (UCHAR)((NX_SECURE_TLS_EXTENSION_SECURE_RENEGOTIATION & 0xFF00) >> 8);
+    packet_buffer[offset + 1] = (UCHAR)(NX_SECURE_TLS_EXTENSION_SECURE_RENEGOTIATION & 0x00FF);
+    packet_buffer[offset + 2] = 0x00;
+    packet_buffer[offset + 3] = 0x01;
+    packet_buffer[offset + 4] = 0x00;
+
+    offset += 5;
+
+    *extension_length = (USHORT)(offset - *packet_offset);
+    *packet_offset = offset;
+
+    return(NX_SUCCESS);
+}
+#endif
 
 
 /**************************************************************************/
