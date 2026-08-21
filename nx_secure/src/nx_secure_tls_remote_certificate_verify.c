@@ -150,8 +150,21 @@ USHORT                            required_key_usage;
 
         required_key_usage = NX_SECURE_X509_KEY_USAGE_DIGITAL_SIGNATURE;
 
+        /*
+         * NOT protocol_version < NX_SECURE_TLS_VERSION_TLS_1_3.  That field is
+         * the legacy record version and stays 0x0303 for the whole of a TLS
+         * 1.3 session -- _nx_secure_tls_send_record() writes it into every
+         * record header, where RFC 8446 5.1 requires 0x0303 -- so the
+         * comparison was true on 1.3 as well and excluded nothing.  It read
+         * as the guard that keeps a 1.3 session on digitalSignature; what
+         * actually does that is the NX_CRYPTO_KEY_EXCHANGE_RSA test below,
+         * since a 1.3 suite's public cipher is crypto_method_ecdhe.  Ask the
+         * flag that means what this is asking.
+         */
         if (tls_session -> nx_secure_tls_socket_type == NX_SECURE_TLS_SESSION_TYPE_CLIENT &&
-            tls_session -> nx_secure_tls_protocol_version < NX_SECURE_TLS_VERSION_TLS_1_3 &&
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+            !tls_session -> nx_secure_tls_1_3 &&
+#endif
             tls_session -> nx_secure_tls_session_ciphersuite != NX_NULL &&
             tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_public_cipher != NX_NULL &&
             tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_public_cipher -> nx_crypto_algorithm ==
