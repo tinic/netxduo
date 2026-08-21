@@ -67,10 +67,11 @@
 /*    rather than a collapsed window, and the timeout it stands in front   */
 /*    of still expires on its own schedule.                                */
 /*                                                                        */
-/*    It fires only on a connection that has an SRTT.  Section 7.2's PTO   */
-/*    is a multiple of it, and a probe standing in for one before the      */
-/*    first sample is taken is what stops the first sample being taken:    */
-/*    see the comment on the test below.                                   */
+/*    A connection with no SRTT gets section 7.2's one second PTO, which   */
+/*    on a port whose NX_TCP_RTO_MINIMUM_MS is also one second means the   */
+/*    first flight is not probed at all.  A probe standing in for one      */
+/*    before the first sample is taken is what stops the first sample      */
+/*    being taken: see the comment on the computation below.               */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -121,34 +122,40 @@ ULONG elapsed;
     }
 
     /*
-     * A connection with no round trip measurement yet is not probed at all.
+     * PTO, RFC 8985 section 7.2.
      *
-     * There is no PTO to compute without an SRTT -- section 7.2's formula is
-     * a multiple of it -- and taking the floor instead, which is what this
-     * used to do, put the probe 240 ms after every transmission on a
-     * connection that had never been measured.  A probe is a retransmission,
-     * so Karn's algorithm abandons the measurement in progress, and a path
-     * whose round trip is longer than 240 ms therefore had every one of its
-     * samples abandoned by the probe that fired first.  SRTT stayed at zero,
-     * the timeout guarding it stayed on NX_TCP_RTO_MINIMUM_MS, and both
-     * stayed there for the life of the connection: the estimator could not
-     * grow past 240 ms on any link slower than that, which is most links
-     * this stack will ever see off a LAN.
+     * With a measurement it is twice the smoothed round trip, plus the worst
+     * case delayed acknowledgment the section allows for a flight of one.  The
+     * estimate is held in eighths of a tick, so twice it is a shift of two.
      *
-     * What the first segment gets instead is RFC 6298 section 2.1's one
-     * second timeout, unprobed, which is the same answer TCP gave before
-     * section 7.2 existed.  One round trip later there is an SRTT and every
-     * segment after it is probed.
+     * WITHOUT ONE it is ONE SECOND, which is the section's own figure: "If
+     * SRTT is unavailable, the PTO SHOULD be 1 second.  This conservative
+     * value corresponds to the RTO value when no SRTT is available, per
+     * [RFC6298]."  What this used to take instead was the tick a sample would
+     * have been floored at, giving 2 + 10 ticks, 240 ms.  A probe is a
+     * retransmission, so Karn's algorithm abandons the measurement in
+     * progress, and a path whose round trip is longer than 240 ms therefore
+     * had every one of its samples abandoned by the probe that fired first.
+     * SRTT stayed at zero, so the next PTO was 240 ms again: the estimator
+     * could not grow past it for the life of the connection and the timeout
+     * guarding it sat on NX_TCP_RTO_MINIMUM_MS with nothing measured behind
+     * it.  240 ms is a LAN figure; most links this stack sees are slower.
+     *
+     * On a port whose NX_TCP_RTO_MINIMUM_MS is also one second -- which this
+     * one's is -- the test below then suppresses the first flight's probe
+     * entirely, because a one second PTO cannot land before a one second
+     * timeout.  That is the section's arithmetic and not a rule of its own:
+     * lower the floor and the probe reappears, on the schedule 7.2 sets.
      */
-    if (socket_ptr -> nx_tcp_socket_rtt_smoothed == 0)
+    if (socket_ptr -> nx_tcp_socket_rtt_smoothed != 0)
     {
-        return;
+        probe_timeout = (socket_ptr -> nx_tcp_socket_rtt_smoothed >> 2) +
+                        NX_TCP_LOSS_PROBE_DELACK;
     }
-
-    /* PTO is twice the smoothed round trip, section 7.2.  The estimate is held
-       in eighths of a tick, so twice it is a shift of two.  */
-    probe_timeout = (socket_ptr -> nx_tcp_socket_rtt_smoothed >> 2) +
-                    NX_TCP_LOSS_PROBE_DELACK;
+    else
+    {
+        probe_timeout = NX_TCP_LOSS_PROBE_NO_SRTT;
+    }
 
     /* A probe that would land at or after the timeout is not a probe.  */
     if (probe_timeout >= socket_ptr -> nx_tcp_socket_timeout_rate)

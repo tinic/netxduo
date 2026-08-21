@@ -293,6 +293,20 @@
 
 #define NX_TCP_LOSS_PROBE_DELACK        NX_TCP_RTO_TICKS(NX_TCP_LOSS_PROBE_DELACK_MS)
 
+/* RFC 8985 section 7.2's PTO for a connection that has no smoothed round trip
+   yet: "If SRTT is unavailable, the PTO SHOULD be 1 second.  This conservative
+   value corresponds to the RTO value when no SRTT is available, per
+   [RFC6298]."  It is not derived from anything -- there is nothing to derive
+   it from -- so it is written here rather than computed, and it is the same
+   figure as NX_TCP_RTO_MINIMUM_MS by the section's own reasoning rather than
+   by sharing the macro.  */
+
+#ifndef NX_TCP_LOSS_PROBE_NO_SRTT_MS
+#define NX_TCP_LOSS_PROBE_NO_SRTT_MS    1000
+#endif
+
+#define NX_TCP_LOSS_PROBE_NO_SRTT       NX_TCP_RTO_TICKS(NX_TCP_LOSS_PROBE_NO_SRTT_MS)
+
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
 
 /* The duplicate acknowledgment count that triggers a fast retransmit, RFC 5681
