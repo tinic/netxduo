@@ -444,6 +444,9 @@ VOID _nx_tcp_client_bind_cleanup(TX_THREAD *thread_ptr NX_CLEANUP_PARAMETER);
 VOID _nx_tcp_deferred_cleanup_check(NX_IP *ip_ptr);
 VOID _nx_tcp_fast_periodic_processing(NX_IP *ip_ptr);
 VOID _nx_tcp_socket_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, UINT need_fast_retransmit);
+#if defined(NX_ENABLE_TCP_LOSS_PROBE) && defined(NX_ENABLE_TCP_RTT_ESTIMATOR)
+VOID _nx_tcp_socket_retransmit_tail(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr);
+#endif /* NX_ENABLE_TCP_LOSS_PROBE && NX_ENABLE_TCP_RTT_ESTIMATOR */
 #ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
 VOID _nx_tcp_socket_rtt_sample(NX_TCP_SOCKET *socket_ptr, ULONG rtt_ticks);
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
