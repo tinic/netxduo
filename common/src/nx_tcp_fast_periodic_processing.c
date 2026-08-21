@@ -67,6 +67,11 @@
 /*    rather than a collapsed window, and the timeout it stands in front   */
 /*    of still expires on its own schedule.                                */
 /*                                                                        */
+/*    It fires only on a connection that has an SRTT.  Section 7.2's PTO   */
+/*    is a multiple of it, and a probe standing in for one before the      */
+/*    first sample is taken is what stops the first sample being taken:    */
+/*    see the comment on the test below.                                   */
+/*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
 /*    ip_ptr                                Pointer to IP control block   */
@@ -115,20 +120,35 @@ ULONG elapsed;
         return;
     }
 
-    /* PTO is twice the smoothed round trip, section 7.2.  The estimate is held
-       in eighths of a tick, so twice it is a shift of two.  Without a
-       measurement yet -- the first segment a connection sends -- take the tick
-       the sample would be floored at.  */
-    if (socket_ptr -> nx_tcp_socket_rtt_smoothed != 0)
+    /*
+     * A connection with no round trip measurement yet is not probed at all.
+     *
+     * There is no PTO to compute without an SRTT -- section 7.2's formula is
+     * a multiple of it -- and taking the floor instead, which is what this
+     * used to do, put the probe 240 ms after every transmission on a
+     * connection that had never been measured.  A probe is a retransmission,
+     * so Karn's algorithm abandons the measurement in progress, and a path
+     * whose round trip is longer than 240 ms therefore had every one of its
+     * samples abandoned by the probe that fired first.  SRTT stayed at zero,
+     * the timeout guarding it stayed on NX_TCP_RTO_MINIMUM_MS, and both
+     * stayed there for the life of the connection: the estimator could not
+     * grow past 240 ms on any link slower than that, which is most links
+     * this stack will ever see off a LAN.
+     *
+     * What the first segment gets instead is RFC 6298 section 2.1's one
+     * second timeout, unprobed, which is the same answer TCP gave before
+     * section 7.2 existed.  One round trip later there is an SRTT and every
+     * segment after it is probed.
+     */
+    if (socket_ptr -> nx_tcp_socket_rtt_smoothed == 0)
     {
-        probe_timeout = socket_ptr -> nx_tcp_socket_rtt_smoothed >> 2;
-    }
-    else
-    {
-        probe_timeout = 2;
+        return;
     }
 
-    probe_timeout = probe_timeout + NX_TCP_LOSS_PROBE_DELACK;
+    /* PTO is twice the smoothed round trip, section 7.2.  The estimate is held
+       in eighths of a tick, so twice it is a shift of two.  */
+    probe_timeout = (socket_ptr -> nx_tcp_socket_rtt_smoothed >> 2) +
+                    NX_TCP_LOSS_PROBE_DELACK;
 
     /* A probe that would land at or after the timeout is not a probe.  */
     if (probe_timeout >= socket_ptr -> nx_tcp_socket_timeout_rate)
