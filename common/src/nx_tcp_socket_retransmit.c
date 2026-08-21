@@ -47,6 +47,298 @@
 #define NX_TCP_SEGMENT_HEADER_LENGTH    ((ULONG)sizeof(NX_TCP_HEADER))
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
 
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_packet                    PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Eclipse ThreadX Contributors                                        */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function sends one segment that is already on the transmit      */
+/*    queue again: it refreshes the acknowledgment number, the window and  */
+/*    the timestamp option, recomputes the checksum and hands the packet   */
+/*    to the IP layer.                                                     */
+/*                                                                        */
+/*    It was the body of _nx_tcp_socket_retransmit()'s queue walk, and is  */
+/*    a function of its own because that walk is not the only thing that   */
+/*    needs to resend a queued segment.  RFC 8985 section 7.3's tail loss  */
+/*    probe sends the LAST unacknowledged segment, not the first, and the  */
+/*    walk can only start at nx_tcp_socket_transmit_sent_head.             */
+/*                                                                        */
+/*    It decides nothing.  The congestion window, the retry ladder and     */
+/*    what the peer reported are the caller's business; this rebuilds one  */
+/*    header and sends one packet.                                         */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                IP instance pointer           */
+/*    socket_ptr                            Pointer to owning socket      */
+/*    packet_ptr                            The queued segment to resend  */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_ip_checksum_compute               Calculate TCP checksum        */
+/*    _nx_tcp_timestamp_option_add          Refresh the timestamp option  */
+/*    _nx_ip_packet_send                    Resend the transmit packet    */
+/*    _nx_ipv6_packet_send                  Resend the transmit packet    */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit             The queue walk                */
+/*    _nx_tcp_socket_retransmit_tail        The tail loss probe           */
+/*                                                                        */
+/**************************************************************************/
+static VOID  _nx_tcp_socket_retransmit_packet(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr)
+{
+ULONG          checksum;
+ULONG          original_acknowledgment_number;
+ULONG          original_header_word_3;
+ULONG          original_header_word_4;
+ULONG          window_size;
+NX_TCP_HEADER *header_ptr;
+ULONG         *source_ip = NX_NULL, *dest_ip = NX_NULL;
+#if defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
+UINT           compute_checksum = 1;
+#endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
+
+#ifdef NX_DISABLE_TCP_TX_CHECKSUM
+    compute_checksum = 0;
+#endif /* NX_DISABLE_TCP_TX_CHECKSUM */
+
+
+#ifndef NX_DISABLE_IPV4
+    /* Is this an IPv4 connection? */
+    if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V4)
+    {
+
+        packet_ptr -> nx_packet_ip_version = NX_IP_VERSION_V4;
+
+        /* Get the source and destination addresses. */
+        source_ip = &socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_ip_address;
+        dest_ip = &socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v4;
+    }
+#endif /* !NX_DISABLE_IPV4  */
+
+#ifdef FEATURE_NX_IPV6
+    if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6)
+    {
+
+        /* Set the packet for IPv6 connectivity. */
+        packet_ptr -> nx_packet_ip_version = NX_IP_VERSION_V6;
+
+        /* Get the source and destination addresses. */
+        source_ip = socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address;
+        dest_ip = socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v6;
+    }
+#endif /* FEATURE_NX_IPV6 */
+
+    /* Pick up the pointer to the head of the TCP packet.  */
+    /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+    header_ptr =  (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+
+    /* Record the original data.  */
+    original_acknowledgment_number = header_ptr -> nx_tcp_acknowledgment_number;
+    original_header_word_3 = header_ptr -> nx_tcp_header_word_3;
+    original_header_word_4 = header_ptr -> nx_tcp_header_word_4;
+
+    /* Update the ACK number in the TCP header.  */
+    header_ptr -> nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_rx_sequence;
+
+    /* Convert to network byte order for checksum */
+    NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_acknowledgment_number);
+
+    /* Set window size. */
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    window_size = socket_ptr -> nx_tcp_socket_rx_window_current >> socket_ptr -> nx_tcp_rcv_win_scale_value;
+
+    /* Make sure the window_size is less than 0xFFFF. */
+    if (window_size > 0xFFFF)
+    {
+        window_size = 0xFFFF;
+    }
+#else
+    window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+    if (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE)
+    {
+
+        /* The queued segment was built with an eight word header and the
+           option still sits behind this one, so the data offset has to say
+           eight.  Writing five here would hand the peer the twelve option
+           bytes as payload and corrupt the stream from the first
+           retransmission onwards.  */
+        header_ptr -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE_TIMESTAMP | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+
+        /* RFC 1323 section 4.1: the retransmission carries the current
+           clock, not the clock of the transmission it replaces, so the
+           peer's own estimate measures what actually crossed the wire.
+           TSecr is refreshed for the same reason the ACK number above is.  */
+        _nx_tcp_timestamp_option_add(((UCHAR *)header_ptr) + sizeof(NX_TCP_HEADER),
+                                     (ULONG)tx_time_get(),
+                                     socket_ptr -> nx_tcp_socket_ts_recent);
+
+        socket_ptr -> nx_tcp_socket_last_ack_sent = socket_ptr -> nx_tcp_socket_rx_sequence;
+    }
+    else
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+    {
+        header_ptr -> nx_tcp_header_word_3 =        NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
+    }
+
+    /* Swap the content to network byte order. */
+    NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
+
+    /* Convert back to host byte order to so we can zero out the checksum. */
+    NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
+
+    /* Remember the last ACKed sequence and the last reported window size.  */
+    socket_ptr -> nx_tcp_socket_rx_sequence_acked =    socket_ptr -> nx_tcp_socket_rx_sequence;
+    socket_ptr -> nx_tcp_socket_rx_window_last_sent =  socket_ptr -> nx_tcp_socket_rx_window_current;
+
+    /* Zero out existing checksum before computing new one. */
+    header_ptr -> nx_tcp_header_word_4 = header_ptr -> nx_tcp_header_word_4 & 0x0000FFFF;
+
+    /* Convert back to network byte order to so we can do the checksum. */
+    NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
+
+
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    if (socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM)
+    {
+        compute_checksum = 0;
+    }
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
+
+#ifdef NX_IPSEC_ENABLE
+    if ((packet_ptr -> nx_packet_ipsec_sa_ptr != NX_NULL) &&
+        (((NX_IPSEC_SA *)(packet_ptr -> nx_packet_ipsec_sa_ptr)) -> nx_ipsec_sa_encryption_method != NX_CRYPTO_NONE))
+    {
+        compute_checksum = 1;
+    }
+#endif /* NX_IPSEC_ENABLE */
+
+#if defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
+    if (compute_checksum)
+#endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
+    {
+        /* Calculate the TCP checksum without protection.  */
+        checksum =  _nx_ip_checksum_compute(packet_ptr, NX_PROTOCOL_TCP,
+                                            packet_ptr -> nx_packet_length,
+                                            source_ip, dest_ip);
+        checksum = ~checksum & NX_LOWER_16_MASK;
+
+        /* Convert back to host byte order */
+        NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
+
+        /* Move the checksum into header.  */
+        header_ptr -> nx_tcp_header_word_4 =  header_ptr -> nx_tcp_header_word_4 | (checksum << NX_SHIFT_BY_16);
+
+        /* Convert back to network byte order for transmit. */
+        NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
+    }
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    else
+    {
+        packet_ptr -> nx_packet_interface_capability_flag |= NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM;
+    }
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
+
+    /* Determine if the retransmitted packet is identical to the original packet.
+       RFC1122, Section3.2.1.5, Page32-33. RFC1122, Section4.2.2.15, Page90-91.  */
+    if ((header_ptr -> nx_tcp_acknowledgment_number == original_acknowledgment_number) &&
+        (header_ptr -> nx_tcp_header_word_3 == original_header_word_3) &&
+        (header_ptr -> nx_tcp_header_word_4 == original_header_word_4))
+    {
+
+        /* Yes, identical packet, update the identification flag.  */
+        packet_ptr -> nx_packet_identical_copy = NX_TRUE;
+    }
+    else
+    {
+
+        /* No.  The flag has to be cleared as well as set: a packet on the
+           retransmit queue is retransmitted more than once, and only
+           nx_packet_allocate() and nx_packet_release() ever cleared this.
+           A packet that went out identical once kept the flag, so when a
+           later retransmission of the same packet carried a moved ACK or
+           window -- which is the usual case, not a corner one --
+           _nx_ip_header_add() still took the early exit and re-sent the
+           original IPv4 identification on a datagram whose bytes had
+           changed.  RFC 6864 4.1 forbids repeating an ID within the
+           maximum datagram lifetime for a source/destination/protocol
+           tuple unless the datagram is atomic, and these are not: every
+           socket here is created with NX_FRAGMENT_OKAY, so DF is clear.
+           Two unlike datagrams sharing an ID is what makes a downstream
+           reassembly join the wrong fragments.  */
+        packet_ptr -> nx_packet_identical_copy = NX_FALSE;
+    }
+
+
+#ifndef NX_DISABLE_TCP_INFO
+    /* Increment the TCP retransmit count.  */
+    ip_ptr -> nx_ip_tcp_retransmit_packets++;
+
+    /* Increment the TCP retransmit count for the socket.  */
+    socket_ptr -> nx_tcp_socket_retransmit_packets++;
+#endif
+
+#ifdef NX_ENABLE_VLAN
+    if (socket_ptr -> nx_tcp_socket_vlan_priority != NX_VLAN_PRIORITY_INVALID)
+    {
+        packet_ptr -> nx_packet_vlan_priority = socket_ptr -> nx_tcp_socket_vlan_priority;
+    }
+#endif /* NX_ENABLE_VLAN */
+        
+    /* If trace is enabled, insert this event into the trace buffer.  */
+    NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_RETRY, ip_ptr, socket_ptr, packet_ptr, socket_ptr -> nx_tcp_socket_timeout_retries, NX_TRACE_INTERNAL_EVENTS, 0, 0);
+
+    /* Clear the queue next pointer.  */
+    packet_ptr -> nx_packet_queue_next =  NX_NULL;
+
+    /* Yes, the driver has finished with the packet at the head of the
+       transmit sent list... so it can be sent again!  */
+
+#ifndef NX_DISABLE_IPV4
+    /* Is this an IPv4 connection? */
+    if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V4)
+    {
+        _nx_ip_packet_send(ip_ptr, packet_ptr,
+                           socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v4,
+                           socket_ptr -> nx_tcp_socket_type_of_service,
+                           socket_ptr -> nx_tcp_socket_time_to_live, NX_IP_TCP,
+                           socket_ptr -> nx_tcp_socket_fragment_enable,
+                           socket_ptr -> nx_tcp_socket_next_hop_address);
+    }
+#endif /* !NX_DISABLE_IPV4  */
+
+#ifdef FEATURE_NX_IPV6
+    if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6)
+    {
+
+        /* Handle for an IPv6 connection. */
+        /* Set the packet transmit interface before sending. */
+        packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = socket_ptr -> nx_tcp_socket_ipv6_addr;
+
+        _nx_ipv6_packet_send(ip_ptr, packet_ptr, NX_PROTOCOL_TCP,
+                             packet_ptr -> nx_packet_length, ip_ptr -> nx_ipv6_hop_limit, 0,
+                             socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address,
+                             socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v6);
+    }
+#endif /* FEATURE_NX_IPV6 */
+}
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -88,11 +380,7 @@ VOID  _nx_tcp_socket_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, UINT n
 {
 NX_PACKET *packet_ptr;
 ULONG      window;
-ULONG      original_acknowledgment_number;
-ULONG      original_header_word_3;
-ULONG      original_header_word_4;
 ULONG      available;
-ULONG      window_size;
 #ifdef NX_ENABLE_TCP_SACK
 ULONG      sack_left[NX_TCP_SACK_MAX_BLOCKS];
 ULONG      sack_right[NX_TCP_SACK_MAX_BLOCKS];
@@ -326,26 +614,13 @@ UINT       sack_index;
     while (packet_ptr && (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE))
     {
 
-    /* Update the ACK number in case it has changed since the data was originally transmitted. */
-    ULONG          checksum;
-    NX_TCP_HEADER *header_ptr;
-    ULONG         *source_ip = NX_NULL, *dest_ip = NX_NULL;
     NX_PACKET     *next_ptr;
 #ifdef NX_ENABLE_TCP_SACK
     ULONG          queued_word;
     ULONG          queued_begin;
     ULONG          queued_end;
     UINT           peer_holds_it = NX_FALSE;
-#endif /* NX_ENABLE_TCP_SACK */
-#if defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
-    UINT           compute_checksum = 1;
-#endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
 
-#ifdef NX_DISABLE_TCP_TX_CHECKSUM
-        compute_checksum = 0;
-#endif /* NX_DISABLE_TCP_TX_CHECKSUM */
-
-#ifdef NX_ENABLE_TCP_SACK
         if (sack_blocks > 0)
         {
 
@@ -427,227 +702,8 @@ UINT       sack_index;
         /* Pickup next packet. */
         next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
 
-#ifndef NX_DISABLE_IPV4
-        /* Is this an IPv4 connection? */
-        if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V4)
-        {
-
-            packet_ptr -> nx_packet_ip_version = NX_IP_VERSION_V4;
-
-            /* Get the source and destination addresses. */
-            source_ip = &socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_ip_address;
-            dest_ip = &socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v4;
-        }
-#endif /* !NX_DISABLE_IPV4  */
-
-#ifdef FEATURE_NX_IPV6
-        if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6)
-        {
-
-            /* Set the packet for IPv6 connectivity. */
-            packet_ptr -> nx_packet_ip_version = NX_IP_VERSION_V6;
-
-            /* Get the source and destination addresses. */
-            source_ip = socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address;
-            dest_ip = socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v6;
-        }
-#endif /* FEATURE_NX_IPV6 */
-
-        /* Pick up the pointer to the head of the TCP packet.  */
-        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-        header_ptr =  (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
-
-        /* Record the original data.  */
-        original_acknowledgment_number = header_ptr -> nx_tcp_acknowledgment_number;
-        original_header_word_3 = header_ptr -> nx_tcp_header_word_3;
-        original_header_word_4 = header_ptr -> nx_tcp_header_word_4;
-
-        /* Update the ACK number in the TCP header.  */
-        header_ptr -> nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_rx_sequence;
-
-        /* Convert to network byte order for checksum */
-        NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_acknowledgment_number);
-
-        /* Set window size. */
-#ifdef NX_ENABLE_TCP_WINDOW_SCALING
-        window_size = socket_ptr -> nx_tcp_socket_rx_window_current >> socket_ptr -> nx_tcp_rcv_win_scale_value;
-
-        /* Make sure the window_size is less than 0xFFFF. */
-        if (window_size > 0xFFFF)
-        {
-            window_size = 0xFFFF;
-        }
-#else
-        window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
-#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
-
-#ifdef NX_ENABLE_TCP_TIMESTAMP
-        if (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE)
-        {
-
-            /* The queued segment was built with an eight word header and the
-               option still sits behind this one, so the data offset has to say
-               eight.  Writing five here would hand the peer the twelve option
-               bytes as payload and corrupt the stream from the first
-               retransmission onwards.  */
-            header_ptr -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE_TIMESTAMP | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
-
-            /* RFC 1323 section 4.1: the retransmission carries the current
-               clock, not the clock of the transmission it replaces, so the
-               peer's own estimate measures what actually crossed the wire.
-               TSecr is refreshed for the same reason the ACK number above is.  */
-            _nx_tcp_timestamp_option_add(((UCHAR *)header_ptr) + sizeof(NX_TCP_HEADER),
-                                         (ULONG)tx_time_get(),
-                                         socket_ptr -> nx_tcp_socket_ts_recent);
-
-            socket_ptr -> nx_tcp_socket_last_ack_sent = socket_ptr -> nx_tcp_socket_rx_sequence;
-        }
-        else
-#endif /* NX_ENABLE_TCP_TIMESTAMP */
-        {
-            header_ptr -> nx_tcp_header_word_3 =        NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | NX_TCP_PSH_BIT | window_size;
-        }
-
-        /* Swap the content to network byte order. */
-        NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
-
-        /* Convert back to host byte order to so we can zero out the checksum. */
-        NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
-
-        /* Remember the last ACKed sequence and the last reported window size.  */
-        socket_ptr -> nx_tcp_socket_rx_sequence_acked =    socket_ptr -> nx_tcp_socket_rx_sequence;
-        socket_ptr -> nx_tcp_socket_rx_window_last_sent =  socket_ptr -> nx_tcp_socket_rx_window_current;
-
-        /* Zero out existing checksum before computing new one. */
-        header_ptr -> nx_tcp_header_word_4 = header_ptr -> nx_tcp_header_word_4 & 0x0000FFFF;
-
-        /* Convert back to network byte order to so we can do the checksum. */
-        NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
-
-
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
-        if (socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM)
-        {
-            compute_checksum = 0;
-        }
-#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
-
-#ifdef NX_IPSEC_ENABLE
-        if ((packet_ptr -> nx_packet_ipsec_sa_ptr != NX_NULL) &&
-            (((NX_IPSEC_SA *)(packet_ptr -> nx_packet_ipsec_sa_ptr)) -> nx_ipsec_sa_encryption_method != NX_CRYPTO_NONE))
-        {
-            compute_checksum = 1;
-        }
-#endif /* NX_IPSEC_ENABLE */
-
-#if defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
-        if (compute_checksum)
-#endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
-        {
-            /* Calculate the TCP checksum without protection.  */
-            checksum =  _nx_ip_checksum_compute(packet_ptr, NX_PROTOCOL_TCP,
-                                                packet_ptr -> nx_packet_length,
-                                                source_ip, dest_ip);
-            checksum = ~checksum & NX_LOWER_16_MASK;
-
-            /* Convert back to host byte order */
-            NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
-
-            /* Move the checksum into header.  */
-            header_ptr -> nx_tcp_header_word_4 =  header_ptr -> nx_tcp_header_word_4 | (checksum << NX_SHIFT_BY_16);
-
-            /* Convert back to network byte order for transmit. */
-            NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
-        }
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
-        else
-        {
-            packet_ptr -> nx_packet_interface_capability_flag |= NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM;
-        }
-#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
-
-        /* Determine if the retransmitted packet is identical to the original packet.
-           RFC1122, Section3.2.1.5, Page32-33. RFC1122, Section4.2.2.15, Page90-91.  */
-        if ((header_ptr -> nx_tcp_acknowledgment_number == original_acknowledgment_number) &&
-            (header_ptr -> nx_tcp_header_word_3 == original_header_word_3) &&
-            (header_ptr -> nx_tcp_header_word_4 == original_header_word_4))
-        {
-
-            /* Yes, identical packet, update the identification flag.  */
-            packet_ptr -> nx_packet_identical_copy = NX_TRUE;
-        }
-        else
-        {
-
-            /* No.  The flag has to be cleared as well as set: a packet on the
-               retransmit queue is retransmitted more than once, and only
-               nx_packet_allocate() and nx_packet_release() ever cleared this.
-               A packet that went out identical once kept the flag, so when a
-               later retransmission of the same packet carried a moved ACK or
-               window -- which is the usual case, not a corner one --
-               _nx_ip_header_add() still took the early exit and re-sent the
-               original IPv4 identification on a datagram whose bytes had
-               changed.  RFC 6864 4.1 forbids repeating an ID within the
-               maximum datagram lifetime for a source/destination/protocol
-               tuple unless the datagram is atomic, and these are not: every
-               socket here is created with NX_FRAGMENT_OKAY, so DF is clear.
-               Two unlike datagrams sharing an ID is what makes a downstream
-               reassembly join the wrong fragments.  */
-            packet_ptr -> nx_packet_identical_copy = NX_FALSE;
-        }
-
-
-#ifndef NX_DISABLE_TCP_INFO
-        /* Increment the TCP retransmit count.  */
-        ip_ptr -> nx_ip_tcp_retransmit_packets++;
-
-        /* Increment the TCP retransmit count for the socket.  */
-        socket_ptr -> nx_tcp_socket_retransmit_packets++;
-#endif
-
-#ifdef NX_ENABLE_VLAN
-        if (socket_ptr -> nx_tcp_socket_vlan_priority != NX_VLAN_PRIORITY_INVALID)
-        {
-            packet_ptr -> nx_packet_vlan_priority = socket_ptr -> nx_tcp_socket_vlan_priority;
-        }
-#endif /* NX_ENABLE_VLAN */
-            
-        /* If trace is enabled, insert this event into the trace buffer.  */
-        NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_RETRY, ip_ptr, socket_ptr, packet_ptr, socket_ptr -> nx_tcp_socket_timeout_retries, NX_TRACE_INTERNAL_EVENTS, 0, 0);
-
-        /* Clear the queue next pointer.  */
-        packet_ptr -> nx_packet_queue_next =  NX_NULL;
-
-        /* Yes, the driver has finished with the packet at the head of the
-           transmit sent list... so it can be sent again!  */
-
-#ifndef NX_DISABLE_IPV4
-        /* Is this an IPv4 connection? */
-        if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V4)
-        {
-            _nx_ip_packet_send(ip_ptr, packet_ptr,
-                               socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v4,
-                               socket_ptr -> nx_tcp_socket_type_of_service,
-                               socket_ptr -> nx_tcp_socket_time_to_live, NX_IP_TCP,
-                               socket_ptr -> nx_tcp_socket_fragment_enable,
-                               socket_ptr -> nx_tcp_socket_next_hop_address);
-        }
-#endif /* !NX_DISABLE_IPV4  */
-
-#ifdef FEATURE_NX_IPV6
-        if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6)
-        {
-
-            /* Handle for an IPv6 connection. */
-            /* Set the packet transmit interface before sending. */
-            packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = socket_ptr -> nx_tcp_socket_ipv6_addr;
-
-            _nx_ipv6_packet_send(ip_ptr, packet_ptr, NX_PROTOCOL_TCP,
-                                 packet_ptr -> nx_packet_length, ip_ptr -> nx_ipv6_hop_limit, 0,
-                                 socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address,
-                                 socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v6);
-        }
-#endif /* FEATURE_NX_IPV6 */
+        /* Rebuild this segment's header and send it. */
+        _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, packet_ptr);
 
         /* Move to next packet. */
         /* During fast recovery, only one packet is retransmitted at once. */
@@ -680,3 +736,94 @@ UINT       sack_index;
     }
 }
 
+
+#if defined(NX_ENABLE_TCP_LOSS_PROBE) && defined(NX_ENABLE_TCP_RTT_ESTIMATOR)
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_tail                      PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Eclipse ThreadX Contributors                                        */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function sends RFC 8985 section 7.3's tail loss probe: one      */
+/*    extra copy of the LAST unacknowledged segment.                       */
+/*                                                                        */
+/*    Section 7.3 asks for unsent data first and the last unacknowledged   */
+/*    segment otherwise.  There is no unsent data to ask for here: this    */
+/*    stack blocks the application in _nx_tcp_socket_send() rather than    */
+/*    queueing what the window will not carry, so everything on            */
+/*    nx_tcp_socket_transmit_sent_head has been sent once already and the  */
+/*    second clause is the only one that can apply.                        */
+/*                                                                        */
+/*    WHY NOT _nx_tcp_socket_retransmit().  That walks from the HEAD of    */
+/*    the queue, so on a flight of more than one segment it probed the     */
+/*    oldest -- the one three duplicate acknowledgments and the timeout    */
+/*    both already recover -- and left the tail, which is the only         */
+/*    segment neither of them can reach and the whole reason section 7.2   */
+/*    exists.  On a flight of one the two are the same packet, which is    */
+/*    why the request/response shape the probe was added for never showed  */
+/*    it.                                                                  */
+/*                                                                        */
+/*    It also decided things a probe has no business deciding.  Its RFC    */
+/*    6675 section 5.1 clause drops what the peer reported whenever this   */
+/*    is neither a fast retransmit nor recovery, which is exactly a        */
+/*    probe's precondition, so every probe emptied                         */
+/*    nx_tcp_socket_sack_block_count and the next fast retransmit had to   */
+/*    rebuild the block list from nothing.  The caller saved and restored  */
+/*    the congestion window, the slow start threshold, the retry count and */
+/*    the timeout, and could not save that.  Going straight to the packet  */
+/*    leaves all five alone by construction, and the caller's save and     */
+/*    restore is gone with it.                                             */
+/*                                                                        */
+/*    RFC 8985 section 7.3 permits the probe to exceed the congestion      */
+/*    window by this one segment, so no window is consulted.                */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                IP instance pointer           */
+/*    socket_ptr                            Pointer to owning socket      */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_packet      Rebuild and send one segment  */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_fast_periodic_processing      The probe timer               */
+/*                                                                        */
+/**************************************************************************/
+VOID  _nx_tcp_socket_retransmit_tail(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
+{
+NX_PACKET *packet_ptr;
+
+
+    packet_ptr = socket_ptr -> nx_tcp_socket_transmit_sent_tail;
+
+    /* Nothing queued, or the driver has not handed this one back yet.  A
+       packet still with the driver is going out on its own.  */
+    /*lint -e{923} suppress cast of ULONG to pointer.  */
+    if ((packet_ptr == NX_NULL) ||
+        (packet_ptr -> nx_packet_queue_next != (NX_PACKET *)NX_DRIVER_TX_DONE))
+    {
+        return;
+    }
+
+    /* Karn's algorithm, RFC 6298 section 3.  A probe carries a sequence
+       number that has already been sent, so an acknowledgment covering it
+       does not say which copy it answers.  */
+    socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
+
+    _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, packet_ptr);
+}
+
+#endif /* NX_ENABLE_TCP_LOSS_PROBE && NX_ENABLE_TCP_RTT_ESTIMATOR */

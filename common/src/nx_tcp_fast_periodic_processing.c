@@ -49,8 +49,8 @@
 /*  DESCRIPTION                                                           */
 /*                                                                        */
 /*    This function sends RFC 8985 section 7.2's tail loss probe: one      */
-/*    extra transmission of what is outstanding, two round trips after     */
-/*    the last acknowledgment rather than at the retransmission timeout.   */
+/*    extra transmission of the LAST unacknowledged segment, two round     */
+/*    trips after it went out rather than at the retransmission timeout.   */
 /*                                                                        */
 /*    The last segment of anything is the one no later segment can produce */
 /*    a duplicate acknowledgment for, so fast retransmit -- even with RFC  */
@@ -61,10 +61,11 @@
 /*    HTTP request is the last one until the response arrives.             */
 /*                                                                        */
 /*    The probe is not a timeout and does not answer like one.  It leaves  */
-/*    the congestion window, the slow start threshold and the retry ladder */
-/*    where they were, so a peer that was merely slow to acknowledge costs */
-/*    one duplicate segment rather than a collapsed window, and the        */
-/*    timeout it stands in front of still expires on its own schedule.     */
+/*    the congestion window, the slow start threshold, the retry ladder    */
+/*    and the SACK blocks the peer reported where they were, so a peer     */
+/*    that was merely slow to acknowledge costs one duplicate segment      */
+/*    rather than a collapsed window, and the timeout it stands in front   */
+/*    of still expires on its own schedule.                                */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -77,7 +78,7 @@
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
-/*    _nx_tcp_socket_retransmit             Resend the queued segment     */
+/*    _nx_tcp_socket_retransmit_tail        Resend the LAST queued segment*/
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -89,10 +90,6 @@ static VOID  _nx_tcp_socket_loss_probe_check(NX_IP *ip_ptr, NX_TCP_SOCKET *socke
 
 ULONG probe_timeout;
 ULONG elapsed;
-ULONG saved_congestion;
-ULONG saved_threshold;
-ULONG saved_retries;
-ULONG saved_timeout;
 
 
     /* Something has to be outstanding to probe for, the connection has to be
@@ -148,21 +145,24 @@ ULONG saved_timeout;
 
     socket_ptr -> nx_tcp_socket_loss_probe_sequence = socket_ptr -> nx_tcp_socket_tx_sequence;
 
-    /* The retransmit path is the only thing that knows how to rebuild a queued
-       segment's header and checksum, so it does the sending, under the window
-       it sets for itself -- one segment.  What it changed on the way is put
-       back afterwards: none of it belongs to a probe.  */
-    saved_congestion = socket_ptr -> nx_tcp_socket_tx_window_congestion;
-    saved_threshold  = socket_ptr -> nx_tcp_socket_tx_slow_start_threshold;
-    saved_retries    = socket_ptr -> nx_tcp_socket_timeout_retries;
-    saved_timeout    = socket_ptr -> nx_tcp_socket_timeout;
-
-    _nx_tcp_socket_retransmit(ip_ptr, socket_ptr, NX_FALSE);
-
-    socket_ptr -> nx_tcp_socket_tx_window_congestion    = saved_congestion;
-    socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = saved_threshold;
-    socket_ptr -> nx_tcp_socket_timeout_retries         = saved_retries;
-    socket_ptr -> nx_tcp_socket_timeout                 = saved_timeout;
+    /*
+     * Section 7.3: the LAST unacknowledged segment, and nothing else touched.
+     *
+     * This used to go through _nx_tcp_socket_retransmit(), which walks from
+     * the head of the queue, and then put back the four fields that walk had
+     * changed on the way -- the congestion window, the slow start threshold,
+     * the retry count and the timeout.  It probed the wrong segment (the head
+     * is what duplicate acknowledgments and the timeout already recover; the
+     * tail is what neither can reach) and it could not put back the fifth
+     * thing that walk changed, nx_tcp_socket_sack_block_count, which its RFC
+     * 6675 section 5.1 clause cleared on exactly a probe's precondition.
+     * Every probe therefore threw away what the peer had reported and left
+     * the next fast retransmit to rebuild the block list from nothing.
+     *
+     * _nx_tcp_socket_retransmit_tail() rebuilds one header and sends one
+     * packet.  All five are left alone because none of them is on its path.
+     */
+    _nx_tcp_socket_retransmit_tail(ip_ptr, socket_ptr);
 }
 
 #endif /* NX_ENABLE_TCP_LOSS_PROBE && NX_ENABLE_TCP_RTT_ESTIMATOR */
