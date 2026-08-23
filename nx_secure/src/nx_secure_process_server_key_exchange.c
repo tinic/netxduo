@@ -783,6 +783,7 @@ UINT                                  i;
         			    hash_method,
         			    tls_handshake_hash -> nx_secure_tls_handshake_hash_scratch,
         			    tls_handshake_hash -> nx_secure_tls_handshake_hash_scratch_size,
+        			    hash_len,   /* RFC 8446 4.2.3: sLen is hLen on the wire. */
         			    _nx_secure_ske_pss_scratch, sizeof(_nx_secure_ske_pss_scratch));
 
 #ifdef NX_SECURE_KEY_CLEAR

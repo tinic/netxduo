@@ -662,6 +662,7 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
                 hash_method,
                 tls_session -> nx_secure_tls_handshake_hash.nx_secure_tls_handshake_hash_scratch,
                 tls_session -> nx_secure_tls_handshake_hash.nx_secure_tls_handshake_hash_scratch_size,
+                hash_len,   /* RFC 8446 4.2.3: TLS 1.3 fixes sLen at hLen. */
                 _nx_secure_pss_scratch, sizeof(_nx_secure_pss_scratch));
 
 #ifdef NX_SECURE_KEY_CLEAR

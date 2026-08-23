@@ -23,9 +23,11 @@
 #define NX_SECURE_SOURCE_CODE
 
 #include "nx_secure_x509.h"
+#include "nx_crypto_rsa.h"
 
 static UCHAR generated_hash[64];       /* We need to be able to hold the entire generated hash - SHA-512 = 64 bytes. */
 static UCHAR decrypted_signature[512]; /* This needs to hold the entire decrypted data - RSA 2048-bit key = 256 bytes. */
+static UCHAR pss_scratch[512];         /* PSS verify: db[emLen - hLen - 1] + h_prime[hLen] = emLen - 1, so 512 covers RSA-4096. */
 
 
 
@@ -85,6 +87,8 @@ const UCHAR            *signature_data;
 UINT                    signature_length;
 UINT                    compare_result;
 UINT                    hash_length;
+UINT                    signature_algorithm;
+UINT                    is_pss;
 const NX_CRYPTO_METHOD *hash_method;
 const NX_CRYPTO_METHOD *public_cipher_method;
 NX_SECURE_X509_CRYPTO  *crypto_methods;
@@ -120,8 +124,45 @@ const NX_CRYPTO_METHOD  *curve_method;
     signature_data = certificate -> nx_secure_x509_signature_data;
     signature_length = certificate -> nx_secure_x509_signature_data_length;
 
+    /*
+     * RSASSA-PSS and PKCS#1 v1.5 use the same RSA operation and the same
+     * digest; they differ only in how the recovered block is checked.  So a
+     * PSS certificate is looked up under the PKCS#1 row for its digest and the
+     * difference is carried in is_pss, rather than by adding three rows to
+     * every X.509 cipher table in the tree.
+     *
+     * That matters beyond tidiness: _nx_secure_tls_send_clienthello_extensions
+     * walks the same table to build signature_algorithms, so a row here is
+     * also a code point on the wire, and PSS rows carrying the same method
+     * pair as the PKCS#1 rows would have put each of rsa_pss_rsae_sha256/384/
+     * 512 into every ClientHello twice.
+     */
+    signature_algorithm = certificate -> nx_secure_x509_signature_algorithm;
+    is_pss              = NX_CRYPTO_FALSE;
+
+    switch (signature_algorithm)
+    {
+    case NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256:
+        signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_256;
+        is_pss = NX_CRYPTO_TRUE;
+        break;
+
+    case NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384:
+        signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_384;
+        is_pss = NX_CRYPTO_TRUE;
+        break;
+
+    case NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512:
+        signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_512;
+        is_pss = NX_CRYPTO_TRUE;
+        break;
+
+    default:
+        break;
+    }
+
     /* Find certificate crypto methods for this certificate. */
-    status = _nx_secure_x509_find_certificate_methods(certificate, (USHORT)certificate -> nx_secure_x509_signature_algorithm, &crypto_methods);
+    status = _nx_secure_x509_find_certificate_methods(certificate, (USHORT)signature_algorithm, &crypto_methods);
     if (status != NX_SECURE_X509_SUCCESS)
     {
         return(status);
@@ -264,6 +305,42 @@ const NX_CRYPTO_METHOD  *curve_method;
 
                 return(status);
             }
+        }
+
+        if (is_pss)
+        {
+            /*
+             * RFC 8017 9.1.2.  The RSA operation above recovered the encoded
+             * message; the salt length comes out of the certificate's own
+             * RSASSA-PSS-params, which is compared against the copy inside
+             * the signed body before it gets here.
+             *
+             * emBits is modBits - 1, and modBits is the issuer modulus in
+             * bits.  Every RSA modulus in use is a whole number of bytes, so
+             * the signature length stands in for it, the same way the TLS 1.3
+             * CertificateVerify path does it.
+             */
+            status = _nx_crypto_rsa_pss_verify(generated_hash, hash_length,
+                                               decrypted_signature,
+                                               (signature_length << 3) - 1u,
+                                               hash_method,
+                                               certificate -> nx_secure_x509_hash_metadata_area,
+                                               certificate -> nx_secure_x509_hash_metadata_size,
+                                               certificate -> nx_secure_x509_signature_salt_length,
+                                               pss_scratch, sizeof(pss_scratch));
+
+#ifdef NX_SECURE_KEY_CLEAR
+            NX_SECURE_MEMSET(generated_hash, 0, sizeof(generated_hash));
+            NX_SECURE_MEMSET(decrypted_signature, 0, sizeof(decrypted_signature));
+            NX_SECURE_MEMSET(pss_scratch, 0, sizeof(pss_scratch));
+#endif /* NX_SECURE_KEY_CLEAR  */
+
+            if (status == NX_CRYPTO_SUCCESS)
+            {
+                return(NX_SECURE_X509_SUCCESS);
+            }
+
+            return(NX_SECURE_X509_CERTIFICATE_SIG_CHECK_FAILED);
         }
 
         /* Decode the decrypted signature, which should be in PKCS#7 format. */

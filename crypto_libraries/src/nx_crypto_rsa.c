@@ -551,8 +551,13 @@ VOID  *handler = NX_CRYPTO_NULL;
 /*  DESCRIPTION                                                           */
 /*                                                                        */
 /*    Verifies an RSA-PSS signature encoding (RFC 8017 §9.1.2).          */
-/*    Used by TLS 1.3 CertificateVerify processing.                      */
-/*    Assumes salt length == hash length (required by RFC 8446 §4.2.3). */
+/*    Used by TLS 1.3 CertificateVerify processing and by X.509           */
+/*    certificate verification.                                          */
+/*                                                                        */
+/*    The salt length is a parameter and not an assumption.  TLS 1.3      */
+/*    requires it to equal the hash length (RFC 8446 §4.2.3), so the      */
+/*    handshake callers pass hash_length; an X.509 signature carries its  */
+/*    own saltLength in RSASSA-PSS-params and passes that.                */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -563,6 +568,7 @@ VOID  *handler = NX_CRYPTO_NULL;
 /*    hash_method         Same hash used to build the PSS encoding       */
 /*    hash_metadata       Scratch memory for hash operations             */
 /*    hash_metadata_size  Size of hash_metadata in bytes                 */
+/*    salt_length         sLen = byte length of the salt                 */
 /*    scratch             Work buffer; must be >= ceil(emBits/8) bytes   */
 /*    scratch_length      Size of scratch in bytes                       */
 /*                                                                        */
@@ -577,6 +583,7 @@ UINT _nx_crypto_rsa_pss_verify(const UCHAR *message_hash, UINT hash_length,
                                 const UCHAR *em, UINT em_bits,
                                 const NX_CRYPTO_METHOD *hash_method,
                                 VOID *hash_metadata, ULONG hash_metadata_size,
+                                UINT salt_length,
                                 UCHAR *scratch, UINT scratch_length)
 {
 UINT         em_len;
@@ -595,8 +602,7 @@ static const UCHAR _pss_zero8[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     /* emLen = ceil(emBits / 8). */
     em_len = (em_bits + 7u) >> 3;
 
-    /* TLS 1.3 mandates salt length == hash length (RFC 8446 §4.2.3). */
-    s_len = hash_length;
+    s_len = salt_length;
 
     if (em_len < (hash_length + s_len + 2u))
     {

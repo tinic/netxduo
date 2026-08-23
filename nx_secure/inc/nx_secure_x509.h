@@ -183,6 +183,7 @@ extern   "C" {
 #define NX_SECURE_X509_UNSUPPORTED_CRITICAL_EXTENSION             0x1AE /* A certificate marks an extension critical that this implementation does not act on (RFC 5280 4.2). */
 #define NX_SECURE_X509_NAME_CONSTRAINT_VIOLATION                  0x1AF /* The leaf carries a DNS name a CA above it excluded, or outside every subtree it permitted (RFC 5280 4.2.1.10). */
 #define NX_SECURE_X509_NAME_CONSTRAINT_UNSUPPORTED                0x1B0 /* A nameConstraints subtree names a form this implementation does not evaluate, or an end-entity certificate carries the extension at all. */
+#define NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS           0x1B1 /* An RSASSA-PSS AlgorithmIdentifier names a digest, a mask generation function or a trailer field this implementation does not accept (RFC 4055 3.1). */
 
 /* Defines for working with private key types. */
 #define NX_SECURE_X509_KEY_TYPE_USER_DEFINED_MASK                 (0xFFFF0000)
@@ -361,6 +362,19 @@ extern   "C" {
 #define NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_256                     60
 #define NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_384                     61
 #define NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_512                     62
+
+/* RSASSA-PSS (RFC 4055).  The bare OID carries no digest -- that is in the
+   parameters -- so the parser refines it into one of the three below and
+   nothing downstream ever sees the bare value.  The digest OIDs and MGF1 are
+   here because reading those parameters means recognising them. */
+#define NX_SECURE_TLS_X509_TYPE_RSA_PSS                           63
+#define NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256                   64
+#define NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384                   65
+#define NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512                   66
+#define NX_SECURE_TLS_X509_TYPE_HASH_SHA_256                      67
+#define NX_SECURE_TLS_X509_TYPE_HASH_SHA_384                      68
+#define NX_SECURE_TLS_X509_TYPE_HASH_SHA_512                      69
+#define NX_SECURE_TLS_X509_TYPE_MGF1                              70
 
 #define NX_SECURE_TLS_X509_EC_SECT163K1                           0x00060001
 #define NX_SECURE_TLS_X509_EC_SECT163R1                           0x00060002
@@ -721,6 +735,13 @@ typedef struct NX_SECURE_X509_CERT_STRUCT
 
     /* Signature Algorithm (For encrypting signature hash - RSA, DSS, etc). */
     UINT nx_secure_x509_signature_algorithm;
+
+    /* RSASSA-PSS salt length, in bytes, out of the signature parameters.
+       Meaningless for every other algorithm and left at zero there.  It is
+       read rather than assumed because a signature made with a salt of one
+       length does not verify against another: getting it wrong is a failure
+       to connect, not a weakened check. */
+    USHORT nx_secure_x509_signature_salt_length;
 
     /* Pointer to the signature data in the certificate used for verification. */
     const UCHAR *nx_secure_x509_signature_data;

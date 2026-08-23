@@ -120,6 +120,7 @@ UINT _nx_crypto_rsa_pss_verify(const UCHAR *message_hash, UINT hash_length,
                                 const UCHAR *em, UINT em_bits,
                                 const NX_CRYPTO_METHOD *hash_method,
                                 VOID *hash_metadata, ULONG hash_metadata_size,
+                                UINT salt_length,
                                 UCHAR *scratch, UINT scratch_length);
 
 #ifdef __cplusplus

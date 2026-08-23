@@ -50,7 +50,16 @@ static const UCHAR NX_SECURE_X509_OID_RSA_SHA256[]   = {0x2A, 0x86, 0x48, 0x86, 
 static const UCHAR NX_SECURE_X509_OID_RSA_SHA384[]   = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C};     /* ISO.USA.RSA.1.1.12 */
 static const UCHAR NX_SECURE_X509_OID_RSA_SHA512[]   = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D};     /* ISO.USA.RSA.1.1.13 */
 
-/* static const UCHAR NX_SECURE_X509_OID_NIST_SHA256[]  = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01};  */   /* 2.16.840.1.101.3.4.2.1 NIST algorithm SHA256. */
+/* RFC 4055.  id-RSASSA-PSS names the scheme only; the digest, the mask
+   generation function and the salt length are in the parameters beside it, so
+   reading a PSS certificate means recognising id-mgf1 and the NIST digest OIDs
+   as well.  Those three appear nowhere else in a certificate this stack
+   parses, and before this they came back as UNKNOWN. */
+static const UCHAR NX_SECURE_X509_OID_RSASSA_PSS[]   = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A};     /* ISO.USA.RSA.1.1.10 - id-RSASSA-PSS. */
+static const UCHAR NX_SECURE_X509_OID_MGF1[]         = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x08};     /* ISO.USA.RSA.1.1.8  - id-mgf1. */
+static const UCHAR NX_SECURE_X509_OID_NIST_SHA256[]  = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01};     /* 2.16.840.1.101.3.4.2.1 NIST algorithm SHA256. */
+static const UCHAR NX_SECURE_X509_OID_NIST_SHA384[]  = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02};     /* 2.16.840.1.101.3.4.2.2 NIST algorithm SHA384. */
+static const UCHAR NX_SECURE_X509_OID_NIST_SHA512[]  = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03};     /* 2.16.840.1.101.3.4.2.3 NIST algorithm SHA512. */
 
 /* RFC 3729 OIDs. */
 static const UCHAR NX_SECURE_X509_OID_DH[]           = {0x2A, 0x86, 0x48, 0xCE, 0x3E, 0x02, 0x01};   /* ISO.USA.10046.2.1 - ANSI X9.42 DH public number. */
@@ -161,6 +170,11 @@ NX_SECURE_X509_OID_MAP _nx_secure_x509_oid_map[] =
     {NX_SECURE_TLS_X509_TYPE_RSA_SHA_256,            NX_SECURE_X509_OID_RSA_SHA256,              sizeof(NX_SECURE_X509_OID_RSA_SHA256)},
     {NX_SECURE_TLS_X509_TYPE_RSA_SHA_384,            NX_SECURE_X509_OID_RSA_SHA384,              sizeof(NX_SECURE_X509_OID_RSA_SHA384)},
     {NX_SECURE_TLS_X509_TYPE_RSA_SHA_512,            NX_SECURE_X509_OID_RSA_SHA512,              sizeof(NX_SECURE_X509_OID_RSA_SHA512)},
+    {NX_SECURE_TLS_X509_TYPE_RSA_PSS,                NX_SECURE_X509_OID_RSASSA_PSS,              sizeof(NX_SECURE_X509_OID_RSASSA_PSS)},
+    {NX_SECURE_TLS_X509_TYPE_MGF1,                   NX_SECURE_X509_OID_MGF1,                    sizeof(NX_SECURE_X509_OID_MGF1)},
+    {NX_SECURE_TLS_X509_TYPE_HASH_SHA_256,           NX_SECURE_X509_OID_NIST_SHA256,             sizeof(NX_SECURE_X509_OID_NIST_SHA256)},
+    {NX_SECURE_TLS_X509_TYPE_HASH_SHA_384,           NX_SECURE_X509_OID_NIST_SHA384,             sizeof(NX_SECURE_X509_OID_NIST_SHA384)},
+    {NX_SECURE_TLS_X509_TYPE_HASH_SHA_512,           NX_SECURE_X509_OID_NIST_SHA512,             sizeof(NX_SECURE_X509_OID_NIST_SHA512)},
     {NX_SECURE_TLS_X509_TYPE_DH,                     NX_SECURE_X509_OID_DH,                      sizeof(NX_SECURE_X509_OID_DH)},
     {NX_SECURE_TLS_X509_TYPE_DSS_SHA_1,              NX_SECURE_X509_OID_DSS_SHA1,                sizeof(NX_SECURE_X509_OID_DSS_SHA1)},
     {NX_SECURE_TLS_X509_TYPE_COMMON_NAME,            NX_SECURE_X509_OID_COMMON_NAME,             sizeof(NX_SECURE_X509_OID_COMMON_NAME)},

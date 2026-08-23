@@ -33,6 +33,8 @@ static UINT _nx_secure_x509_parse_serial_num(const UCHAR *buffer, ULONG length,
 static UINT _nx_secure_x509_parse_signature_algorithm(const UCHAR *buffer, ULONG length,
                                                       UINT *bytes_processed,
                                                       NX_SECURE_X509_CERT *cert);
+static UINT _nx_secure_x509_parse_pss_parameters(const UCHAR *buffer, ULONG length,
+                                                 NX_SECURE_X509_CERT *cert);
 static UINT _nx_secure_x509_parse_issuer(const UCHAR *buffer, ULONG length, UINT *bytes_processed,
                                          NX_SECURE_X509_CERT *cert);
 static UINT _nx_secure_x509_parse_validity(const UCHAR *buffer, ULONG length,
@@ -107,6 +109,7 @@ const UCHAR *tlv_data;
 ULONG        header_length;
 UINT         status;
 UINT         signature_algorithm;
+USHORT       signature_salt;
 
     /* X509 Certificate structure:
      * ASN.1 sequence: Certificate
@@ -201,6 +204,7 @@ UINT         signature_algorithm;
      *  signer's rather than the sender's.
      */
     signature_algorithm = cert -> nx_secure_x509_signature_algorithm;
+    signature_salt      = cert -> nx_secure_x509_signature_salt_length;
 
     tlv_data = &tlv_data[bytes];
     length -= bytes;
@@ -211,7 +215,8 @@ UINT         signature_algorithm;
         return(status);
     }
 
-    if (cert -> nx_secure_x509_signature_algorithm != signature_algorithm)
+    if (cert -> nx_secure_x509_signature_algorithm != signature_algorithm ||
+        cert -> nx_secure_x509_signature_salt_length != signature_salt)
     {
         return(NX_SECURE_X509_SIGNATURE_ALGORITHM_MISMATCH);
     }
@@ -905,8 +910,30 @@ UCHAR        oid_found = NX_CRYPTO_FALSE;
             _nx_secure_x509_oid_parse(tlv_data, tlv_length, &oid);
 
             cert -> nx_secure_x509_signature_algorithm = oid;
+            cert -> nx_secure_x509_signature_salt_length = 0;
 
             oid_found = NX_CRYPTO_TRUE;
+        }
+        else if (tlv_type == NX_SECURE_ASN_TAG_SEQUENCE &&
+                 tlv_type_class == NX_SECURE_ASN_TAG_CLASS_UNIVERSAL &&
+                 oid_found == NX_CRYPTO_TRUE &&
+                 cert -> nx_secure_x509_signature_algorithm == NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+        {
+            /* id-RSASSA-PSS is the one signature OID whose parameters are not
+               NULL: the digest, the mask generation function and the salt
+               length live in a SEQUENCE beside it (RFC 4055 3.1).  Reading
+               them is what turns the bare OID into an algorithm anything
+               downstream can act on, and every branch below this call is a
+               refusal, so an unreadable parameter set fails the certificate
+               rather than silently picking a digest. */
+            status = _nx_secure_x509_parse_pss_parameters(tlv_data, tlv_length, cert);
+
+            if (status != NX_SECURE_X509_SUCCESS)
+            {
+                return(status);
+            }
+
+            break;
         }
         else if (tlv_type == NX_SECURE_ASN_TAG_NULL)
         {
@@ -921,6 +948,14 @@ UCHAR        oid_found = NX_CRYPTO_FALSE;
         tlv_data = &tlv_data[tlv_length];
     }
 
+    /* A bare id-RSASSA-PSS with no parameters means the RFC 4055 defaults,
+       which are SHA-1 throughout.  This stack does not accept a SHA-1
+       signature from any other table either. */
+    if (cert -> nx_secure_x509_signature_algorithm == NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+    {
+        return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+    }
+
     if (oid_found == NX_CRYPTO_TRUE)
     {
         return(NX_SECURE_X509_SUCCESS);
@@ -928,6 +963,317 @@ UCHAR        oid_found = NX_CRYPTO_FALSE;
 
     /* We were expecting a signature algorithm OID but didn't find one. */
     return(NX_SECURE_X509_MISSING_SIGNATURE_ALGORITHM);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_secure_x509_parse_algorithm_id                  PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Parses one AlgorithmIdentifier and returns the internal constant for */
+/*    its OID, plus a pointer to whatever parameters follow the OID inside */
+/*    the same SEQUENCE.  MGF1 nests one of these inside another, which is */
+/*    why the parameters come back rather than being skipped.             */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    buffer                                AlgorithmIdentifier to parse  */
+/*    length                                Bytes available at buffer     */
+/*    oid_value                             Return the OID constant       */
+/*    params                                Return parameters pointer     */
+/*    params_length                         Return parameters length      */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    status                                Completion status             */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_secure_x509_parse_pss_parameters  Parse RSASSA-PSS-params       */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_secure_x509_parse_algorithm_id(const UCHAR *buffer, ULONG length,
+                                               UINT *oid_value,
+                                               const UCHAR **params, ULONG *params_length)
+{
+USHORT       tlv_type;
+USHORT       tlv_type_class;
+ULONG        tlv_length;
+ULONG        sequence_length;
+const UCHAR *tlv_data;
+ULONG        header_length;
+UINT         status;
+
+    *oid_value     = NX_SECURE_TLS_X509_TYPE_UNKNOWN;
+    *params        = NX_CRYPTO_NULL;
+    *params_length = 0;
+
+    /* AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters ANY OPTIONAL } */
+    status = _nx_secure_x509_asn1_tlv_block_parse(buffer, &length, &tlv_type, &tlv_type_class,
+                                                  &tlv_length, &tlv_data, &header_length);
+
+    if (status != 0)
+    {
+        return(status);
+    }
+
+    if (tlv_type != NX_SECURE_ASN_TAG_SEQUENCE ||
+        tlv_type_class != NX_SECURE_ASN_TAG_CLASS_UNIVERSAL)
+    {
+        return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+    }
+
+    sequence_length = tlv_length;
+    length          = tlv_length;
+
+    status = _nx_secure_x509_asn1_tlv_block_parse(tlv_data, &length, &tlv_type, &tlv_type_class,
+                                                  &tlv_length, &tlv_data, &header_length);
+
+    if (status != 0)
+    {
+        return(status);
+    }
+
+    if (tlv_type != NX_SECURE_ASN_TAG_OID ||
+        tlv_type_class != NX_SECURE_ASN_TAG_CLASS_UNIVERSAL)
+    {
+        return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+    }
+
+    if ((header_length + tlv_length) > sequence_length)
+    {
+        return(NX_SECURE_X509_ASN1_LENGTH_TOO_LONG);
+    }
+
+    _nx_secure_x509_oid_parse(tlv_data, tlv_length, oid_value);
+
+    *params        = &tlv_data[tlv_length];
+    *params_length = sequence_length - header_length - tlv_length;
+
+    return(NX_SECURE_X509_SUCCESS);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_secure_x509_parse_pss_parameters                PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Parses RSASSA-PSS-params (RFC 4055 3.1) and refines the certificate's */
+/*    signature algorithm from the bare id-RSASSA-PSS into the RSA_PSS row  */
+/*    for the digest actually named, recording the salt length beside it.   */
+/*                                                                        */
+/*    Every one of the four fields is DEFAULTed, and every default is       */
+/*    SHA-1: an absent digest is SHA-1, an absent mask generation function  */
+/*    is MGF1-SHA-1.  This stack removed SHA-1 from the X.509 table on      */
+/*    purpose, so an omitted field is refused rather than defaulted.  The   */
+/*    salt length is the exception: its default of 20 is a length and not   */
+/*    an algorithm, and a signature made with it verifies or does not.      */
+/*                                                                        */
+/*    The mask generation digest must equal the message digest.  RFC 4055   */
+/*    permits them to differ; no certificate issued anywhere does, and the  */
+/*    verify path below takes one hash method, so a split pair is refused   */
+/*    rather than silently verified against the wrong one.                  */
+/*                                                                        */
+/*  INPUT                                                                  */
+/*                                                                        */
+/*    buffer                                RSASSA-PSS-params contents    */
+/*    length                                Bytes available at buffer     */
+/*    cert                                  The certificate               */
+/*                                                                        */
+/*  OUTPUT                                                                 */
+/*                                                                        */
+/*    status                                Completion status             */
+/*                                                                        */
+/*  CALLED BY                                                              */
+/*                                                                        */
+/*    _nx_secure_x509_parse_signature_algorithm                            */
+/*                                                                        */
+/**************************************************************************/
+static UINT _nx_secure_x509_parse_pss_parameters(const UCHAR *buffer, ULONG length,
+                                                 NX_SECURE_X509_CERT *cert)
+{
+USHORT       tlv_type;
+USHORT       tlv_type_class;
+USHORT       int_type;
+USHORT       int_class;
+ULONG        tlv_length;
+ULONG        int_length;
+ULONG        available;
+ULONG        remaining;
+ULONG        field_total;
+ULONG        header_length;
+ULONG        int_header;
+const UCHAR *tlv_data;
+const UCHAR *int_data;
+const UCHAR *params;
+ULONG        params_length;
+UINT         status;
+UINT         mgf_oid;
+UINT         hash_oid     = NX_SECURE_TLS_X509_TYPE_UNKNOWN;
+UINT         mgf_hash_oid = NX_SECURE_TLS_X509_TYPE_UNKNOWN;
+ULONG        salt_length  = 20; /* RFC 4055 3.1 DEFAULT saltLength. */
+ULONG        trailer      = 1;  /* RFC 4055 3.1 DEFAULT trailerFieldBC. */
+ULONG        value;
+ULONG        i;
+
+    remaining = length;
+
+    while (remaining > 0)
+    {
+        available = remaining;
+
+        status = _nx_secure_x509_asn1_tlv_block_parse(buffer, &available, &tlv_type, &tlv_type_class,
+                                                      &tlv_length, &tlv_data, &header_length);
+
+        if (status != 0)
+        {
+            return(status);
+        }
+
+        /* The bound the ASN.1 helper keeps is its own header, not the value it
+           just described, so the value has to be checked against what is left
+           here or a length field decides how far past the buffer to read. */
+        if ((header_length + tlv_length) > remaining)
+        {
+            return(NX_SECURE_X509_ASN1_LENGTH_TOO_LONG);
+        }
+
+        field_total = header_length + tlv_length;
+
+        /* Every field is [n] EXPLICIT, so anything else here is not this
+           structure. */
+        if (tlv_type_class != NX_SECURE_ASN_TAG_CLASS_CONTEXT)
+        {
+            return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+        }
+
+        switch (tlv_type)
+        {
+        case 0: /* hashAlgorithm */
+            status = _nx_secure_x509_parse_algorithm_id(tlv_data, tlv_length, &hash_oid,
+                                                        &params, &params_length);
+            break;
+
+        case 1: /* maskGenAlgorithm: MGF1, whose own parameter is the digest. */
+            status = _nx_secure_x509_parse_algorithm_id(tlv_data, tlv_length, &mgf_oid,
+                                                        &params, &params_length);
+
+            if (status == NX_SECURE_X509_SUCCESS)
+            {
+                if (mgf_oid != NX_SECURE_TLS_X509_TYPE_MGF1)
+                {
+                    return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+                }
+
+                status = _nx_secure_x509_parse_algorithm_id(params, params_length, &mgf_hash_oid,
+                                                            &params, &params_length);
+            }
+            break;
+
+        case 2: /* saltLength */
+        case 3: /* trailerField */
+            available = tlv_length;
+
+            status = _nx_secure_x509_asn1_tlv_block_parse(tlv_data, &available, &int_type,
+                                                          &int_class, &int_length,
+                                                          &int_data, &int_header);
+
+            if (status != 0)
+            {
+                return(status);
+            }
+
+            if (int_type != NX_SECURE_ASN_TAG_INTEGER ||
+                int_class != NX_SECURE_ASN_TAG_CLASS_UNIVERSAL ||
+                (int_header + int_length) > tlv_length)
+            {
+                return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+            }
+
+            /* A DER INTEGER is big-endian and may carry a leading zero; four
+               bytes is far more than either of these fields can need. */
+            if (int_length == 0 || int_length > 4)
+            {
+                return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+            }
+
+            value = 0;
+            for (i = 0; i < int_length; ++i)
+            {
+                value = (value << 8) | int_data[i];
+            }
+
+            if (tlv_type == 2)
+            {
+                salt_length = value;
+            }
+            else
+            {
+                trailer = value;
+            }
+            break;
+
+        default:
+            return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+        }
+
+        if (status != NX_SECURE_X509_SUCCESS)
+        {
+            return(status);
+        }
+
+        remaining -= field_total;
+        buffer     = &buffer[field_total];
+    }
+
+    if (trailer != 1)
+    {
+        return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+    }
+
+    /* An RSA-2048 signature leaves 256 bytes of encoded message, and the salt
+       has to fit inside it beside the hash.  The verify would refuse a larger
+       one anyway; refusing it here keeps the value inside the USHORT it is
+       stored in. */
+    if (salt_length > 512)
+    {
+        return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+    }
+
+    if (hash_oid != mgf_hash_oid)
+    {
+        return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+    }
+
+    switch (hash_oid)
+    {
+    case NX_SECURE_TLS_X509_TYPE_HASH_SHA_256:
+        cert -> nx_secure_x509_signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256;
+        break;
+
+    case NX_SECURE_TLS_X509_TYPE_HASH_SHA_384:
+        cert -> nx_secure_x509_signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384;
+        break;
+
+    case NX_SECURE_TLS_X509_TYPE_HASH_SHA_512:
+        cert -> nx_secure_x509_signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512;
+        break;
+
+    default:
+        return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+    }
+
+    cert -> nx_secure_x509_signature_salt_length = (USHORT)salt_length;
+
+    return(NX_SECURE_X509_SUCCESS);
 }
 
 
