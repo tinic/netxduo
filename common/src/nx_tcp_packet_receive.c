@@ -75,6 +75,8 @@ VOID  _nx_tcp_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 
 TX_INTERRUPT_SAVE_AREA
 
+TX_THREAD *current_thread;
+
 
     /* Add debug information. */
     NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
@@ -98,13 +100,33 @@ TX_INTERRUPT_SAVE_AREA
     }
 #endif
 
+    current_thread =  _tx_thread_current_ptr;
+
     /* Determine if this routine is being called from an ISR.  */
-    if ((TX_THREAD_GET_SYSTEM_STATE()) || (&(ip_ptr -> nx_ip_thread) != _tx_thread_current_ptr))
+    if ((TX_THREAD_GET_SYSTEM_STATE()) ||
+        (current_thread == NX_NULL) ||
+        ((&(ip_ptr -> nx_ip_thread) != current_thread) &&
+         (ip_ptr -> nx_ip_direct_receive_thread != current_thread)))
     {
 
         /* If system state is non-zero, we are in an ISR. If the current thread is not the IP thread,
            we need to prevent unnecessary recursion in loopback.  Just place the message at the
            end of the TCP message queue and wakeup the IP helper thread.  */
+
+        /* AMINETXDUO FORK.  nx_ip_direct_receive_thread is the third way in.
+           A driver receive thread that called _nx_ip_packet_receive_direct()
+           holds nx_ip_protection for the length of this packet, which is the
+           whole of what the identity test above was standing in for, so it
+           runs the state machine here rather than paying a context switch to
+           have the helper thread run it.  The loopback recursion the stock
+           comment guards against is unaffected: a socket send never names
+           itself in that field, so it still queues.
+
+           The current_thread NX_NULL test is not redundant.  The field is
+           NX_NULL whenever nobody is inside a direct receive, and a caller
+           that is not a ThreadX thread has a NX_NULL current pointer; without
+           the test those two compare equal and such a caller would process
+           TCP inline. */
 
         /* Disable interrupts.  */
         TX_DISABLE

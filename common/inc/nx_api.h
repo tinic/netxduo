@@ -3113,6 +3113,15 @@ typedef struct NX_IP_STRUCT
        reassembles IP messages, and helps handle TCP/IP packets.  */
     TX_THREAD   nx_ip_thread;
 
+    /* AmiNetXDuo fork.  The one other thread allowed to run the TCP state
+       machine in its own context instead of queueing the segment for the
+       helper thread above.  _nx_ip_packet_receive_direct() sets it to the
+       caller for the length of one packet, under nx_ip_protection, and
+       _nx_tcp_packet_receive() accepts that caller as if it were the helper
+       thread.  Zero at every other instant, and zero out of nx_ip_create()'s
+       memset, so a stock caller is unaffected.  */
+    TX_THREAD  *nx_ip_direct_receive_thread;
+
     /* Define the IP event flags that are used to stimulate the IP helper
        thread.  */
     TX_EVENT_FLAGS_GROUP

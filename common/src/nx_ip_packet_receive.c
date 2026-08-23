@@ -28,6 +28,92 @@
 #include "nx_api.h"
 #include "nx_ip.h"
 #include "nx_packet.h"
+#include "tx_thread.h"
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_ip_packet_receive_direct               AmiNetXDuo fork          */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Runs the whole of IP and TCP receive processing in the caller's own  */
+/*    context, rather than queueing the packet for the IP helper thread.   */
+/*    A driver whose receive thread can afford the work calls this instead */
+/*    of _nx_ip_packet_deferred_receive(), and saves a context switch and  */
+/*    a scheduler round trip per frame.                                    */
+/*                                                                        */
+/*    TWO THINGS MAKE IT SAFE, AND BOTH ARE DONE HERE.                     */
+/*                                                                        */
+/*    nx_ip_protection is what serialises IP and TCP state, and the helper */
+/*    thread holds it across every packet it processes                     */
+/*    (_nx_ip_thread_entry).  A caller that processes a packet itself has  */
+/*    to hold the same mutex over the same work, or it races the helper    */
+/*    thread and every application thread inside a socket call.  The       */
+/*    AmigaOS port's baton is not a substitute: an Exec Task that blocks   */
+/*    on a device IORequest releases the baton, so a thread can be halfway */
+/*    through a protected region while another thread runs.                */
+/*                                                                        */
+/*    _nx_tcp_packet_receive() then refuses to process TCP outside the     */
+/*    helper thread, which would put the segment back on a queue and undo  */
+/*    the point of the call.  nx_ip_direct_receive_thread names the caller */
+/*    for the length of one packet, and that test accepts it.              */
+/*                                                                        */
+/*    The field is written under the mutex and cleared before it is        */
+/*    dropped, so exactly one thread is ever named, and only while it is   */
+/*    inside this function.                                                */
+/*                                                                        */
+/*    A caller in interrupt context, or one that is not a thread at all,   */
+/*    gets the ordinary deferred queue: nothing here may run on an ISR.    */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                Pointer to IP control block   */
+/*    packet_ptr                            Pointer to received packet    */
+/*                                                                        */
+/*  OUTPUT                                                                 */
+/*                                                                        */
+/*    None                                                                 */
+/*                                                                        */
+/*  CALLS                                                                  */
+/*                                                                        */
+/*    _nx_ip_packet_receive                 Process the packet inline      */
+/*    _nx_ip_packet_deferred_receive        Queue it for the helper thread */
+/*    tx_mutex_get / tx_mutex_put           IP protection                  */
+/*                                                                        */
+/*  CALLED BY                                                              */
+/*                                                                        */
+/*    Application I/O Driver                                               */
+/*                                                                        */
+/**************************************************************************/
+VOID  _nx_ip_packet_receive_direct(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
+{
+
+TX_THREAD *current_thread;
+
+
+    current_thread =  _tx_thread_current_ptr;
+
+    /* An ISR, or a caller that is not a ThreadX thread, cannot take a mutex
+       and must not run the state machine.  Queue it as a stock driver would. */
+    if ((TX_THREAD_GET_SYSTEM_STATE()) || (current_thread == TX_NULL))
+    {
+        _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
+        return;
+    }
+
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+    ip_ptr -> nx_ip_direct_receive_thread =  current_thread;
+
+    _nx_ip_packet_receive(ip_ptr, packet_ptr);
+
+    ip_ptr -> nx_ip_direct_receive_thread =  NX_NULL;
+
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+}
 
 
 /**************************************************************************/
