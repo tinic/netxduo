@@ -322,6 +322,7 @@ ULONG          packet_data_length;
 ULONG          search_begin_sequence;
 ULONG          search_end_sequence;
 ULONG          original_rx_sequence;
+ULONG          original_data_length;
 ULONG          trim_data_length;
 TX_THREAD     *thread_ptr;
 ULONG          acked_packets = 0;
@@ -360,6 +361,12 @@ NX_IP         *ip_ptr;
 
     /* Calculate the data length in the packet.  */
     packet_data_length = packet_ptr -> nx_packet_length - header_length;
+
+    /* Kept from before the window trims below, which shrink both the packet
+       and packet_data_length in place: whether this segment carried payload
+       when it arrived is what tells a fully-trimmed window probe apart from
+       a bare acknowledgment.  */
+    original_data_length = packet_data_length;
 
     /* Pickup the end sequence of this packet. The end sequence is one byte to the last byte in this packet. */
     packet_end_sequence =  tcp_header_ptr -> nx_tcp_sequence_number + packet_data_length;
@@ -438,11 +445,30 @@ NX_IP         *ip_ptr;
     {
         /* This packet does not contain TCP data payload.  */
 
-        /* Check for invalid sequence number.  */
+        /* A segment that ARRIVED with payload and left the trims with none is
+           a window probe: every byte it carried lay beyond the advertised
+           window, which is where a sender parked on a closed window puts the
+           one byte its persist timer sends (RFC 1122 4.2.2.17).  It advances
+           nothing, so without an answer here nothing else answers it -- the
+           duplicate-information gate at the end of this function only lets an
+           acknowledgment out when the sequence or the window moved -- and a
+           probe unanswered is a persist timer backing off: measured on the
+           A1200 as 0.77-0.79 Mbit/s seconds, the sender sitting out
+           doubling probe intervals while the application had already made
+           room.  The response repeats the sequence and the current window,
+           which is exactly what the RFC asks a probe to be told.  */
         if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) &&
-            (socket_ptr -> nx_tcp_socket_receive_queue_count == 0) &&
-            (socket_ptr -> nx_tcp_socket_rx_sequence != tcp_header_ptr -> nx_tcp_sequence_number) &&
-            ((socket_ptr -> nx_tcp_socket_rx_sequence - 1) != tcp_header_ptr -> nx_tcp_sequence_number))
+            (original_data_length > 0))
+        {
+
+            /* Answer the probe with the current window.  */
+            _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+        }
+        /* Check for invalid sequence number.  */
+        else if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) &&
+                 (socket_ptr -> nx_tcp_socket_receive_queue_count == 0) &&
+                 (socket_ptr -> nx_tcp_socket_rx_sequence != tcp_header_ptr -> nx_tcp_sequence_number) &&
+                 ((socket_ptr -> nx_tcp_socket_rx_sequence - 1) != tcp_header_ptr -> nx_tcp_sequence_number))
         {
 
             /* Send an immediate ACK.  */
