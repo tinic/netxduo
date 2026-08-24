@@ -263,12 +263,33 @@ ULONG          retry_shift;
            read at all left rx_window_last_sent behind rx_window_current, and
            this timer then announced the difference however small, which is the
            silly-window advertisement the floor exists to suppress.  The
-           unacknowledged-data arm has no floor and must not have one.  */
+           unacknowledged-data arm has no floor and must not have one.
+
+           The runt-window escape rides here, and ONLY here.  A sub-MSS
+           advertisement parks the sender: it sends one runt (under the
+           acknowledgment threshold's two-segment floor, so only the delayed
+           ACK answers it) and then probes a window nothing regrows -- the
+           RCV.BUFF/2 step is half a buffer away, and packets handed to a
+           thread parked in a blocking recv() reopen the window in
+           nx_tcp_socket_state_data_check.c without ever passing the receive
+           path's announcement check.  Measured on the A1200: the sender in
+           persist backoff for 300-800 ms while the application had long
+           since made room.  The escape announces once two full segments fit.
+
+           It was tried on the receive path too -- announce at each dequeue
+           that crosses 2*MSS -- and that is a stable degraded attractor:
+           the sender consumes each two-segment announcement immediately,
+           the window never accumulates past the floor, and transfers lock
+           flat at 1.05 against 1.31 Mbit/s.  From this timer the escape
+           fires at most once per period, the drain accumulates unannounced
+           in between, and what gets announced is a real window.  */
         if ((socket_ptr -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED) &&
             ((socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
              ((socket_ptr -> nx_tcp_socket_rx_window_current > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
-              ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
-               _nx_tcp_socket_window_update_step(socket_ptr)))))
+              (((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
+                _nx_tcp_socket_window_update_step(socket_ptr)) ||
+               ((socket_ptr -> nx_tcp_socket_rx_window_last_sent < (ULONG)socket_ptr -> nx_tcp_socket_connect_mss) &&
+                (socket_ptr -> nx_tcp_socket_rx_window_current >= ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1)))))))
         {
 
             /* Determine if the ACK has expired.  */

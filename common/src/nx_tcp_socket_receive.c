@@ -220,7 +220,20 @@ ULONG                  trace_timestamp;
            like a reopening of four gigabytes: on a receiver whose peer fills
            the buffer faster than the application drains it that is most reads,
            and it was worth half of this stack's acknowledgment traffic.  RFC
-           1122 4.2.3.3 is written about the window growing.  */
+           1122 4.2.3.3 is written about the window growing.
+
+           The runt-window escape does NOT ride here, and that is measured,
+           not an oversight.  A sub-MSS advertisement parks the sender (one
+           runt, then persist), and announcing "two segments fit" from this
+           read path the moment two segments fit looked like the obvious
+           release -- but on the A1200 it is a stable degraded attractor:
+           the sender consumes each two-segment announcement immediately, the
+           window never accumulates past the floor, and whole transfers lock
+           flat at 2*MSS per service cycle, 1.05 against 1.31 Mbit/s, run
+           after run.  The escape lives in the delayed-ACK arm of
+           nx_tcp_fast_periodic_processing.c instead: firing at most once per
+           timer period lets the application's drain accumulate unannounced,
+           so what the timer announces is a real window, not the floor.  */
         if ((socket_ptr -> nx_tcp_socket_rx_window_current > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
             ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= window_step) &&
             ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_2)))
