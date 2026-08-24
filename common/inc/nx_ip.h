@@ -168,6 +168,9 @@ VOID _nx_ip_packet_deferred_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 /* AmiNetXDuo fork: process the packet in the caller's context, under
    nx_ip_protection, instead of queueing it for the IP helper thread. */
 VOID _nx_ip_packet_receive_direct(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
+/* As above, but consume a nx_packet_queue_next-linked burst under one mutex
+   acquisition.  The links are cleared before each packet is processed. */
+VOID _nx_ip_packet_receive_batch_direct(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 UINT _nx_ip_status_check(NX_IP *ip_ptr, ULONG needed_status, ULONG *actual_status, ULONG wait_option);
 UINT _nx_ip_link_status_change_notify_set(NX_IP *ip_ptr,  VOID (*link_status_change_notify)(NX_IP *ip_ptr, UINT interface_index, UINT link_up));
 VOID _nx_ip_thread_entry(ULONG ip_ptr_value);
@@ -268,4 +271,3 @@ IP_DECLARE  ULONG _nx_ip_created_count;
 
 
 #endif
-

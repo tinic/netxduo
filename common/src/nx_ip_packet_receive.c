@@ -136,6 +136,78 @@ UINT       status;
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
+/*    _nx_ip_packet_receive_batch_direct         AmiNetXDuo fork          */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Process a queue_next-linked burst in the caller's context while      */
+/*    holding nx_ip_protection once for the whole burst.  Receive drivers  */
+/*    commonly drain several completed requests at once.  Taking and       */
+/*    dropping the mutex around each packet adds scheduler bookkeeping     */
+/*    without creating a useful interleaving point.                         */
+/*                                                                        */
+/*    The input links are private transport for this call.  Each is saved  */
+/*    and cleared before _nx_ip_packet_receive(), because the protocol      */
+/*    queues use nx_packet_queue_next themselves.                           */
+/*                                                                        */
+/**************************************************************************/
+VOID  _nx_ip_packet_receive_batch_direct(NX_IP *ip_ptr,
+                                         NX_PACKET *packet_ptr)
+{
+
+TX_THREAD *current_thread;
+TX_THREAD *previous_direct_thread;
+NX_PACKET *next_packet;
+UINT       status;
+
+
+    current_thread =  _tx_thread_current_ptr;
+
+    if ((TX_THREAD_GET_SYSTEM_STATE()) || (current_thread == TX_NULL))
+    {
+        while (packet_ptr != NX_NULL)
+        {
+            next_packet =  packet_ptr -> nx_packet_queue_next;
+            packet_ptr -> nx_packet_queue_next =  NX_NULL;
+            _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
+            packet_ptr =  next_packet;
+        }
+        return;
+    }
+
+    status =  tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+    if (status != TX_SUCCESS)
+    {
+        while (packet_ptr != NX_NULL)
+        {
+            next_packet =  packet_ptr -> nx_packet_queue_next;
+            packet_ptr -> nx_packet_queue_next =  NX_NULL;
+            _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
+            packet_ptr =  next_packet;
+        }
+        return;
+    }
+
+    previous_direct_thread =  ip_ptr -> nx_ip_direct_receive_thread;
+    ip_ptr -> nx_ip_direct_receive_thread =  current_thread;
+
+    while (packet_ptr != NX_NULL)
+    {
+        next_packet =  packet_ptr -> nx_packet_queue_next;
+        packet_ptr -> nx_packet_queue_next =  NX_NULL;
+        _nx_ip_packet_receive(ip_ptr, packet_ptr);
+        packet_ptr =  next_packet;
+    }
+
+    ip_ptr -> nx_ip_direct_receive_thread =  previous_direct_thread;
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
 /*    _nx_ip_packet_receive                               PORTABLE C      */
 /*                                                           6.4.3        */
 /*  AUTHOR                                                                */

@@ -3115,8 +3115,8 @@ typedef struct NX_IP_STRUCT
 
     /* AmiNetXDuo fork.  The one other thread allowed to run the TCP state
        machine in its own context instead of queueing the segment for the
-       helper thread above.  _nx_ip_packet_receive_direct() sets it to the
-       caller for the length of one packet, under nx_ip_protection, and
+       helper thread above.  The direct receive entry points set it to the
+       caller for one packet or one drained burst, under nx_ip_protection, and
        _nx_tcp_packet_receive() accepts that caller as if it were the helper
        thread.  Zero at every other instant, and zero out of nx_ip_create()'s
        memset, so a stock caller is unaffected.  */
@@ -4560,4 +4560,3 @@ UINT _nx_utility_base64_decode(UCHAR *base64name, UINT base64name_size, UCHAR *n
 #endif
 
 #endif
-
