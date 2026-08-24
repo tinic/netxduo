@@ -92,6 +92,8 @@ VOID  _nx_ip_packet_receive_direct(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
 
 TX_THREAD *current_thread;
+TX_THREAD *previous_direct_thread;
+UINT       status;
 
 
     current_thread =  _tx_thread_current_ptr;
@@ -104,13 +106,27 @@ TX_THREAD *current_thread;
         return;
     }
 
-    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+    status =  tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
 
+    /* A valid application/driver thread gets the mutex.  Preserve the stock
+       deferred behavior if a port rejects the caller instead of processing
+       without the protection this entry point promises. */
+    if (status != TX_SUCCESS)
+    {
+        _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
+        return;
+    }
+
+    /* Preserve the marker across a recursive direct receive.  The mutex is
+       recursive, and a protocol callback or loopback path can re-enter this
+       function on the same thread.  Clearing it unconditionally would make
+       the remainder of the outer receive stop being direct. */
+    previous_direct_thread =  ip_ptr -> nx_ip_direct_receive_thread;
     ip_ptr -> nx_ip_direct_receive_thread =  current_thread;
 
     _nx_ip_packet_receive(ip_ptr, packet_ptr);
 
-    ip_ptr -> nx_ip_direct_receive_thread =  NX_NULL;
+    ip_ptr -> nx_ip_direct_receive_thread =  previous_direct_thread;
 
     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 }
@@ -271,4 +287,3 @@ UCHAR version_byte;
 
     return;
 }
-
