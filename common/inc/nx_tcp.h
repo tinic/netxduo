@@ -325,6 +325,15 @@
 #define NX_TCP_MSS_MINIMUM              128
 #endif
 
+/* RFC 1122 4.2.3.3: below min(MSS, RCV.BUFF/2) the window goes on the wire as
+   zero.  RCV.BUFF/2 is what stops a buffer smaller than a segment closing for
+   ever; connect_mss is zero until the handshake, which disables the rule.  */
+#define NX_TCP_SWS_FLOOR(s)                                             \
+    (((ULONG)((s) -> nx_tcp_socket_connect_mss) <                       \
+      (((s) -> nx_tcp_socket_rx_window_default) >> 1)) ?                \
+     (ULONG)((s) -> nx_tcp_socket_connect_mss) :                        \
+     (((s) -> nx_tcp_socket_rx_window_default) >> 1))
+
 
 /* Define Basic TCP packet header data type.  This will be used to
    build new TCP packets and to examine incoming packets into NetX.  */

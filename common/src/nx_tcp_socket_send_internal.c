@@ -1010,17 +1010,23 @@ UINT            compute_checksum = 1;
             header_ptr -> nx_tcp_header_word_0 =        (((ULONG)(socket_ptr -> nx_tcp_socket_port)) << NX_SHIFT_BY_16) | (ULONG)socket_ptr -> nx_tcp_socket_connect_port;
             header_ptr -> nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_rx_sequence;
 
-            /* Set window size. */
+            /* Set window size.  Clamped before the shift: the floor is in real
+               bytes and the scaled field is not. */
+            window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
+
+            if (window_size < NX_TCP_SWS_FLOOR(socket_ptr))
+            {
+                window_size = 0;
+            }
+
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
-            window_size = socket_ptr -> nx_tcp_socket_rx_window_current >> socket_ptr -> nx_tcp_rcv_win_scale_value;
+            window_size = window_size >> socket_ptr -> nx_tcp_rcv_win_scale_value;
 
             /* Make sure the window_size is less than 0xFFFF. */
             if (window_size > 0xFFFF)
             {
                 window_size = 0xFFFF;
             }
-#else
-            window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP

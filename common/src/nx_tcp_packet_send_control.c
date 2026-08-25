@@ -126,11 +126,17 @@ UINT           timestamp_size = 0;
         /* Set header size. */
         header_size = NX_TCP_HEADER_SIZE;
 
-        /* Set window size. */
-#ifdef NX_ENABLE_TCP_WINDOW_SCALING
-        window_size = socket_ptr -> nx_tcp_socket_rx_window_current >> socket_ptr -> nx_tcp_rcv_win_scale_value;
-#else
+        /* Set window size.  Clamped before the shift: the floor is in real
+           bytes and the scaled field is not. */
         window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
+
+        if (window_size < NX_TCP_SWS_FLOOR(socket_ptr))
+        {
+            window_size = 0;
+        }
+
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+        window_size = window_size >> socket_ptr -> nx_tcp_rcv_win_scale_value;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
     }
 
