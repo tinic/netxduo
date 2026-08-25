@@ -108,6 +108,18 @@ ULONG         tcpip_offload;
                     NX_INTERFACE_CAPABILITY_TCPIP_OFFLOAD;
 #endif /* NX_ENABLE_TCPIP_OFFLOAD */
 
+#ifdef AMINETXDUO_RXPROBE
+    /* The host's receive step budget: a segment reaching its socket is the
+       boundary between its demux and state sub-legs.  One argumentless call,
+       no strings, compiled only when the embedding build defines the probe;
+       the host provides the function and does all the accounting.  */
+    {
+    extern VOID ami_budget_socket_enter(VOID);
+
+        ami_budget_socket_enter();
+    }
+#endif /* AMINETXDUO_RXPROBE */
+
     /* Add debug information. */
     NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
 
