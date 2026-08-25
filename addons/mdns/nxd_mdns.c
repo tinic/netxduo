@@ -7571,6 +7571,25 @@ UINT             interface_index;
 
                 /* Release the packet. */
                 nx_packet_release(packet_ptr);
+
+                /* Give the machine back between packets.  Processing one
+                   packet against a populated peer cache is name compares
+                   over the whole cache, milliseconds on a slow CPU, and a
+                   multicast burst queues several packets at once; draining
+                   the queue in one mutex-held pass makes this thread's turn
+                   as long as the queue.  Measured on a 14 MHz 68020 with a
+                   32 KB peer cache: 100-500 ms in clusters at multiples of
+                   the per-packet cost, and no TCP acknowledgment leaves the
+                   machine for the duration.  So drop the mutex and offer
+                   the processor once per packet: the IP thread and the
+                   driver run first when they have work -- they outrank this
+                   thread everywhere it ships -- and the drain resumes where
+                   it left off.  The receive itself re-reads the socket
+                   queue, so packets that arrive during the yield are still
+                   caught by this pass.  */
+                tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+                tx_thread_relinquish();
+                tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
             }
         }
 
