@@ -70,6 +70,7 @@ static VOID         _nx_mdns_timer_entry(ULONG mdns_value);
 static VOID         _nx_mdns_timer_set(NX_MDNS *mdns_ptr, NX_MDNS_RR  *record_rr, ULONG timer_count);
 static VOID         _nx_mdns_timer_event_process(NX_MDNS *mdns_ptr);
 static VOID         _nx_mdns_thread_entry(ULONG mdns_value);
+static VOID         _nx_mdns_yield(NX_MDNS *mdns_ptr);
 static UINT         _nx_mdns_packet_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UINT interface_index);
 static UINT         _nx_mdns_packet_create(NX_MDNS *mdns_ptr, NX_PACKET **packet_ptr, UCHAR type);
 static VOID         _nx_mdns_packet_send(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UINT interface_index);
@@ -7572,24 +7573,13 @@ UINT             interface_index;
                 /* Release the packet. */
                 nx_packet_release(packet_ptr);
 
-                /* Give the machine back between packets.  Processing one
-                   packet against a populated peer cache is name compares
-                   over the whole cache, milliseconds on a slow CPU, and a
-                   multicast burst queues several packets at once; draining
-                   the queue in one mutex-held pass makes this thread's turn
-                   as long as the queue.  Measured on a 14 MHz 68020 with a
-                   32 KB peer cache: 100-500 ms in clusters at multiples of
-                   the per-packet cost, and no TCP acknowledgment leaves the
-                   machine for the duration.  So drop the mutex and offer
-                   the processor once per packet: the IP thread and the
-                   driver run first when they have work -- they outrank this
-                   thread everywhere it ships -- and the drain resumes where
-                   it left off.  The receive itself re-reads the socket
-                   queue, so packets that arrive during the yield are still
-                   caught by this pass.  */
-                tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
-                tx_thread_relinquish();
-                tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
+                /* Give the machine back between packets: a multicast burst
+                   queues several, and draining the queue in one mutex-held
+                   pass makes this thread's turn as long as the queue.  The
+                   receive above re-reads the socket queue, so packets that
+                   arrive during the yield are still caught by this pass.
+                   See _nx_mdns_yield.  */
+                _nx_mdns_yield(mdns_ptr);
             }
         }
 
@@ -7663,10 +7653,69 @@ UINT             interface_index;
 }
 
 
-/**************************************************************************/ 
-/*                                                                        */ 
-/*  FUNCTION                                               RELEASE        */ 
-/*                                                                        */ 
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_mdns_yield                                      PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Offers the processor to any higher-priority thread that has work,   */
+/*    from a safe point inside the helper thread's processing.            */
+/*                                                                        */
+/*    Everything the helper thread does per resource record is a walk of  */
+/*    a cache -- name compares against every record it holds -- and on a  */
+/*    slow CPU with populated caches that is milliseconds per record,     */
+/*    tens of milliseconds per packet, and a LAN chatter burst delivers   */
+/*    packets in trains.  Measured on a 14 MHz 68020 with a 32 KB peer    */
+/*    cache: 100-500 ms mutex-held passes, during which the IP thread     */
+/*    never ran and no TCP acknowledgment left the machine.               */
+/*                                                                        */
+/*    The mutex is dropped across the relinquish so no one inherits a     */
+/*    wait on it, and every caller re-derives its cache pointers from     */
+/*    the record it is on, never across a yield.  When nothing of equal   */
+/*    or higher priority is ready the relinquish returns immediately and  */
+/*    the pass continues undisturbed.                                     */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    mdns_ptr                              Pointer to mDNS instance      */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    tx_mutex_get                          Get the mDNS mutex            */
+/*    tx_mutex_put                          Put the mDNS mutex            */
+/*    tx_thread_relinquish                  Offer the processor           */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_mdns_thread_entry                 Between received packets      */
+/*    _nx_mdns_packet_process               Between resource records      */
+/*                                                                        */
+/**************************************************************************/
+static VOID _nx_mdns_yield(NX_MDNS *mdns_ptr)
+{
+
+    /* Release the mDNS mutex.  */
+    tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
+
+    /* Let any ready thread of equal or higher priority run.  */
+    tx_thread_relinquish();
+
+    /* Get the mDNS mutex.  */
+    tx_mutex_get(&(mdns_ptr -> nx_mdns_mutex), TX_WAIT_FOREVER);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
 /*    _nx_mdns_packet_process                             PORTABLE C      */ 
 /*                                                           6.1.11       */
 /*  AUTHOR                                                                */
@@ -7786,6 +7835,15 @@ NX_MDNS_RR         *nsec_rr;
     /* Process all the Question Section.  */
     for (index = 0; index < question_count; index++)
     {
+
+        /* A record's processing is cache walks; between records, let
+           threads with real-time work run.  Nothing below carries cache
+           pointers from one record to the next, and data_ptr addresses
+           this thread's own packet, which no one else touches.  */
+        if (index != 0)
+        {
+            _nx_mdns_yield(mdns_ptr);
+        }
 
         /* Check for data_ptr.  */
         if (data_ptr >= packet_ptr -> nx_packet_append_ptr)
@@ -7996,6 +8054,16 @@ NX_MDNS_RR         *nsec_rr;
     /* Process all the Known-Answer records.  */
     for (index = 0; index < answer_count; index++)
     {
+
+        /* Same as the question loop: yield between records, on every path
+           through the body -- which is why it sits at the top rather than
+           beside the data_ptr update, since several paths continue past
+           that.  A response adding a record set to a populated peer cache
+           is the single most expensive thing this thread does.  */
+        if (index != 0)
+        {
+            _nx_mdns_yield(mdns_ptr);
+        }
 
         /* Check for data_ptr.  */
         if (data_ptr >= packet_ptr -> nx_packet_append_ptr)
