@@ -43,11 +43,11 @@ static NX_SECURE_TLS_SESSION   server_tls_session;
 
 static NX_SECURE_X509_CERT certificate;
 static NX_SECURE_X509_CERT server_certificate;
-static NX_SECURE_X509_CERT ica_certificate;
 static NX_SECURE_X509_CERT client_certificate;
 static NX_SECURE_X509_CERT remote_certificate, remote_issuer;
 static NX_SECURE_X509_CERT client_remote_certificate, client_remote_issuer;
 static NX_SECURE_X509_CERT trusted_certificate;
+static NX_SECURE_X509_CERT client_trusted_certificate;
 
 UCHAR remote_cert_buffer[2000];
 UCHAR remote_issuer_buffer[2000];
@@ -66,6 +66,7 @@ static UCHAR client_recv_buffer[LARGE_SEND_SIZE];
 
 /* Test PKI (3-level). */
 #include "test_ca_cert.c"
+#include "test_legacy_ca.c"
 #define ca_cert_der test_ca_cert_der
 #define ca_cert_der_len test_ca_cert_der_len
 
@@ -780,14 +781,11 @@ UINT i;
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Initialize our certificate
-    nx_secure_x509_certificate_initialize(&certificate, test_device_cert_der, test_device_cert_der_len, NX_NULL, 0, test_device_cert_key_der, test_device_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
+    nx_secure_x509_certificate_initialize(&certificate, test_server_cert_der, test_server_cert_der_len, NX_NULL, 0, test_server_cert_key_der, test_server_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
     nx_secure_tls_server_certificate_add(&server_tls_session, &certificate, 1);
 
-    nx_secure_x509_certificate_initialize(&server_certificate, test_server_cert_der, test_server_cert_der_len, NX_NULL, 0, test_server_cert_key_der, test_server_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
+    nx_secure_x509_certificate_initialize(&server_certificate, test_device_cert_der, test_device_cert_der_len, NX_NULL, 0, test_device_cert_key_der, test_device_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
     nx_secure_tls_server_certificate_add(&server_tls_session, &server_certificate, 2);
-
-    nx_secure_x509_certificate_initialize(&ica_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
-    nx_secure_tls_local_certificate_add(&server_tls_session, &ica_certificate);
 
     // If we are testing client certificate verify, allocate remote certificate space.
     nx_secure_tls_remote_certificate_allocate(&server_tls_session, &client_remote_certificate, client_remote_cert_buffer, sizeof(client_remote_cert_buffer));
@@ -974,8 +972,9 @@ NX_CRYPTO_METHOD *session_cipher_method;
     nx_secure_tls_local_certificate_add(&client_tls_session, &client_certificate);
 
     /* Add a CA Certificate to our trusted store for verifying incoming server certificates. */
-    nx_secure_x509_certificate_initialize(&trusted_certificate, ca_cert_der, ca_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
-    nx_secure_tls_trusted_certificate_add(&client_tls_session, &trusted_certificate);
+    nx_secure_x509_certificate_initialize(&client_trusted_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    test_legacy_certificate_mark_ca(&client_trusted_certificate);
+    nx_secure_tls_trusted_certificate_add(&client_tls_session, &client_trusted_certificate);
 
     /* Set up a DNS name for the Server Name Indication extension. The server thread will compare
      * to make sure the name was sent and recieved appropriately. */
