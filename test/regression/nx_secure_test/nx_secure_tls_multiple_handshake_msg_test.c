@@ -488,6 +488,19 @@ static VOID    ntest_0_entry(ULONG thread_input);
 static VOID    ntest_1_entry(ULONG thread_input);
 extern VOID    _nx_ram_network_driver_1500(struct NX_IP_DRIVER_STRUCT *driver_req);
 
+/* This test exercises record coalescing and certificate-buffer allocation.
+   Its prerecorded legacy chain is deliberately not a trust-policy fixture. */
+static UINT test_certificate_verify(NX_SECURE_X509_CERTIFICATE_STORE *store,
+                                    NX_SECURE_X509_CERT *certificate,
+                                    ULONG current_time)
+{
+    NX_PARAMETER_NOT_USED(store);
+    NX_PARAMETER_NOT_USED(certificate);
+    NX_PARAMETER_NOT_USED(current_time);
+
+    return(NX_SUCCESS);
+}
+
 
 /* Define what the initial system looks like.  */
 
@@ -536,7 +549,6 @@ CHAR    *pointer;
     {
         ERROR_COUNTER();
     }
-
     /* Create an IP instance.  */
     status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL,
                           &pool_0, _nx_ram_network_driver_1500,
@@ -575,6 +587,7 @@ UINT status;
     {
         ERROR_COUNTER();
     }
+    tls_session_ptr -> nx_secure_remote_certificate_verify = test_certificate_verify;
 
 #if 0
     status = nx_secure_tls_remote_certificate_buffer_allocate(tls_session_ptr, 3,
