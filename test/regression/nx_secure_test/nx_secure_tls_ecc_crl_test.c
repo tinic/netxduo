@@ -14,6 +14,7 @@
 #include   "nx_api.h"
 #include   "nx_secure_tls_api.h"
 #include   "ecc_certs.c"
+#include   "test_legacy_ca.c"
 #include   "nx_crypto_ecdh.h"
 
 extern VOID    test_control_return(UINT status);
@@ -42,9 +43,9 @@ static NX_TCP_SOCKET            client_socket_0;
 static NX_TCP_SOCKET            server_socket_0;
 static NX_SECURE_TLS_SESSION    tls_client_session_0;
 static NX_SECURE_TLS_SESSION    tls_server_session_0;
-static NX_SECURE_X509_CERT      client_trusted_ca;
+static NX_SECURE_X509_CERT      client_trusted_ca[2];
 static NX_SECURE_X509_CERT      client_remote_cert[2];
-static NX_SECURE_X509_CERT      server_local_certificate[2];
+static NX_SECURE_X509_CERT      server_local_certificate;
 
 static ULONG                    pool_0_memory[PACKET_POOL_SIZE / sizeof(ULONG)];
 static ULONG                    thread_0_stack[THREAD_STACK_SIZE / sizeof(ULONG)];
@@ -184,7 +185,7 @@ UINT status;
         ERROR_COUNTER();
     }
 
-    status = nx_secure_x509_certificate_initialize(&client_trusted_ca, ECCA4_der, ECCA4_der_len,
+    status = nx_secure_x509_certificate_initialize(&client_trusted_ca[0], ECCA4_der, ECCA4_der_len,
                                                    NX_NULL, 0, NULL, 0,
                                                    NX_SECURE_X509_KEY_TYPE_NONE);
     if (status)
@@ -192,8 +193,30 @@ UINT status;
         ERROR_COUNTER();
     }
 
+    test_legacy_certificate_mark_ca(&client_trusted_ca[0]);
+
     status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
-                                                   &client_trusted_ca);
+                                                   &client_trusted_ca[0]);
+    if (status)
+    {
+        ERROR_COUNTER();
+    }
+
+    /* ECIntm carries CA:FALSE despite signing the leaf and CRL.  Keep the
+       root for CRL signature-chain validation, but trust the legacy
+       intermediate directly instead of transmitting it as a malformed CA. */
+    status = nx_secure_x509_certificate_initialize(&client_trusted_ca[1], ECIntm_der, ECIntm_der_len,
+                                                   NX_NULL, 0, NULL, 0,
+                                                   NX_SECURE_X509_KEY_TYPE_NONE);
+    if (status)
+    {
+        ERROR_COUNTER();
+    }
+
+    test_legacy_certificate_mark_ca(&client_trusted_ca[1]);
+
+    status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
+                                                   &client_trusted_ca[1]);
     if (status)
     {
         ERROR_COUNTER();
@@ -229,7 +252,7 @@ UINT status;
     }
 
     memset(&server_local_certificate, 0, sizeof(server_local_certificate));
-    status = nx_secure_x509_certificate_initialize(&server_local_certificate[0],
+    status = nx_secure_x509_certificate_initialize(&server_local_certificate,
                                                    ECRevoked2_der, ECRevoked2_der_len,
                                                    NX_NULL, 0, ECRevoked2_key_der,
                                                    ECRevoked2_key_der_len,
@@ -240,23 +263,7 @@ UINT status;
     }
 
     status = nx_secure_tls_local_certificate_add(tls_session_ptr,
-                                                 &server_local_certificate[0]);
-    if (status)
-    {
-        ERROR_COUNTER();
-    }
-
-    status = nx_secure_x509_certificate_initialize(&server_local_certificate[1],
-                                                   ECIntm_der, ECIntm_der_len,
-                                                   NX_NULL, 0, NULL, 0,
-                                                   NX_SECURE_X509_KEY_TYPE_NONE);
-    if (status)
-    {
-        ERROR_COUNTER();
-    }
-
-    status = nx_secure_tls_local_certificate_add(tls_session_ptr,
-                                                 &server_local_certificate[1]);
+                                                 &server_local_certificate);
     if (status)
     {
         ERROR_COUNTER();
