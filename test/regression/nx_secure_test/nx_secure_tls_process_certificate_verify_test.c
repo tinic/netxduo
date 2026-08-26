@@ -123,6 +123,35 @@ static UINT test_crypto_operation_success(UINT op,       /* Encrypt, Decrypt, Au
     return NX_CRYPTO_SUCCESS;
 }
 
+static UINT test_crypto_operation_rsa_signature_mismatch(UINT op,
+                                VOID *handler,
+                                struct NX_CRYPTO_METHOD_STRUCT *method,
+                                UCHAR *key,
+                                NX_CRYPTO_KEY_SIZE key_size_in_bits,
+                                UCHAR *input,
+                                ULONG input_length_in_byte,
+                                UCHAR *iv_ptr,
+                                UCHAR *output,
+                                ULONG output_length_in_byte,
+                                VOID *crypto_metadata,
+                                ULONG crypto_metadata_size,
+                                VOID *packet_ptr,
+                                VOID (*nx_crypto_hw_process_callback)(VOID *packet_ptr, UINT status))
+{
+    if(output && (output_length_in_byte >= input_length_in_byte) &&
+       (input_length_in_byte > (19 + 32 + 1)))
+    {
+        output[0] = 0;
+        output[1] = 1;
+        memset(&output[2], 0xff, input_length_in_byte - 2);
+        /* End the PKCS#1 v1.5 padding before the 19-byte SHA-256
+           DigestInfo prefix and 32-byte digest.  Leave that payload wrong so
+           the caller reaches and exercises its signature comparison. */
+        output[input_length_in_byte - 19 - 32 - 1] = 0;
+    }
+    return NX_CRYPTO_SUCCESS;
+}
+
 static UINT test_crypto_cleanup(VOID *crypto_metadata)
 {
     return NX_CRYPTO_NOT_SUCCESSFUL;
@@ -158,7 +187,7 @@ static void ntest_0_entry(ULONG thread_input)
 {
 UINT   status;
 NX_SECURE_TLS_SESSION tls_session;
-UCHAR buffer[256];
+UCHAR buffer[256 + 4]; /* RSA signature plus the TLS 1.2 algorithm and length fields. */
 NX_SECURE_X509_CERTIFICATE_STORE store;
 NX_SECURE_X509_CERT certificate;
 
@@ -230,10 +259,11 @@ NX_SECURE_X509_CERT certificate;
     status = _nx_secure_tls_process_certificate_verify(&tls_session, buffer, sizeof(buffer));
     EXPECT_EQ(NX_CRYPTO_NOT_SUCCESSFUL, status);
 
-    test_public_cipher_method.nx_crypto_operation = test_crypto_operation_success;
+    test_public_cipher_method.nx_crypto_operation = test_crypto_operation_rsa_signature_mismatch;
     test_public_cipher_method.nx_crypto_cleanup = NX_NULL;
     status = _nx_secure_tls_process_certificate_verify(&tls_session, buffer, sizeof(buffer));
     EXPECT_EQ(NX_SECURE_TLS_CERTIFICATE_VERIFY_FAILURE, status);
+    test_public_cipher_method.nx_crypto_operation = test_crypto_operation_success;
 
     status = nx_secure_x509_certificate_initialize(&certificate, ECTestServer9_192_der, sizeof(ECTestServer9_192_der), NX_NULL, 0, ECTestServer9_192_key_der, sizeof(ECTestServer9_192_key_der), NX_SECURE_X509_KEY_TYPE_EC_DER);
     EXPECT_EQ(NX_SUCCESS, status);
@@ -261,7 +291,7 @@ NX_SECURE_X509_CERT certificate;
     tls_session.nx_secure_tls_ecc.nx_secure_tls_ecc_supported_groups = fake_groups;
     tls_session.nx_secure_tls_ecc.nx_secure_tls_ecc_curves = &fake_ecc_curves[0];
 
-    status = _nx_secure_tls_process_certificate_verify(&tls_session, buffer, sizeof(buffer));
+    status = _nx_secure_tls_process_certificate_verify(&tls_session, buffer, sizeof(buffer) - 4);
     EXPECT_EQ(NX_SECURE_X509_ASN1_LENGTH_TOO_LONG, status);
 
     test_public_cipher_method.nx_crypto_operation = test_crypto_operation_fail;
