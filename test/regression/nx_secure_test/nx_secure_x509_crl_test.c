@@ -2992,7 +2992,7 @@ static BAD_CRL_TEST_DATA bad_crl_test_data[] =
     { bad_signature_oid_seq_tag ,sizeof(bad_signature_oid_seq_tag), &revoked_certificate, NX_SECURE_X509_PKCS7_PARSING_FAILED },
     { bad_signature_oid_tag ,sizeof(bad_signature_oid_tag), &revoked_certificate, NX_SECURE_X509_PKCS7_PARSING_FAILED },
     { bad_signature_octstr_tag ,sizeof(bad_signature_octstr_tag), &revoked_certificate, NX_SECURE_X509_PKCS7_PARSING_FAILED },
-    { bad_signature_hash_length ,sizeof(bad_signature_hash_length), &revoked_certificate, NX_SECURE_X509_WRONG_SIGNATURE_METHOD },
+    { bad_signature_hash_length ,sizeof(bad_signature_hash_length), &revoked_certificate, NX_SECURE_X509_PKCS7_PARSING_FAILED },
 
 };
 
