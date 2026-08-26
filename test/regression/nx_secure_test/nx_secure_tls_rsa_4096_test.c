@@ -61,6 +61,17 @@ static UCHAR                    request_buffer[BUFFER_SIZE];
 static UCHAR                    response_buffer[BUFFER_SIZE];
 static UCHAR                    tls_packet_buffer[2][4000];
 
+/* The legacy 4096-bit CA fixture predates X.509 basicConstraints.  Keep its
+   key and subject, which the leaf fixtures were signed against, but provide
+   the extension required of a trust anchor used as an issuer. */
+static const UCHAR ca_basic_constraints[] =
+{
+    0x30, 0x0c,                         /* Extension sequence. */
+    0x06, 0x03, 0x55, 0x1d, 0x13,       /* id-ce-basicConstraints. */
+    0x04, 0x05,                         /* Extension value. */
+    0x30, 0x03, 0x01, 0x01, 0xff        /* SEQUENCE { cA TRUE }. */
+};
+
 /*  Cryptographic routines. */
 extern const NX_SECURE_TLS_CRYPTO nx_crypto_tls_ciphers;
 
@@ -971,6 +982,8 @@ UINT status;
     {
         ERROR_COUNTER(status);
     }
+    client_trusted_ca.nx_secure_x509_extensions_data = ca_basic_constraints;
+    client_trusted_ca.nx_secure_x509_extensions_data_length = sizeof(ca_basic_constraints);
 
     status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
                                                    &client_trusted_ca);
@@ -1041,6 +1054,8 @@ UINT status;
     {
         ERROR_COUNTER(status);
     }
+    server_trusted_ca.nx_secure_x509_extensions_data = ca_basic_constraints;
+    server_trusted_ca.nx_secure_x509_extensions_data_length = sizeof(ca_basic_constraints);
 
     status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
                                                    &server_trusted_ca);
