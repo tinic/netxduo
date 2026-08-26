@@ -15,6 +15,7 @@
 #include   "nx_secure_tls_api.h"
 #include   "nx_crypto_ecdh.h"
 #include   "ecc_certs.c"
+#include   "test_legacy_ca.c"
 #include   "test_ca_cert.c"
 #include   "test_device_cert.c"
 
@@ -364,6 +365,9 @@ UINT status;
     {
         ERROR_COUNTER();
     }
+
+    /* Certificate policy is outside this ciphersuite-negotiation test. */
+    test_legacy_certificate_mark_ca(&client_trusted_ca);
 
     status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
                                                    &client_trusted_ca);
