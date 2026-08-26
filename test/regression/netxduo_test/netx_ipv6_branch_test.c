@@ -179,7 +179,7 @@ UINT        address_index;
     prefix_address[1] = 0x00000002;
     prefix_address[2] = 0x00000003;
     prefix_address[3] = 0x00000004;
-    _nx_ipv6_prefix_list_add_entry(&ip_0, prefix_address, 64, 100);
+    _nx_ipv6_prefix_list_add_entry(&ip_0, prefix_address, 64, 100, 1);
     _nx_ipv6_prefix_list_delete(&ip_0, prefix_address, 48);
     prefix_address[3] = 0x00000005;
     _nx_ipv6_prefix_list_delete(&ip_0, prefix_address, 64);
@@ -590,7 +590,7 @@ NX_IPV6_DESTINATION_ENTRY
         test_packet -> nx_packet_address.nx_packet_ipv6_address_ptr  = NX_NULL;
 
         /* Call function with NULL interface.  */
-        _nxd_ipv6_raw_packet_send_internal(&ip_0, test_packet, &destination_ip, 0, 0);
+        _nxd_ipv6_raw_packet_send_internal(&ip_0, test_packet, &destination_ip, 0, 0, 0);
     }
     else if (assert_count == 1)
     {

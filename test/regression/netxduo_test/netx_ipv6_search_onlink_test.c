@@ -138,9 +138,9 @@ NXD_ADDRESS temp_prefix;
     prefix_2.nxd_ip_address.v6[2] = 0x12000000;
     prefix_2.nxd_ip_address.v6[3] = 0;
 
-    status = _nx_ipv6_prefix_list_add_entry(&ip_0, &prefix_0.nxd_ip_address.v6[0], 64, 1800);
-    status += _nx_ipv6_prefix_list_add_entry(&ip_0, &prefix_1.nxd_ip_address.v6[0], 63, 1800);
-    status += _nx_ipv6_prefix_list_add_entry(&ip_0, &prefix_2.nxd_ip_address.v6[0], 72, 1800);
+    status = _nx_ipv6_prefix_list_add_entry(&ip_0, &prefix_0.nxd_ip_address.v6[0], 64, 1800, 1);
+    status += _nx_ipv6_prefix_list_add_entry(&ip_0, &prefix_1.nxd_ip_address.v6[0], 63, 1800, 1);
+    status += _nx_ipv6_prefix_list_add_entry(&ip_0, &prefix_2.nxd_ip_address.v6[0], 72, 1800, 1);
 
     if(status)
         error_counter++;        
@@ -430,7 +430,7 @@ NXD_ADDRESS temp_prefix;
     {
 
         /* Added the entry.  */
-        status = _nx_ipv6_prefix_list_add_entry(&ip_0, &temp_prefix.nxd_ip_address.v6[0], prefix_length, 1800);
+        status = _nx_ipv6_prefix_list_add_entry(&ip_0, &temp_prefix.nxd_ip_address.v6[0], prefix_length, 1800, 1);
 
         /* Check the status.  */
         if (status)
@@ -452,7 +452,7 @@ NXD_ADDRESS temp_prefix;
     }
 
     /* Added the entry.  */
-    status = _nx_ipv6_prefix_list_add_entry(&ip_0, &temp_prefix.nxd_ip_address.v6[0], prefix_length, 1800);
+    status = _nx_ipv6_prefix_list_add_entry(&ip_0, &temp_prefix.nxd_ip_address.v6[0], prefix_length, 1800, 1);
 
     /* Check the status.  */
     if (status != NX_OVERFLOW)
