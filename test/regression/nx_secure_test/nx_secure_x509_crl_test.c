@@ -3123,7 +3123,7 @@ NX_SECURE_X509_CERTIFICATE_STORE *store;
     EXPECT_EQ(NX_SUCCESS, status);
 
     status = nx_secure_x509_crl_revocation_check(TestIntm_crl, sizeof(TestIntm_crl), store, &revoked_certificate3);
-    EXPECT_EQ(NX_SECURE_X509_WRONG_SIGNATURE_METHOD, status);
+    EXPECT_EQ(NX_SECURE_X509_PKCS7_PARSING_FAILED, status);
 
 
     status = nx_secure_tls_local_certificate_remove(&tls_session, CN_TESTINTM, strlen(CN_TESTINTM));
