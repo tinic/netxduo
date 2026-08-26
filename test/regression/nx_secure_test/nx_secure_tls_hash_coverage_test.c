@@ -52,14 +52,21 @@ static UCHAR client_remote_issuer_buffer[2000];
 static UCHAR server_packet_buffer[4000];
 static UCHAR client_packet_buffer[4000];
 
+/* The bundled intermediate predates basicConstraints and is suitable as a
+   legacy trust anchor only when the test states that role explicitly. */
+static const UCHAR ca_basic_constraints[] =
+{
+    0x30, 0x0c,
+    0x06, 0x03, 0x55, 0x1d, 0x13,
+    0x04, 0x05,
+    0x30, 0x03, 0x01, 0x01, 0xff
+};
+
 static CHAR server_crypto_metadata[16000]; 
 static CHAR client_crypto_metadata[16000]; 
 
 /* Test PKI (3-level). */
-#include "test_ca_cert.c"
 #include "tls_two_test_certs.c"
-#define ca_cert_der test_ca_cert_der
-#define ca_cert_der_len test_ca_cert_der_len
 
 /*  Cryptographic routines. */
 extern NX_SECURE_TLS_CRYPTO nx_crypto_tls_ciphers;
@@ -208,7 +215,7 @@ ULONG      actual_status;
     nx_secure_tls_session_client_verify_enable(&server_tls_session);
 
     /* Initialize our certificate. */
-    nx_secure_x509_certificate_initialize(&certificate, test_device_cert_der, test_device_cert_der_len, NX_NULL, 0, test_device_cert_key_der, test_device_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
+    nx_secure_x509_certificate_initialize(&certificate, test_server_cert_der, test_server_cert_der_len, NX_NULL, 0, test_server_cert_key_der, test_server_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
     nx_secure_tls_local_certificate_add(&server_tls_session, &certificate);
 
     nx_secure_x509_certificate_initialize(&ica_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
@@ -219,7 +226,9 @@ ULONG      actual_status;
     nx_secure_tls_remote_certificate_allocate(&server_tls_session, &client_remote_issuer, client_remote_issuer_buffer, sizeof(client_remote_issuer_buffer));
 
     /* Add a CA Certificate to our trusted store for verifying incoming client certificates. */
-    nx_secure_x509_certificate_initialize(&trusted_certificate, ca_cert_der, ca_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    nx_secure_x509_certificate_initialize(&trusted_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    trusted_certificate.nx_secure_x509_extensions_data = ca_basic_constraints;
+    trusted_certificate.nx_secure_x509_extensions_data_length = sizeof(ca_basic_constraints);
     nx_secure_tls_trusted_certificate_add(&server_tls_session, &trusted_certificate);
 
     /* Setup this thread to listen.  */
@@ -338,11 +347,13 @@ UINT       hash_length = 0;
         /* Need to allocate space for the certificate coming in from the remote host. */
         nx_secure_tls_remote_certificate_allocate(&client_tls_session, &remote_certificate, remote_cert_buffer, sizeof(remote_cert_buffer));
         nx_secure_tls_remote_certificate_allocate(&client_tls_session, &remote_issuer, remote_issuer_buffer, sizeof(remote_issuer_buffer));
-        nx_secure_x509_certificate_initialize(&client_certificate, test_device_cert_der, test_device_cert_der_len, NX_NULL, 0, test_device_cert_key_der, test_device_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
+        nx_secure_x509_certificate_initialize(&client_certificate, test_server_cert_der, test_server_cert_der_len, NX_NULL, 0, test_server_cert_key_der, test_server_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
         nx_secure_tls_local_certificate_add(&client_tls_session, &client_certificate);
 
         /* Add a CA Certificate to our trusted store for verifying incoming server certificates. */
-        nx_secure_x509_certificate_initialize(&trusted_certificate, ca_cert_der, ca_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+        nx_secure_x509_certificate_initialize(&trusted_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+        trusted_certificate.nx_secure_x509_extensions_data = ca_basic_constraints;
+        trusted_certificate.nx_secure_x509_extensions_data_length = sizeof(ca_basic_constraints);
         nx_secure_tls_trusted_certificate_add(&client_tls_session, &trusted_certificate);
 
         status = nx_tcp_client_socket_connect(&client_socket, IP_ADDRESS(1, 2, 3, 4), 12, 5 * NX_IP_PERIODIC_RATE);
