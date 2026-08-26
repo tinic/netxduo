@@ -614,13 +614,13 @@ static const UCHAR domain_com_der[] = {
 
 static const UCHAR* domain_com_match_names[] =
 {
-    "domain.com",
     "www.domain.com",
     "aaa.domain.com",
 };
 
 static const UCHAR* domain_com_mismatch_names[] =
 {
+    "domain.com",
     "a.b.domain.com",
     "ab.example.com",
 };
