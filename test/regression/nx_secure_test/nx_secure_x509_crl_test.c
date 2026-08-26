@@ -16,6 +16,7 @@
 extern void    test_control_return(UINT status);
 #if !defined(NX_SECURE_X509_DISABLE_CRL) && !defined(NX_SECURE_DISABLE_X509)
 #include "tls_test_utility.h"
+#include "test_legacy_ca.c"
 
 #define CN_TESTCA "TestCA"
 #define CN_TESTINTM "TestIntm"
@@ -3094,6 +3095,7 @@ NX_SECURE_X509_CERTIFICATE_STORE *store;
 
     status = nx_secure_x509_certificate_initialize(&trusted_certificate2, (UCHAR*)TestCA2_der, sizeof(TestCA2_der), NX_NULL, 0, NX_NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
     EXPECT_EQ(NX_SUCCESS, status);
+    test_legacy_certificate_mark_ca(&trusted_certificate2);
 
     status = nx_secure_tls_trusted_certificate_add(&tls_session, &trusted_certificate2);
     EXPECT_EQ(NX_SUCCESS, status);
