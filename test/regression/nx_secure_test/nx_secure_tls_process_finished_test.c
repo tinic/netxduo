@@ -34,8 +34,9 @@ VOID    nx_secure_tls_process_finished_test_application_define(void *first_unuse
 #endif
 {
 UINT status;
-NX_SECURE_TLS_SESSION tls_session;
-UCHAR tls_session_metadata[METADATA_SIZE];
+/* Keep large fixtures off the hosted port's initialization stack. */
+static NX_SECURE_TLS_SESSION tls_session;
+static UCHAR tls_session_metadata[METADATA_SIZE];
 UCHAR packet_buffer[NX_SECURE_TLS_FINISHED_HASH_SIZE] = {0x14, 0xf4, 0xc9, 0x5a, 0xd9, 0x10, 0xc4, 0x22, 0x33, 0x20, 0xb8, 0x1};
 NX_SECURE_X509_CERTIFICATE_STORE store;
 NX_SECURE_X509_CERT certificate;

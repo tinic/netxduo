@@ -30,8 +30,9 @@ VOID    nx_secure_tls_process_changecipherspec_test_application_define(void *fir
 #endif
 {
 UINT status;
-NX_SECURE_TLS_SESSION tls_session;
-UCHAR tls_session_metadata[METADATA_SIZE];
+/* Keep large fixtures off the hosted port's initialization stack. */
+static NX_SECURE_TLS_SESSION tls_session;
+static UCHAR tls_session_metadata[METADATA_SIZE];
 UCHAR packet_buffer[1];
 
     /* Print out test information banner.  */

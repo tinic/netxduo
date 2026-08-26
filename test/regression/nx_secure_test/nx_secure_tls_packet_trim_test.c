@@ -70,10 +70,11 @@ VOID    nx_secure_tls_packet_trim_test_application_define(void *first_unused_mem
 #endif
 {
 UINT status;
-NX_SECURE_TLS_SESSION tls_session;
-UCHAR tls_session_metadata[METADATA_SIZE];
+/* Keep large fixtures off the hosted port's initialization stack. */
+static NX_SECURE_TLS_SESSION tls_session;
+static UCHAR tls_session_metadata[METADATA_SIZE];
 UCHAR header_buffer[5];
-UCHAR data_buffer[2000] = "hello";
+static UCHAR data_buffer[2000] = "hello";
 ULONG data_length;
 ULONG bytes_processed;
 NX_PACKET *packet;

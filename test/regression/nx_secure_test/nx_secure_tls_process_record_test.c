@@ -70,10 +70,11 @@ VOID    nx_secure_tls_process_record_test_application_define(void *first_unused_
 #endif
 {
 UINT status;
-NX_SECURE_TLS_SESSION tls_session;
-UCHAR tls_session_metadata[METADATA_SIZE];
+/* Keep large fixtures off the hosted port's initialization stack. */
+static NX_SECURE_TLS_SESSION tls_session;
+static UCHAR tls_session_metadata[METADATA_SIZE];
 UCHAR header_buffer[5];
-UCHAR data_buffer[NX_SECURE_TLS_MAX_CIPHERTEXT_LENGTH + 1] = "hello";
+static UCHAR data_buffer[NX_SECURE_TLS_MAX_CIPHERTEXT_LENGTH + 1] = "hello";
 ULONG data_length = NX_SECURE_TLS_MAX_CIPHERTEXT_LENGTH + 1;
 ULONG bytes_processed;
 NX_PACKET *packet;
