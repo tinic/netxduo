@@ -96,6 +96,20 @@ static void    ntest_0_entry(ULONG thread_input);
 static void    ntest_1_entry(ULONG thread_input);
 extern void    _nx_ram_network_driver_1500(struct NX_IP_DRIVER_STRUCT *driver_req);
 
+/* This test exercises Certificate-message parsing and certificate-buffer
+   allocation.  The synthetic chains below intentionally contain malformed
+   and legacy certificates, so chain policy is outside this test's scope. */
+static UINT test_certificate_verify(NX_SECURE_X509_CERTIFICATE_STORE *store,
+                                    NX_SECURE_X509_CERT *certificate,
+                                    ULONG current_time)
+{
+    NX_PARAMETER_NOT_USED(store);
+    NX_PARAMETER_NOT_USED(certificate);
+    NX_PARAMETER_NOT_USED(current_time);
+
+    return(NX_SUCCESS);
+}
+
 /* Define what the initial system looks like.  */
 #ifndef __LINUX__
 void tx_application_define(void *first_unused_memory)
@@ -397,6 +411,7 @@ NX_PACKET *send_packet = NX_NULL;
                                            client_crypto_metadata,
                                            sizeof(client_crypto_metadata));
     EXPECT_EQ(NX_SUCCESS, status);
+    client_tls_session.nx_secure_remote_certificate_verify = test_certificate_verify;
 
     /* Setup our packet reassembly buffer. */
     nx_secure_tls_session_packet_buffer_set(&client_tls_session, client_packet_buffer, sizeof(client_packet_buffer));
