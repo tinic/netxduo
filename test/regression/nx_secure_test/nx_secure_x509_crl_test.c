@@ -3130,7 +3130,14 @@ NX_SECURE_X509_CERTIFICATE_STORE *store;
     EXPECT_EQ(NX_SUCCESS, status);
 
     status = nx_secure_x509_certificate_initialize(&not_trusted_intm_certificate, (UCHAR*)TestIntm_wrong_signature_alg, sizeof(TestIntm_wrong_signature_alg), NX_NULL, 0, NX_NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    EXPECT_EQ(NX_SECURE_X509_INVALID_CERTIFICATE, status);
+
+    /* Certificate initialization now rejects an unknown signature OID.  Use a
+       valid certificate and corrupt the parsed identifier to retain coverage
+       of the verifier's unknown-algorithm return. */
+    status = nx_secure_x509_certificate_initialize(&not_trusted_intm_certificate, (UCHAR*)TestIntm_der, sizeof(TestIntm_der), NX_NULL, 0, NX_NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
     EXPECT_EQ(NX_SUCCESS, status);
+    not_trusted_intm_certificate.nx_secure_x509_signature_algorithm = 0xffff;
 
     status = nx_secure_tls_local_certificate_add(&tls_session, &not_trusted_intm_certificate);
     EXPECT_EQ(NX_SUCCESS, status);
