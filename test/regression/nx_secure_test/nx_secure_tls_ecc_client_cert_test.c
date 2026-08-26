@@ -13,6 +13,7 @@
 #include   "nx_api.h"
 #include   "nx_secure_tls_api.h"
 #include   "ecc_certs.c"
+#include   "test_legacy_ca.c"
 #include   "nx_crypto_ecdh.h"
 
 extern VOID    test_control_return(UINT status);
@@ -206,6 +207,8 @@ UINT status;
         ERROR_COUNTER(status);
     }
 
+    test_legacy_certificate_mark_ca(&client_trusted_ca);
+
     status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
                                                    &client_trusted_ca);
     if (status)
@@ -284,6 +287,8 @@ UINT status;
     {
         ERROR_COUNTER(status);
     }
+
+    test_legacy_certificate_mark_ca(&server_trusted_ca);
 
     status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
                                                    &server_trusted_ca);
