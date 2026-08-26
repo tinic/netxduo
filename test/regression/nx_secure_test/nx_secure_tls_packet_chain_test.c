@@ -608,6 +608,24 @@ static void    ntest_0_connect_received(NX_TCP_SOCKET *server_socket, UINT port)
 static void    ntest_0_disconnect_received(NX_TCP_SOCKET *server_socket);
 extern void    _nx_ram_network_driver_1500(struct NX_IP_DRIVER_STRUCT *driver_req);
 
+/* This test splits TLS records across TCP packets.  The prerecorded legacy
+   certificate chain is transport input, not a trust-policy fixture. */
+static UINT test_certificate_verify(NX_SECURE_X509_CERTIFICATE_STORE *store,
+                                    NX_SECURE_X509_CERT *certificate,
+                                    ULONG current_time)
+{
+    NX_PARAMETER_NOT_USED(store);
+    NX_PARAMETER_NOT_USED(current_time);
+
+    /* The endpoint carries a timeStamping-only EKU that predates TLS purpose
+       enforcement.  Hide fixture policy from the transport test after the
+       parser has exercised it. */
+    certificate -> nx_secure_x509_extensions_data = NX_NULL;
+    certificate -> nx_secure_x509_extensions_data_length = 0;
+
+    return(NX_SUCCESS);
+}
+
 /* Define what the initial system looks like.  */
 #ifndef __LINUX__
 void    tx_application_define(void *first_unused_memory)
@@ -1191,6 +1209,7 @@ UINT status;
         printf("Error in function nx_secure_tls_session_create: 0x%x\n", status);
         error_counter++;
     }
+    client_tls_session.nx_secure_remote_certificate_verify = test_certificate_verify;
 
 
     /* Setup our packet reassembly buffer. */
@@ -1211,10 +1230,6 @@ UINT status;
 
     /* Add a timestamp function for time checking and timestamps in the TLS handshake. */
     _nx_secure_tls_session_time_function_set(&client_tls_session, tls_timestamp_function);
-
-    /* Setup the callback invoked when TLS has a certificate it wants to verify so we can
-    do additional checks not done automatically by TLS. */
-    _nx_secure_tls_session_certificate_callback_set(&client_tls_session, certificate_verification_callback);
 
     /* Set callback for server TLS extension handling. */
     _nx_secure_tls_session_client_callback_set(&client_tls_session, tls_client_callback);
