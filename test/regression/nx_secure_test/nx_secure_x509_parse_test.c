@@ -6509,4 +6509,34 @@ NX_SECURE_X509_CERT certificate;
     }
 }
 
+TEST(NX_SECURE_X509, Extended_key_usage_endpoint_purpose_test)
+{
+static const UCHAR client_auth_extension[] =
+{
+    0x30, 0x13,                         /* Extension sequence. */
+    0x06, 0x03, 0x55, 0x1d, 0x25,       /* extendedKeyUsage. */
+    0x04, 0x0c, 0x30, 0x0a,
+    0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02
+};
+NX_SECURE_X509_CERTIFICATE_STORE store;
+NX_SECURE_X509_CERT              certificate;
+UINT                             status;
+
+    memset(&store, 0, sizeof(store));
+    memset(&certificate, 0, sizeof(certificate));
+    certificate.nx_secure_x509_extensions_data = client_auth_extension;
+    certificate.nx_secure_x509_extensions_data_length = sizeof(client_auth_extension);
+
+    /* A TLS server must accept clientAuth and a TLS client must not mistake
+       that same certificate for a serverAuth credential.  The all-zero
+       distinguished names make this a one-certificate chain for this focused
+       policy test; cryptographic chain verification is covered separately. */
+    status = _nx_secure_x509_extended_key_usage_chain_check(
+        &store, &certificate, NX_SECURE_TLS_X509_TYPE_PKIX_KP_CLIENT_AUTH);
+    EXPECT_EQ(NX_SECURE_X509_SUCCESS, status);
+
+    status = _nx_secure_x509_extended_key_usage_chain_check(
+        &store, &certificate, NX_SECURE_TLS_X509_TYPE_PKIX_KP_SERVER_AUTH);
+    EXPECT_EQ(NX_SECURE_X509_EXT_KEY_USAGE_NOT_FOUND, status);
+}
 

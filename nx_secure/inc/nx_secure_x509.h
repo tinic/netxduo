@@ -1027,8 +1027,10 @@ UINT _nx_secure_x509_extension_policy_check(NX_SECURE_X509_CERT *certificate,
 UINT _nx_secure_x509_critical_extensions_check(NX_SECURE_X509_CERT *certificate,
                                                UINT name_constraints_enforced);
 UINT _nx_secure_x509_name_constraints_check(NX_SECURE_X509_CERT *ca_certificate,
-                                            NX_SECURE_X509_CERT *leaf_certificate);
-UINT _nx_secure_x509_server_auth_check(NX_SECURE_X509_CERT *certificate);
+                                             NX_SECURE_X509_CERT *leaf_certificate);
+UINT _nx_secure_x509_extended_key_usage_chain_check(NX_SECURE_X509_CERTIFICATE_STORE *store,
+                                                     NX_SECURE_X509_CERT *certificate,
+                                                     USHORT required_key_usage);
 UINT _nx_secure_x509_key_usage_extension_parse(NX_SECURE_X509_CERT *certificate, USHORT *bitfield);
 UINT _nx_secure_x509_basic_constraints_extension_parse(NX_SECURE_X509_CERT *certificate,
                                                        UINT *is_ca, INT *path_length);
@@ -1101,4 +1103,3 @@ UINT nx_secure_x509_key_usage_extension_parse(NX_SECURE_X509_CERT *certificate, 
 #endif
 
 #endif /* SRC_NX_SECURE_X509_H_ */
-

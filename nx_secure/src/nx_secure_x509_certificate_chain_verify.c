@@ -101,10 +101,11 @@ INT                  issuer_path_length;
             return(NX_SECURE_X509_CHAIN_TOO_LONG);
         }
 
-        /* extendedKeyUsage, nameConstraints, and every extension the
-           certificate marked critical.  Before the expiry and signature work
-           because it is cheap and because a certificate that fails it is not
-           a certificate this code may use for anything.
+        /* nameConstraints and every extension the certificate marked
+           critical.  Before the expiry and signature work because it is cheap
+           and because a certificate that fails it is not a certificate this
+           code may use for anything.  ExtendedKeyUsage is purpose-specific;
+           the TLS layer checks it after this purpose-neutral chain walk.
 
            Every link the walk visits passes through here: the leaf on the
            first pass, each intermediate on a later one.  The trust anchor does
@@ -237,4 +238,3 @@ INT                  issuer_path_length;
     /* Certificate is invalid. */
     return(NX_SECURE_X509_CHAIN_VERIFY_FAILURE);
 }
-

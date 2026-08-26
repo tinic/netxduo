@@ -73,6 +73,7 @@ UINT                              status;
 NX_SECURE_X509_CERT              *remote_certificate;
 NX_SECURE_X509_CERTIFICATE_STORE *store;
 ULONG                             current_time;
+USHORT                            required_extended_key_usage;
 #ifndef NX_SECURE_X509_DISABLE_KEY_USAGE_CHECK
 USHORT                            key_usage_bitfield;
 USHORT                            required_key_usage;
@@ -118,6 +119,27 @@ USHORT                            required_key_usage;
     status = tls_session -> nx_secure_remote_certificate_verify(store, remote_certificate, current_time);
 
     if (status != NX_SUCCESS)
+    {
+        return(status);
+    }
+
+    /* Chain verification is shared with non-TLS users and cannot assume an
+       endpoint purpose.  A TLS client authenticates a server; a TLS server
+       authenticates a client.  Apply that purpose to the leaf and every
+       intermediate only after the cryptographic chain has succeeded. */
+    if (tls_session -> nx_secure_tls_socket_type == NX_SECURE_TLS_SESSION_TYPE_CLIENT)
+    {
+        required_extended_key_usage = NX_SECURE_TLS_X509_TYPE_PKIX_KP_SERVER_AUTH;
+    }
+    else
+    {
+        required_extended_key_usage = NX_SECURE_TLS_X509_TYPE_PKIX_KP_CLIENT_AUTH;
+    }
+
+    status = _nx_secure_x509_extended_key_usage_chain_check(store,
+                                                             remote_certificate,
+                                                             required_extended_key_usage);
+    if (status != NX_SECURE_X509_SUCCESS)
     {
         return(status);
     }
