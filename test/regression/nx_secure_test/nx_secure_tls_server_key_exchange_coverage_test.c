@@ -56,6 +56,16 @@ static UCHAR client_remote_issuer_buffer[2000];
 static UCHAR server_packet_buffer[4000];
 static UCHAR client_packet_buffer[4000];
 
+/* ECCA2 and ECCA4 are legacy trust-anchor fixtures without
+   basicConstraints.  State their CA role explicitly in this test. */
+static const UCHAR ca_basic_constraints[] =
+{
+    0x30, 0x0c,
+    0x06, 0x03, 0x55, 0x1d, 0x13,
+    0x04, 0x05,
+    0x30, 0x03, 0x01, 0x01, 0xff
+};
+
 static CHAR server_crypto_metadata[16000]; 
 static CHAR client_crypto_metadata[16000]; 
 
@@ -458,6 +468,8 @@ UINT       test_cert_size = 0;
 
     /* Add a CA Certificate to our trusted store for verifying incoming client certificates. */
     nx_secure_x509_certificate_initialize(&trusted_certificate, ECCA4_der, ECCA4_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    trusted_certificate.nx_secure_x509_extensions_data = ca_basic_constraints;
+    trusted_certificate.nx_secure_x509_extensions_data_length = sizeof(ca_basic_constraints);
     nx_secure_tls_trusted_certificate_add(&server_tls_session, &trusted_certificate);
 
     /* Initialize server session manually. */
@@ -679,6 +691,8 @@ NX_CRYPTO_METHOD test_hash;
         if (i < RSA_TEST_START)
         {
             nx_secure_x509_certificate_initialize(&trusted_certificate, ECCA2_der, ECCA2_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+            trusted_certificate.nx_secure_x509_extensions_data = ca_basic_constraints;
+            trusted_certificate.nx_secure_x509_extensions_data_length = sizeof(ca_basic_constraints);
             nx_secure_tls_trusted_certificate_add(&client_tls_session, &trusted_certificate);
         }
         else
