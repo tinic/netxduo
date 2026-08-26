@@ -466,12 +466,13 @@ UINT                     permitted_matched = NX_CRYPTO_FALSE;
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
-/*    _nx_secure_x509_server_auth_check                   PORTABLE C      */
+/*    _nx_secure_x509_extended_key_usage_check            PORTABLE C      */
 /*                                                                        */
 /*  DESCRIPTION                                                           */
 /*                                                                        */
-/*    An extendedKeyUsage that does not permit server authentication is a  */
-/*    statement by the issuer that this key is not for TLS servers.  RFC   */
+/*    An extendedKeyUsage that does not permit the requested authentication*/
+/*    purpose is a statement by the issuer that this key is not for that   */
+/*    TLS endpoint role.  RFC                                              */
 /*    5280 4.2.1.12: the extension absent means unconstrained, present     */
 /*    means the list is exhaustive, and anyExtendedKeyUsage re-opens it.   */
 /*                                                                        */
@@ -481,12 +482,13 @@ UINT                     permitted_matched = NX_CRYPTO_FALSE;
 /*    sub-CA cannot mint a web server certificate.                         */
 /*                                                                        */
 /**************************************************************************/
-UINT _nx_secure_x509_server_auth_check(NX_SECURE_X509_CERT *certificate)
+static UINT _nx_secure_x509_extended_key_usage_check(NX_SECURE_X509_CERT *certificate,
+                                                      USHORT required_key_usage)
 {
 UINT status;
 
     status = _nx_secure_x509_extended_key_usage_extension_parse(certificate,
-                                                                NX_SECURE_TLS_X509_TYPE_PKIX_KP_SERVER_AUTH);
+                                                                required_key_usage);
 
     if (status == NX_SECURE_X509_SUCCESS)
     {
@@ -516,6 +518,91 @@ UINT status;
     }
 
     return(NX_SECURE_X509_EXT_KEY_USAGE_NOT_FOUND);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_secure_x509_extended_key_usage_chain_check      PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Enforce one TLS authentication purpose on the leaf and every         */
+/*    intermediate certificate in its verified chain.  Certificate-chain  */
+/*    verification itself is purpose-neutral: it is also used for CRLs and */
+/*    may be supplied as an application callback, so it cannot assume that */
+/*    every chain belongs to a TLS server.                                 */
+/*                                                                        */
+/*    The TLS session calls this after the cryptographic chain verification*/
+/*    has succeeded.  This walk deliberately follows the same store lookup */
+/*    rules and, like the verifier, does not apply certificate extensions  */
+/*    from the trust anchor itself.                                        */
+/*                                                                        */
+/**************************************************************************/
+UINT _nx_secure_x509_extended_key_usage_chain_check(NX_SECURE_X509_CERTIFICATE_STORE *store,
+                                                     NX_SECURE_X509_CERT *certificate,
+                                                     USHORT required_key_usage)
+{
+NX_SECURE_X509_CERT *current_certificate;
+NX_SECURE_X509_CERT *issuer_certificate;
+UINT                 issuer_location;
+UINT                 status;
+UINT                 depth;
+INT                  compare_result;
+
+    current_certificate = certificate;
+    depth = 0;
+
+    while (current_certificate != NX_CRYPTO_NULL)
+    {
+        if (depth > NX_SECURE_X509_MAX_VERIFY_DEPTH)
+        {
+            return(NX_SECURE_X509_CHAIN_TOO_LONG);
+        }
+
+        status = _nx_secure_x509_extended_key_usage_check(current_certificate,
+                                                           required_key_usage);
+        if (status != NX_SECURE_X509_SUCCESS)
+        {
+            return(status);
+        }
+
+        compare_result = _nx_secure_x509_distinguished_name_compare(
+            &current_certificate -> nx_secure_x509_distinguished_name,
+            &current_certificate -> nx_secure_x509_issuer,
+            NX_SECURE_X509_NAME_ALL_FIELDS);
+
+        if (compare_result == 0)
+        {
+            /* A successful chain verification can reach this case only when
+               self-signed certificates are enabled and the certificate is a
+               configured trust anchor.  Its endpoint EKU was checked above. */
+            return(NX_SECURE_X509_SUCCESS);
+        }
+
+        issuer_location = NX_SECURE_X509_CERT_LOCATION_NONE;
+        status = _nx_secure_x509_store_certificate_find(store,
+                                                         &current_certificate -> nx_secure_x509_issuer,
+                                                         0,
+                                                         &issuer_certificate,
+                                                         &issuer_location);
+        if (status != NX_SECURE_X509_SUCCESS)
+        {
+            return(NX_SECURE_X509_ISSUER_CERTIFICATE_NOT_FOUND);
+        }
+
+        if (issuer_location == NX_SECURE_X509_CERT_LOCATION_TRUSTED)
+        {
+            return(NX_SECURE_X509_SUCCESS);
+        }
+
+        current_certificate = issuer_certificate;
+        depth++;
+    }
+
+    return(NX_SECURE_X509_CHAIN_VERIFY_FAILURE);
 }
 
 
@@ -661,8 +748,8 @@ UINT         known;
 /*                                                                        */
 /*  DESCRIPTION                                                           */
 /*                                                                        */
-/*    The three checks in the order they have to run: extendedKeyUsage,    */
-/*    then nameConstraints, then the critical sweep, because the sweep     */
+/*    The two purpose-neutral checks in the order they have to run:         */
+/*    nameConstraints, then the critical sweep, because the sweep           */
 /*    needs to know whether the constraints were enforced.                 */
 /*                                                                        */
 /*    depth is the chain walk's own depth, 0 for the leaf.  A leaf is not  */
@@ -677,13 +764,6 @@ UINT _nx_secure_x509_extension_policy_check(NX_SECURE_X509_CERT *certificate,
 {
 UINT status;
 UINT name_constraints_enforced = NX_CRYPTO_FALSE;
-
-    status = _nx_secure_x509_server_auth_check(certificate);
-
-    if (status != NX_SECURE_X509_SUCCESS)
-    {
-        return(status);
-    }
 
     status = _nx_secure_x509_name_constraints_check(certificate, leaf_certificate);
 
