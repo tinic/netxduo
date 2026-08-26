@@ -59,6 +59,16 @@ static UCHAR                    request_buffer[BUFFER_SIZE];
 static UCHAR                    response_buffer[BUFFER_SIZE];
 static UCHAR                    tls_packet_buffer[2][4000];
 
+/* ECCA2, ECCA3, and ECCA4 are legacy trust-anchor fixtures without
+   basicConstraints.  State their CA role explicitly in this test. */
+static const UCHAR ca_basic_constraints[] =
+{
+    0x30, 0x0c,
+    0x06, 0x03, 0x55, 0x1d, 0x13,
+    0x04, 0x05,
+    0x30, 0x03, 0x01, 0x01, 0xff
+};
+
 extern const                    USHORT nx_crypto_ecc_supported_groups[];
 extern const                    NX_CRYPTO_METHOD *nx_crypto_ecc_curves[];
 extern const                    UINT nx_crypto_ecc_supported_groups_size;
@@ -216,6 +226,8 @@ UINT i;
     /* Add multiple CAs.  */
     for (i = 0; i < 3; i++)
     {
+        client_trusted_ca[i].nx_secure_x509_extensions_data = ca_basic_constraints;
+        client_trusted_ca[i].nx_secure_x509_extensions_data_length = sizeof(ca_basic_constraints);
         status = nx_secure_tls_trusted_certificate_add(tls_session_ptr,
                                                        &client_trusted_ca[i]);
         if (status)
