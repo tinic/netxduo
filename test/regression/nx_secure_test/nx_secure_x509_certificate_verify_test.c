@@ -20,6 +20,7 @@
 
 #include "device.cert.c"
 #include "ica.cert.c"
+#include "test_legacy_ca.c"
 
 extern void    test_control_return(UINT status);
 
@@ -187,6 +188,7 @@ NX_SECURE_X509_CERTIFICATE_STORE store;
     EXPECT_EQ(NX_SUCCESS, status);
     status = nx_secure_x509_certificate_initialize(&certificate_2, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NX_NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
     EXPECT_EQ(NX_SUCCESS, status);
+    test_legacy_certificate_mark_ca(&certificate_2);
     status = nx_secure_tls_local_certificate_add(&tls_session, &certificate);
     EXPECT_EQ(NX_SUCCESS, status);
     status = nx_secure_tls_local_certificate_add(&tls_session, &certificate_1);
