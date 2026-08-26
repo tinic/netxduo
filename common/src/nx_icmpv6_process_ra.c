@@ -356,21 +356,17 @@ UINT                          interface_index;
                                                         (ULONG)prefix_length,
                                                         prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime,
                                                         (ULONG)0);
-
-                /* A list with no room left forms no address either, so the
-                   address and the thing that removes it stay together. */
-                if (status == NX_DUPLICATED_ENTRY)
-                {
-                    status = NX_SUCCESS;
-                }
             }
 
             /* Check for "A" bit.  A prefix with a zero valid lifetime forms no
-               address, RFC 4862 5.5.3(c). */
+               address, RFC 4862 5.5.3(c).  A duplicate prefix entry means the
+               existing entry was processed successfully.  It must not prevent a
+               different interface from forming its own address from the same
+               advertised prefix. */
             if ((prefix_ptr -> nx_icmpv6_option_prefix_flag & 0x40) &&
                 (prefix_ptr -> nx_icmpv6_option_prefix_length == (128 - NX_IPV6_HOST_ID_LENGTH)) &&
                 (prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime != 0) &&
-                (status == NX_SUCCESS))
+                ((status == NX_SUCCESS) || (status == NX_DUPLICATED_ENTRY)))
             {
             /* The autonomous flag is set */
 
@@ -380,13 +376,24 @@ UINT                          interface_index;
             ULONG             address[4];
             NXD_IPV6_ADDRESS *ipv6_address;
 
-                /* Find an entry that shares the same prefix. */
-                /* Note: RFC 4862 5.5.3(d) specifies that the search is limited to IPv6
-                   addresses formed by address autoconfiguration.  Towards the end of 5.5.3(d),
-                   the RFC explains that the search may still lead to address conflict (by not
-                   searching for addresses configured manually or via DHCP.  Therefore this
-                   implemenation chooses to search the entire IPv6 global address, in order to
-                   avoid conflict IP addresses. */
+                /* Find 64-bit interface ID. See RFC 4291 */
+                word2 = if_ptr -> nx_interface_physical_address_msw << 16 |
+                    ((if_ptr -> nx_interface_physical_address_lsw & 0xFF000000) >> 16) | 0xFF;
+
+                /* Fix the 2nd lower-order bit of the 1st byte */
+                word2 = (word2 & 0xFDFFFFFF) | (~(word2 | 0xFDFFFFFF));
+                word3 = (if_ptr -> nx_interface_physical_address_lsw & 0x00FFFFFF) | 0xFE000000;
+
+                /* Find the first free slot, but scan the entire table for the
+                   address this interface would form.  The prefix list is
+                   shared by the IP instance, so another interface may already
+                   have installed the prefix while this interface still needs
+                   its distinct interface-ID address.  Conversely, a repeated
+                   RA on this interface must not allocate that address again. */
+                /* RFC 4862 5.5.3(d) permits limiting this search to addresses
+                   formed by autoconfiguration, but notes that doing so can
+                   conflict with an address configured manually or by DHCP.
+                   Search the entire IPv6 address table instead. */
                 for (i = 0; i < NX_MAX_IPV6_ADDRESSES; i++)
                 {
 
@@ -394,7 +401,19 @@ UINT                          interface_index;
                     {
 
                         /* Found the first unused entry. */
-                        first_unused = i;
+                        if (first_unused == NX_MAX_IPV6_ADDRESSES)
+                        {
+                            first_unused = i;
+                        }
+                    }
+                    else if ((ip_ptr -> nx_ipv6_address[i].nxd_ipv6_address[0] == prefix_ptr -> nx_icmpv6_option_prefix[0]) &&
+                             (ip_ptr -> nx_ipv6_address[i].nxd_ipv6_address[1] == prefix_ptr -> nx_icmpv6_option_prefix[1]) &&
+                             (ip_ptr -> nx_ipv6_address[i].nxd_ipv6_address[2] == word2) &&
+                             (ip_ptr -> nx_ipv6_address[i].nxd_ipv6_address[3] == word3))
+                    {
+
+                        /* The address already exists. */
+                        first_unused = NX_MAX_IPV6_ADDRESSES;
                         break;
                     }
                 }
@@ -406,18 +425,11 @@ UINT                          interface_index;
                    )
                 {
 
-                    /* If there are no global addresses with such a prefix, and there is an unused entry,
-                       a new global address is formed. RFC 4862 5.5.3(d), p18 */
+                    /* The address this interface would form is not configured,
+                       and an unused entry is available.  Form it according to
+                       RFC 4862 5.5.3(d). */
 
                     ipv6_address = &ip_ptr -> nx_ipv6_address[first_unused];
-
-                    /* Find 64-bit interface ID. See RFC 4291 */
-                    word2 = if_ptr -> nx_interface_physical_address_msw << 16 |
-                        ((if_ptr -> nx_interface_physical_address_lsw & 0xFF000000) >> 16) | 0xFF;
-
-                    /* Fix the 2nd lower-order bit of the 1st byte */
-                    word2 = (word2 & 0xFDFFFFFF) | (~(word2 | 0xFDFFFFFF));
-                    word3 = (if_ptr -> nx_interface_physical_address_lsw & 0x00FFFFFF) | 0xFE000000;
 
                     ipv6_address -> nxd_ipv6_address_valid = NX_TRUE;
                     ipv6_address -> nxd_ipv6_address_type = NX_IP_VERSION_V6;
@@ -742,4 +754,3 @@ UINT                          interface_index;
 #endif /* NX_DISABLE_ICMPV6_ROUTER_ADVERTISEMENT_PROCESS */
 
 #endif /* FEATURE_NX_IPV6 */
-

@@ -44,6 +44,8 @@ static ULONG                   address_expired;
 
 /* Define thread prototypes.  */
 static void    thread_0_entry(ULONG thread_input);
+static void    inject_ra(UINT address_index);
+static UINT    second_interface_address_count(void);
 extern void    test_control_return(UINT status);       
 extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
 static UINT    my_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
@@ -168,9 +170,11 @@ UINT                packet_counter_1;
 NX_PACKET          *tmp_auxiliary_packet[16];
 #endif
 UINT                address_index;
+UINT                primary_address_index;
 NXD_ADDRESS         ipv6_address;
 ULONG               prefix_length;
 UINT                interface_index;    
+UINT                matching_addresses;
 NX_PACKET          *tmp_packet[16];   
 NX_PACKET          *my_packet;
 
@@ -205,6 +209,7 @@ NX_PACKET          *my_packet;
 
     /* Set the linklocal address.  */
     status = nxd_ipv6_address_set(&ip_0, 0, NX_NULL, 10, &address_index); 
+    primary_address_index = address_index;
 
     /* Check the status.  */
     if(status)
@@ -358,6 +363,52 @@ NX_PACKET          *my_packet;
     if (status == NX_SUCCESS)
         error_counter++;
 
+    /* Attach another interface with a different MAC address.  Both
+       interfaces receive the same advertised /64, but each must form the
+       address derived from its own interface identifier. */
+    status = nx_ip_interface_attach(&ip_0, "Second Interface", IP_ADDRESS(2, 2, 3, 4),
+                                    0xFFFFFF00UL, _nx_ram_network_driver_1500);
+
+    if (status)
+        error_counter++;
+
+    ip_0.nx_ip_interface[1].nx_interface_physical_address_msw = 0x98fe;
+    ip_0.nx_ip_interface[1].nx_interface_physical_address_lsw = 0x542da51e;
+
+    status = nxd_ipv6_address_set(&ip_0, 1, NX_NULL, 10, &address_index);
+
+    if (status)
+        error_counter++;
+
+    status = nxd_ipv6_stateless_address_autoconfig_disable(&ip_0, 1);
+
+    if (status)
+        error_counter++;
+
+    status = nxd_ipv6_stateless_address_autoconfig_enable(&ip_0, 1);
+
+    if (status)
+        error_counter++;
+
+    /* Install a fresh prefix through the first interface. */
+    inject_ra(primary_address_index);
+    inject_ra(address_index);
+
+    /* The second interface must get its MAC-derived address even though the
+       first interface already installed this prefix. */
+    matching_addresses = second_interface_address_count();
+
+    if (matching_addresses != 1)
+        error_counter++;
+
+    /* A repeated RA reuses the shared prefix but must not allocate the
+       same interface address a second time. */
+    inject_ra(address_index);
+    matching_addresses = second_interface_address_count();
+
+    if (matching_addresses != 1)
+        error_counter++;
+
 #ifdef NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY
     /* Sleep 40 seconds and let prefix timeout. */
     tx_thread_sleep(40 * NX_IP_PERIODIC_RATE);
@@ -373,9 +424,10 @@ NX_PACKET          *my_packet;
     
     if (status == NX_SUCCESS)
         error_counter++;
-    
-    /* Check whether two addresses are expired. */
-    if (address_expired != 2)
+
+    /* The two original addresses and one address per interface for the fresh
+       prefix must all have expired. */
+    if (address_expired != 4)
         error_counter++;
 #endif /* NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY */
 
@@ -392,6 +444,80 @@ NX_PACKET          *my_packet;
     }
 }                     
 
+static void    inject_ra(UINT address_index)
+{
+UINT        status;
+NX_PACKET  *packet_ptr;
+NX_IPV6_HEADER *ipv6_header;
+NX_ICMPV6_OPTION_PREFIX *prefix_ptr;
+
+    status = nx_packet_allocate(&pool_0, &packet_ptr, NX_ICMP_PACKET, NX_WAIT_FOREVER);
+
+    if (status)
+    {
+        error_counter++;
+        return;
+    }
+
+    /* _nx_icmpv6_process_ra() receives a packet after the IPv6 layer has
+       exposed the ICMPv6 header and selected the local address that identifies
+       the incoming interface. */
+    memcpy(packet_ptr -> nx_packet_prepend_ptr, &pkt2[14], sizeof(pkt2) - 14);
+    packet_ptr -> nx_packet_ip_header = packet_ptr -> nx_packet_prepend_ptr;
+    packet_ptr -> nx_packet_length = sizeof(pkt2) - 14;
+    packet_ptr -> nx_packet_append_ptr = packet_ptr -> nx_packet_prepend_ptr + sizeof(pkt2) - 14;
+
+    /* Give this multihome case a fresh prefix with enough lifetime to avoid a
+       timer race between the two deliveries, while still expiring during the
+       test's existing lifetime check. */
+    prefix_ptr = (NX_ICMPV6_OPTION_PREFIX *)(packet_ptr -> nx_packet_prepend_ptr +
+                                             sizeof(NX_IPV6_HEADER) + sizeof(NX_ICMPV6_RA) + 8);
+    prefix_ptr -> nx_icmpv6_option_prefix[0] = 0x20010db8;
+    prefix_ptr -> nx_icmpv6_option_prefix[1] = 0x12345678;
+    prefix_ptr -> nx_icmpv6_option_prefix[2] = 0;
+    prefix_ptr -> nx_icmpv6_option_prefix[3] = 0;
+    NX_IPV6_ADDRESS_CHANGE_ENDIAN(prefix_ptr -> nx_icmpv6_option_prefix);
+    prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime = 20;
+    prefix_ptr -> nx_icmpv6_option_prefix_preferred_lifetime = 10;
+    NX_CHANGE_ULONG_ENDIAN(prefix_ptr -> nx_icmpv6_option_prefix_valid_lifetime);
+    NX_CHANGE_ULONG_ENDIAN(prefix_ptr -> nx_icmpv6_option_prefix_preferred_lifetime);
+
+    /* Reproduce the byte-order conversion already performed by the IPv6
+       receive path before it dispatches to the RA processor. */
+    ipv6_header = (NX_IPV6_HEADER *)packet_ptr -> nx_packet_ip_header;
+    NX_CHANGE_ULONG_ENDIAN(ipv6_header -> nx_ip_header_word_0);
+    NX_CHANGE_ULONG_ENDIAN(ipv6_header -> nx_ip_header_word_1);
+    NX_IPV6_ADDRESS_CHANGE_ENDIAN(ipv6_header -> nx_ip_header_source_ip);
+    NX_IPV6_ADDRESS_CHANGE_ENDIAN(ipv6_header -> nx_ip_header_destination_ip);
+
+    packet_ptr -> nx_packet_prepend_ptr += sizeof(NX_IPV6_HEADER);
+    packet_ptr -> nx_packet_length -= sizeof(NX_IPV6_HEADER);
+    packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = &ip_0.nx_ipv6_address[address_index];
+
+    _nx_icmpv6_process_ra(&ip_0, packet_ptr);
+}
+
+static UINT    second_interface_address_count(void)
+{
+UINT count = 0;
+UINT i;
+
+    for (i = 0; i < NX_MAX_IPV6_ADDRESSES; i++)
+    {
+        if ((ip_0.nx_ipv6_address[i].nxd_ipv6_address_valid == NX_TRUE) &&
+            (ip_0.nx_ipv6_address[i].nxd_ipv6_address_attached == &ip_0.nx_ip_interface[1]) &&
+            (ip_0.nx_ipv6_address[i].nxd_ipv6_address[0] == 0x20010db8) &&
+            (ip_0.nx_ipv6_address[i].nxd_ipv6_address[1] == 0x12345678) &&
+            (ip_0.nx_ipv6_address[i].nxd_ipv6_address[2] == 0x9afe54ff) &&
+            (ip_0.nx_ipv6_address[i].nxd_ipv6_address[3] == 0xfe2da51e))
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 
 #ifdef NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY
 static VOID    ip_address_change_notify(NX_IP *ip_ptr, UINT operation, UINT if_index, 
@@ -402,8 +528,9 @@ static VOID    ip_address_change_notify(NX_IP *ip_ptr, UINT operation, UINT if_i
         address_expired++;
 
         /* Check prefix. */
-        if ((address[0] != 0x3ffe0501) ||
-            ((address[1] != 0xffff0100) && (address[1] !=0xffff0101)))
+        if (!(((address[0] == 0x3ffe0501) &&
+               ((address[1] == 0xffff0100) || (address[1] == 0xffff0101))) ||
+              ((address[0] == 0x20010db8) && (address[1] == 0x12345678))))
         {
             error_counter++;
         }
