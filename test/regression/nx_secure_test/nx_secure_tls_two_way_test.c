@@ -53,7 +53,6 @@ static NX_SECURE_TLS_SESSION   server_tls_session;
 static NX_SECURE_X509_CERT certificate;
 static NX_SECURE_X509_CERT server_certificate;
 static NX_SECURE_X509_CERT duplicate_server_certificate;
-static NX_SECURE_X509_CERT ica_certificate;
 static NX_SECURE_X509_CERT client_certificate;
 static NX_SECURE_X509_CERT trusted_certificate;
 
@@ -71,11 +70,9 @@ static UCHAR large_app_data[LARGE_SEND_SIZE];
 static UCHAR server_recv_buffer[LARGE_SEND_SIZE];
 static UCHAR client_recv_buffer[LARGE_SEND_SIZE];
 
-/* Test PKI (3-level). */
-#include "test_ca_cert.c"
+/* Test PKI. */
 #include "tls_two_test_certs.c"
-#define ca_cert_der test_ca_cert_der
-#define ca_cert_der_len test_ca_cert_der_len
+#include "test_legacy_ca.c"
 
 /*  Cryptographic routines. */
 extern const NX_SECURE_TLS_CRYPTO nx_crypto_tls_ciphers;
@@ -428,11 +425,6 @@ UINT       status;
     nx_secure_tls_initialize();
 }
 
-/*  Define callbacks used by TLS.  */
-/* Include CRL associated with Verisign root CA (for AWS) for demo purposes. */
-#include "test_ca.crl.der.c"
-
-
 /* Timestamp function - should return Unix time formatted 32-bit integer. */
 ULONG tls_timestamp_function(void)
 {
@@ -440,69 +432,6 @@ ULONG tls_timestamp_function(void)
     // 1541030400 = 0x5BDA4200L = 11/01/2018 @ 12:00AM (UTC)
     return(0x5BDA4200L); 
 }
-
-#ifndef NX_SECURE_DISABLE_X509
-/* Callback invoked whenever TLS has to validate a certificate from a remote host. Additional checking
-   of the certificate may be done by the application here. */
-ULONG certificate_verification_callback(NX_SECURE_TLS_SESSION *session, NX_SECURE_X509_CERT* certificate)
-{
-const CHAR *dns_tld = "certificate_with_policies"; //"NX Secure Device Certificate";
-UINT status;
-NX_SECURE_X509_CERTIFICATE_STORE *store;
-NX_SECURE_X509_CERT *issuer_certificate;
-UINT                 issuer_location;
-USHORT key_usage_bitfield;
-
-    /* Check DNS entry string. */
-    status = nx_secure_x509_common_name_dns_check(certificate, (UCHAR*)dns_tld, strlen(dns_tld));
-  
-    if(status != NX_SUCCESS)
-    {
-        printf("Error in certificate verification: DNS name did not match CN\n");
-        return(status);
-    }    
-    
-    /* Check CRL revocation status. */
-    store = &session -> nx_secure_tls_credentials.nx_secure_tls_certificate_store;
-    
-#ifndef NX_SECURE_X509_DISABLE_CRL
-    status = nx_secure_x509_crl_revocation_check(test_ca_crl_der, test_ca_crl_der_len, store, certificate);
-
-    if(status != NX_SUCCESS)
-    {
-        return(status);
-    }
-#endif /* NX_SECURE_X509_DISABLE_CRL */
-
-    /* Check key usage extension. */
-    status = nx_secure_x509_key_usage_extension_parse(certificate, &key_usage_bitfield);
-
-    if(status != NX_SUCCESS)
-    {
-        printf("Error in parsing key usage extension: 0x%x\n", status);
-        return(status);
-    }
-
-    if((key_usage_bitfield & NX_SECURE_X509_KEY_USAGE_DIGITAL_SIGNATURE) == 0 ||
-       (key_usage_bitfield & NX_SECURE_X509_KEY_USAGE_NON_REPUDIATION)   == 0 ||
-       (key_usage_bitfield & NX_SECURE_X509_KEY_USAGE_KEY_ENCIPHERMENT)  == 0)
-    {
-        printf("Expected key usage bitfield bits not set!\n");
-        return(NX_SECURE_X509_KEY_USAGE_ERROR);
-    }
-
-    /* Extended key usage - look for specific OIDs. */
-    status = nx_secure_x509_extended_key_usage_extension_parse(certificate, NX_SECURE_TLS_X509_TYPE_PKIX_KP_TIME_STAMPING);
-
-    if(status != NX_SUCCESS)
-    {
-        printf("Expected certificate extension not found!\n");
-    }
-
-    return(NX_SUCCESS);
-}
-#endif
-
 
 /* Define the test threads.  */
 
@@ -644,22 +573,18 @@ UINT i;
     /* Add a timestamp function for time checking and timestamps in the TLS handshake. */
     _nx_secure_tls_session_time_function_set(&server_tls_session, tls_timestamp_function);
 
-    /* Setup the callback invoked when TLS has a certificate it wants to verify so we can
-       do additional checks not done automatically by TLS. */
-    _nx_secure_tls_session_certificate_callback_set(&server_tls_session, certificate_verification_callback);
-    
     /* Set callback for server TLS extension handling. */
     _nx_secure_tls_session_server_callback_set(&server_tls_session, tls_server_callback);
 
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Initialize our certificate
-    status = nx_secure_x509_certificate_initialize(&certificate, test_device_cert_der, test_device_cert_der_len, NX_NULL, 0, test_device_cert_key_der, test_device_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
+    status = nx_secure_x509_certificate_initialize(&certificate, test_server_cert_der, test_server_cert_der_len, NX_NULL, 0, test_server_cert_key_der, test_server_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
     EXPECT_EQ(NX_SUCCESS, status);
     status = nx_secure_tls_server_certificate_add(&server_tls_session, &certificate, 1);
     EXPECT_EQ(NX_SUCCESS, status);
 
-    status = nx_secure_x509_certificate_initialize(&server_certificate, test_server_cert_der, test_server_cert_der_len, NX_NULL, 0, test_server_cert_key_der, test_server_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
+    status = nx_secure_x509_certificate_initialize(&server_certificate, test_device_cert_der, test_device_cert_der_len, NX_NULL, 0, test_device_cert_key_der, test_device_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
     EXPECT_EQ(NX_SUCCESS, status);
     status = nx_secure_tls_server_certificate_add(&server_tls_session, &server_certificate, 2);
     EXPECT_EQ(NX_SUCCESS, status);
@@ -672,14 +597,10 @@ UINT i;
     status = nx_secure_tls_server_certificate_add(&server_tls_session, &duplicate_server_certificate, 3);
     EXPECT_EQ(NX_SUCCESS, status);
 
-    status = nx_secure_x509_certificate_initialize(&ica_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
-    EXPECT_EQ(NX_SUCCESS, status);
-    status = nx_secure_tls_local_certificate_add(&server_tls_session, &ica_certificate);
-    EXPECT_EQ(NX_SUCCESS, status);
-
     /* Add a CA Certificate to our trusted store for verifying incoming client certificates. */
-    status = nx_secure_x509_certificate_initialize(&trusted_certificate, ca_cert_der, ca_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    status = nx_secure_x509_certificate_initialize(&trusted_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
     EXPECT_EQ(NX_SUCCESS, status);
+    test_legacy_certificate_mark_ca(&trusted_certificate);
     status = nx_secure_tls_trusted_certificate_add(&server_tls_session, &trusted_certificate);
     EXPECT_EQ(NX_SUCCESS, status);
 
@@ -1034,20 +955,17 @@ NX_SECURE_X509_DNS_NAME dns_name;
     nx_secure_tls_remote_certificate_buffer_allocate(&client_tls_session, 2, remote_server_certs_buffer, sizeof(remote_server_certs_buffer));
 
     //nx_secure_x509_certificate_initialize(&certificate, cert_der, cert_der_len, NX_NULL, 0, private_key_der, private_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
-    nx_secure_x509_certificate_initialize(&client_certificate, test_device_cert_der, test_device_cert_der_len, NX_NULL, 0, test_device_cert_key_der, test_device_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
+    nx_secure_x509_certificate_initialize(&client_certificate, test_server_cert_der, test_server_cert_der_len, NX_NULL, 0, test_server_cert_key_der, test_server_cert_key_der_len, NX_SECURE_X509_KEY_TYPE_RSA_PKCS1_DER);
     nx_secure_tls_local_certificate_add(&client_tls_session, &client_certificate);
 
     /* Add a CA Certificate to our trusted store for verifying incoming server certificates. */
-    nx_secure_x509_certificate_initialize(&trusted_certificate, ca_cert_der, ca_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    nx_secure_x509_certificate_initialize(&trusted_certificate, ica_cert_der, ica_cert_der_len, NX_NULL, 0, NULL, 0, NX_SECURE_X509_KEY_TYPE_NONE);
+    test_legacy_certificate_mark_ca(&trusted_certificate);
     nx_secure_tls_trusted_certificate_add(&client_tls_session, &trusted_certificate);
 
 
     /* Add a timestamp function for time checking and timestamps in the TLS handshake. */
     _nx_secure_tls_session_time_function_set(&client_tls_session, tls_timestamp_function);
-
-    /* Setup the callback invoked when TLS has a certificate it wants to verify so we can
-       do additional checks not done automatically by TLS. */
-    _nx_secure_tls_session_certificate_callback_set(&client_tls_session, certificate_verification_callback);
 
     /* Set callback for server TLS extension handling. */
     _nx_secure_tls_session_client_callback_set(&client_tls_session, tls_client_callback);
