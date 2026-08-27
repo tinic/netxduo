@@ -29,6 +29,27 @@
 #include "nx_ip.h"
 #include "nx_packet.h"
 #include "nx_tcp.h"
+
+
+/* A driver thread that is already running IP input itself, holding
+   nx_ip_protection for the whole of it, is equivalent to the IP thread here:
+   queueing the segment and waking the IP thread would only add a context
+   switch to a path that is already serialised by the same mutex.  A port
+   defines NX_TCP_PACKET_RECEIVE_DIRECT(ip_ptr, packet_ptr) to say so.  Left
+   undefined -- which is every port but the Amiga one -- this is NX_FALSE and
+   the condition below is the stock one.  */
+#ifndef NX_TCP_PACKET_RECEIVE_DIRECT
+#define NX_TCP_PACKET_RECEIVE_DIRECT(ip_ptr, packet_ptr) (NX_FALSE)
+#endif
+
+/* The driver thread currently inside IP input, or NX_NULL.  Written only by
+   that thread, and only between taking nx_ip_protection and giving it back, so
+   a second driver thread cannot be inside at the same time and there is
+   nothing to serialise beyond the mutex that is already held.  It lives in
+   this file, and not in the port, so that any link that reaches the reference
+   also reaches the definition.  */
+TX_THREAD *_nx_ip_input_thread = TX_NULL;
+
 #include "tx_thread.h"
 
 
@@ -99,7 +120,9 @@ TX_INTERRUPT_SAVE_AREA
 #endif
 
     /* Determine if this routine is being called from an ISR.  */
-    if ((TX_THREAD_GET_SYSTEM_STATE()) || (&(ip_ptr -> nx_ip_thread) != _tx_thread_current_ptr))
+    if ((TX_THREAD_GET_SYSTEM_STATE()) ||
+        ((&(ip_ptr -> nx_ip_thread) != _tx_thread_current_ptr) &&
+         (!NX_TCP_PACKET_RECEIVE_DIRECT(ip_ptr, packet_ptr))))
     {
 
         /* If system state is non-zero, we are in an ISR. If the current thread is not the IP thread,
