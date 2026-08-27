@@ -446,7 +446,8 @@ UINT                                private_key_length;
 
             /* See if we are using RSA. Separate from other methods (e.g. ECC, DH) for proper handling of padding. */
             if (public_cipher_method -> nx_crypto_algorithm == NX_CRYPTO_KEY_EXCHANGE_RSA &&
-                local_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_RSA)
+                local_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_RSA &&
+                local_certificate -> nx_secure_x509_public_key_identifier != NX_SECURE_TLS_X509_TYPE_RSA_PSS)
             {
                 /* Check for user-defined keys. */
                 if (user_defined_key)

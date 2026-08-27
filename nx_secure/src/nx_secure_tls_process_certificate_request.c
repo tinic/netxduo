@@ -147,6 +147,11 @@ UINT extension_type;
         {
             if (local_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_RSA)
             {
+                if (local_certificate -> nx_secure_x509_public_key_identifier ==
+                        NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+                {
+                    return(NX_SECURE_TLS_UNSUPPORTED_CERT_SIGN_TYPE);
+                }
                 expected_cert_type = NX_SECURE_TLS_CERT_TYPE_RSA_SIGN;
 #if (NX_SECURE_TLS_TLS_1_2_ENABLED)
                 expected_sign_alg = NX_SECURE_TLS_SIGNATURE_RSA_SHA256;
@@ -331,4 +336,3 @@ UINT extension_type;
     return(NX_NOT_SUPPORTED);
 #endif /* NX_SECURE_DISABLE_X509 */
 }
-

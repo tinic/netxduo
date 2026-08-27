@@ -784,6 +784,18 @@ typedef struct NX_SECURE_X509_CERT_STRUCT
     /* Public Key Algorithm (RSA, DH, etc). Tagged union gives us the actual key data.*/
     UINT nx_secure_x509_public_algorithm;
 
+    /* AlgorithmIdentifier OID from SubjectPublicKeyInfo. RSA operations use
+       nx_secure_x509_public_algorithm above, while this field preserves
+       whether the modulus was certified as unrestricted rsaEncryption or
+       as an RSASSA-PSS-only key. */
+    UINT nx_secure_x509_public_key_identifier;
+
+    /* Restrictions carried by id-RSASSA-PSS SubjectPublicKeyInfo parameters.
+       UNKNOWN means the parameters were absent and any supported PSS digest
+       is permitted. When present, the salt length is a minimum. */
+    UINT   nx_secure_x509_public_key_pss_algorithm;
+    USHORT nx_secure_x509_public_key_pss_salt_length;
+
     union
     {
         NX_SECURE_RSA_PUBLIC_KEY rsa_public_key;

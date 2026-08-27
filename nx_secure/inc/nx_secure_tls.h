@@ -1454,6 +1454,11 @@ UINT _nx_secure_tls_send_encrypted_extensions(NX_SECURE_TLS_SESSION *tls_session
 #endif
 
 VOID _nx_secure_tls_get_signature_algorithm_id(UINT signature_algorithm, USHORT *signature_algorithm_id);
+VOID _nx_secure_tls_get_signature_algorithm(NX_SECURE_TLS_SESSION *tls_session,
+                                            NX_SECURE_X509_CRYPTO *crypto_method,
+                                            USHORT *signature_algorithm,
+                                            USHORT *pss_algorithm,
+                                            USHORT *legacy_algorithm);
 UINT _nx_secure_tls_allocate_handshake_packet(NX_SECURE_TLS_SESSION *tls_session,
                                               NX_PACKET_POOL *packet_pool,
                                               NX_PACKET **send_packet, ULONG wait_option);
@@ -1867,4 +1872,3 @@ TLS_DECLARE  TX_MUTEX _nx_secure_tls_protection;
 #endif
 
 #endif /* SRC_NX_SECURE_TLS_H_ */
-

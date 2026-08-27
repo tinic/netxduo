@@ -495,6 +495,14 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
     /* See if we are using RSA. Separate from other methods (e.g. ECC, DH) for proper handling of padding. */
     if (local_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_RSA)
     {
+        /* Local RSA-PSS signing is not implemented here, and falling through
+           would emit a forbidden PKCS#1 v1.5 signature with a PSS-only key. */
+        if (local_certificate -> nx_secure_x509_public_key_identifier ==
+                NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+        {
+            return(NX_SECURE_TLS_UNSUPPORTED_CERT_SIGN_ALG);
+        }
+
         /* If using RSA, the length is equal to the key size. */
         data_size = local_certificate -> nx_secure_x509_public_key.rsa_public_key.nx_secure_rsa_public_modulus_length;
 
@@ -902,4 +910,3 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
     return(NX_NOT_SUPPORTED);
 #endif
 }
-

@@ -27,11 +27,6 @@
 #ifndef NX_SECURE_TLS_CLIENT_DISABLED
 
 #ifndef NX_SECURE_DISABLE_X509
-static VOID _nx_secure_tls_get_signature_algorithm(NX_SECURE_TLS_SESSION *tls_session,
-                                                   NX_SECURE_X509_CRYPTO *crypto_method,
-                                                   USHORT *signature_algorithm,
-                                                   USHORT *legacy_algorithm);
-
 static UINT _nx_secure_tls_send_clienthello_sig_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                           UCHAR *packet_buffer, ULONG *packet_offset,
                                                           USHORT *extension_length,
@@ -386,6 +381,7 @@ USHORT ext_len, sig_len, sighash_len, ext;
 UINT i;
 USHORT signature_algorithm;
 USHORT legacy_algorithm;
+USHORT pss_algorithm;
 NX_SECURE_X509_CRYPTO *cipher_table;
 
     /* Signature Extensions structure:
@@ -395,12 +391,12 @@ NX_SECURE_X509_CRYPTO *cipher_table;
      * Each algorithm pair has a hash ID and a public key operation ID represented
      * by a single octet. Therefore each entry in the list is 2 bytes long.
      *
-     * A row of the X.509 table can put two of them on the wire, so the size
-     * check above reserves four bytes per row rather than two.
+     * An RSA row can put rsa_pss_rsae, rsa_pss_pss and its TLS 1.2 legacy
+     * pair on the wire, so reserve six bytes per row.
      */
 
     if (available_size < (*packet_offset + 6u +
-                          (ULONG)(tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size << 2)))
+                          (ULONG)(tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size * 6u)))
     {
 
         /* Packet buffer too small. */
@@ -421,11 +417,13 @@ NX_SECURE_X509_CRYPTO *cipher_table;
     for (i = 0; i < tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size; i++)
     {
 
-        /* Map crypto method to signature algorithm.  A row can produce two
+        /* Map crypto method to signature algorithm. An RSA row can produce three
            code points; see _nx_secure_tls_get_signature_algorithm(). */
         legacy_algorithm = 0;
+        pss_algorithm = 0;
         _nx_secure_tls_get_signature_algorithm(tls_session, &cipher_table[i],
-                                               &signature_algorithm, &legacy_algorithm);
+                                               &signature_algorithm, &pss_algorithm,
+                                               &legacy_algorithm);
         if (signature_algorithm == 0)
         {
             continue;
@@ -436,6 +434,15 @@ NX_SECURE_X509_CRYPTO *cipher_table;
 
         offset += 2;
         sighash_len = (USHORT)(sighash_len + 2);
+
+        if (pss_algorithm != 0)
+        {
+            packet_buffer[offset] = (UCHAR)((pss_algorithm & 0xFF00) >> 8);
+            packet_buffer[offset + 1] = (UCHAR)(pss_algorithm & 0x00FF);
+
+            offset += 2;
+            sighash_len = (USHORT)(sighash_len + 2);
+        }
 
         if (legacy_algorithm != 0)
         {
@@ -477,6 +484,7 @@ NX_SECURE_X509_CRYPTO *cipher_table;
 VOID _nx_secure_tls_get_signature_algorithm(NX_SECURE_TLS_SESSION *tls_session,
                                             NX_SECURE_X509_CRYPTO *crypto_method,
                                             USHORT *signature_algorithm,
+                                            USHORT *pss_algorithm,
                                             USHORT *legacy_algorithm)
 {
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
@@ -487,6 +495,7 @@ UCHAR hash_algo = 0;
 UCHAR sig_algo = 0;
 
     *signature_algorithm = 0;
+    *pss_algorithm = 0;
     *legacy_algorithm = 0;
 
     switch (crypto_method -> nx_secure_x509_public_cipher_method -> nx_crypto_algorithm)
@@ -565,12 +574,15 @@ UCHAR sig_algo = 0;
         {
         case NX_SECURE_TLS_HASH_ALGORITHM_SHA256:
             *signature_algorithm = 0x0804u; /* rsa_pss_rsae_sha256 */
+            *pss_algorithm = 0x0809u; /* rsa_pss_pss_sha256 */
             break;
         case NX_SECURE_TLS_HASH_ALGORITHM_SHA384:
             *signature_algorithm = 0x0805u; /* rsa_pss_rsae_sha384 */
+            *pss_algorithm = 0x080au; /* rsa_pss_pss_sha384 */
             break;
         case NX_SECURE_TLS_HASH_ALGORITHM_SHA512:
             *signature_algorithm = 0x0806u; /* rsa_pss_rsae_sha512 */
+            *pss_algorithm = 0x080bu; /* rsa_pss_pss_sha512 */
             break;
         default:
             *signature_algorithm = 0;
@@ -1887,4 +1899,3 @@ NX_SECURE_TLS_ECC *ecc_info;
 }
 #endif /* NX_SECURE_ENABLE_ECC_CIPHERSUITE */
 #endif /* NX_SECURE_TLS_CLIENT_DISABLED */
-

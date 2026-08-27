@@ -1228,6 +1228,15 @@ VOID _nx_secure_tls_get_signature_algorithm_id(UINT signature_algorithm, USHORT 
     case 0x0806u: /* rsa_pss_rsae_sha512 */
         *signature_algorithm_id = NX_SECURE_TLS_X509_TYPE_RSA_SHA_512;
         break;
+    case 0x0809u: /* rsa_pss_pss_sha256 */
+        *signature_algorithm_id = NX_SECURE_TLS_X509_TYPE_RSA_SHA_256;
+        break;
+    case 0x080au: /* rsa_pss_pss_sha384 */
+        *signature_algorithm_id = NX_SECURE_TLS_X509_TYPE_RSA_SHA_384;
+        break;
+    case 0x080bu: /* rsa_pss_pss_sha512 */
+        *signature_algorithm_id = NX_SECURE_TLS_X509_TYPE_RSA_SHA_512;
+        break;
     default:
         return;
     }
@@ -1571,6 +1580,5 @@ NX_SECURE_TLS_PSK_STORE *psk_store;
     return(NX_SUCCESS);
 }
 #endif
-
 
 
