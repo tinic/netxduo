@@ -243,6 +243,7 @@ extern   "C" {
 #define NX_SECURE_TLS_HANDSHAKE_FRAGMENT_RECEIVED       0x152       /* Received a fragmented handshake message - take appropriate action at a higher level of the state machine. */
 #define NX_SECURE_TLS_TRANSMIT_LOCKED                   0x153       /* Another thread is transmitting. */
 #define NX_SECURE_TLS_DOWNGRADE_DETECTED                0x154       /* Detected an inappropriate TLS version downgrade by TLS 1.3 client. */
+#define NX_SECURE_TLS_ALPN_PROTOCOL_MISMATCH            0x155       /* RFC 7301: the peer's ALPN answer is not one of the protocols offered. */
 
 /* NX_CONTINUE is a symbol defined in NetX Duo 5.10.  For backward compatibility, this symbol is defined here */
 #if ((__NETXDUO_MAJOR_VERSION__ == 5) && (__NETXDUO_MINOR_VERSION__ == 9))
@@ -572,6 +573,7 @@ typedef struct NX_SECURE_VERSIONS_LIST_STRUCT
 #define NX_SECURE_TLS_EXTENSION_EC_GROUPS                  (0x000A)
 #define NX_SECURE_TLS_EXTENSION_EC_POINT_FORMATS           (0x000B)
 #define NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS       (0x000D)
+#define NX_SECURE_TLS_EXTENSION_ALPN                       (0x0010)
 #define NX_SECURE_TLS_EXTENSION_ENCRYPT_THEN_MAC           (0x0016)
 #define NX_SECURE_TLS_EXTENSION_EXTENDED_MASTER_SECRET     (0x0017)
 #define NX_SECURE_TLS_EXTENSION_PRE_SHARED_KEY             (0x0029)
@@ -592,6 +594,15 @@ typedef struct NX_SECURE_VERSIONS_LIST_STRUCT
 
 /* Define the maximum number of structures allocated for TLS ClientHello and ServerHello extension data. */
 #define NX_SECURE_TLS_HELLO_EXTENSIONS_MAX                 (10)
+
+/* RFC 7301 puts no ceiling on a protocol name; the IANA registry's longest is
+   eight bytes ("http/1.1", "stun.turn", "webrtc"), and 32 is where a name
+   stops being a protocol identifier and starts being a payload.  It sizes a
+   field in NX_SECURE_TLS_SESSION, so it is here rather than in a build
+   option: two translation units disagreeing about it is two layouts. */
+#ifndef NX_SECURE_TLS_ALPN_PROTOCOL_MAX
+#define NX_SECURE_TLS_ALPN_PROTOCOL_MAX                    (32)
+#endif
 
 /* Some constants for use in defining buffers for crypto and hash operations. */
 #define NX_SECURE_TLS_RANDOM_SIZE                          (32)  /* Size of the server and client random values, in bytes. */
@@ -1326,6 +1337,23 @@ typedef struct NX_SECURE_TLS_SESSION_STRUCT
     NX_SECURE_X509_DNS_NAME *nx_secure_tls_sni_extension_server_name;
 #endif
 
+    /* RFC 7301, Application-Layer Protocol Negotiation.  AmiNetXDuo addition;
+       src/tls/alpn/nx_secure_tls_alpn.c is the implementation and the seven
+       call sites in this component are one line each.
+
+       The list is the wire encoding of ProtocolNameList, a run of
+       length-prefixed names with no outer length: "\x02h2\x08http/1.1".
+       _nx_secure_tls_alpn_protocol_set() builds it, and it is a POINTER
+       because the caller owns it and it must outlive the handshake, the same
+       contract as the SNI name above.
+
+       The selection is a copy, because on a client it is the server's answer
+       and on a server it is a slice of a received ClientHello. */
+    const UCHAR *nx_secure_tls_alpn_protocol_list;
+    USHORT       nx_secure_tls_alpn_protocol_list_length;
+    UCHAR        nx_secure_tls_alpn_selected[NX_SECURE_TLS_ALPN_PROTOCOL_MAX];
+    UCHAR        nx_secure_tls_alpn_selected_length;
+
     /* These are used to store off the alert value and level when an alert is recevied. */
     UINT nx_secure_tls_received_alert_level;
     UINT nx_secure_tls_received_alert_value;
@@ -1690,6 +1718,24 @@ UINT _nx_secure_tls_session_sni_extension_parse(NX_SECURE_TLS_SESSION *tls_sessi
                                                 UINT num_extensions, NX_SECURE_X509_DNS_NAME *dns_name);
 UINT _nx_secure_tls_session_sni_extension_set(NX_SECURE_TLS_SESSION *tls_session,
                                               NX_SECURE_X509_DNS_NAME *dns_name);
+
+/* RFC 7301.  src/tls/alpn/nx_secure_tls_alpn.c. */
+UINT _nx_secure_tls_alpn_protocol_set(NX_SECURE_TLS_SESSION *tls_session,
+                                      const UCHAR *protocol_list,
+                                      USHORT protocol_list_length);
+UINT _nx_secure_tls_alpn_protocol_get(NX_SECURE_TLS_SESSION *tls_session,
+                                      const UCHAR **protocol,
+                                      UCHAR *protocol_length);
+UINT _nx_secure_tls_alpn_send_extension(NX_SECURE_TLS_SESSION *tls_session,
+                                        UCHAR *packet_buffer, ULONG *packet_offset,
+                                        USHORT *extension_length,
+                                        ULONG available_size, UINT server);
+UINT _nx_secure_tls_alpn_process_response(NX_SECURE_TLS_SESSION *tls_session,
+                                          const UCHAR *packet_buffer,
+                                          UINT message_length);
+UINT _nx_secure_tls_alpn_process_offer(NX_SECURE_TLS_SESSION *tls_session,
+                                       const UCHAR *packet_buffer,
+                                       UINT message_length);
 UINT _nx_secure_tls_session_start(NX_SECURE_TLS_SESSION *tls_session, NX_TCP_SOCKET *tcp_socket,
                                   UINT wait_option);
 UINT _nx_secure_tls_session_time_function_set(NX_SECURE_TLS_SESSION *tls_session,

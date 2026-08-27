@@ -184,6 +184,25 @@ UINT   status = NX_SUCCESS;
 
 
 
+#if !defined(NX_SECURE_TLS_SERVER_DISABLED)
+    /* RFC 7301.  A TLS 1.3 server answers ALPN in EncryptedExtensions, which
+       is _nx_secure_tls_send_encrypted_extensions(); a TLS 1.2 one answers it
+       here.  Nothing is written when nothing was selected. */
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+    if (!tls_session -> nx_secure_tls_1_3)
+#endif
+    {
+        status = _nx_secure_tls_alpn_send_extension(tls_session, packet_buffer, &length,
+                                                    &extension_length, available_size,
+                                                    NX_TRUE);
+        if (status != NX_SUCCESS)
+        {
+            return(status);
+        }
+        total_extensions_length = (USHORT)(total_extensions_length + extension_length);
+    }
+#endif
+
     /* Make sure we actually wrote some extension data. If none, back up the packet pointer and length. */
     if (total_extensions_length == 0)
     {

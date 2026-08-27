@@ -312,6 +312,18 @@ UINT   status;
     total_extensions_length = (USHORT)(total_extensions_length + extension_length);
 #endif
 
+    /* RFC 7301.  Nothing is written when no protocol list was set, so this
+       costs a ClientHello that does not want ALPN nothing at all.
+       src/tls/alpn/nx_secure_tls_alpn.c. */
+    status = _nx_secure_tls_alpn_send_extension(tls_session, packet_buffer, &length,
+                                                &extension_length, available_size,
+                                                NX_FALSE);
+    if (status != NX_SUCCESS)
+    {
+        return(status);
+    }
+    total_extensions_length = (USHORT)(total_extensions_length + extension_length);
+
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
     if(tls_session->nx_secure_tls_1_3 && tls_session->nx_secure_tls_credentials.nx_secure_tls_psk_count > 0)
     {

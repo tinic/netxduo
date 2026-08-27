@@ -324,6 +324,36 @@ USHORT                                supported_version = tls_session -> nx_secu
             }
 
             break;
+        case NX_SECURE_TLS_EXTENSION_ALPN:
+
+            /* RFC 7301 3.1.  In TLS 1.2 the server's selection rides here; in
+               TLS 1.3 it rides in EncryptedExtensions instead, and a 1.3
+               server that puts it in the ServerHello is answering in the
+               clear something RFC 8446 4.2 says must be encrypted. */
+            extension_length = (USHORT)((packet_buffer[offset] << 8) + packet_buffer[offset + 1]);
+
+            if ((UINT)(extension_length + offset + 2) > message_length)
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+            if (tls_session -> nx_secure_tls_1_3)
+            {
+                offset += 2;
+                break;
+            }
+#endif
+
+            status = _nx_secure_tls_alpn_process_response(tls_session, &packet_buffer[offset],
+                                                          message_length - offset);
+            if (status != NX_SUCCESS)
+            {
+                return(status);
+            }
+
+            offset += 2;
+            break;
         case NX_SECURE_TLS_EXTENSION_ENCRYPT_THEN_MAC:
 
             /* RFC 7366 3.  The answer is the bare identifier with a zero

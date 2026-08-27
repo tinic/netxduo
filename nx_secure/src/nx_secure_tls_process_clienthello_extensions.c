@@ -214,6 +214,22 @@ USHORT supported_version = tls_session -> nx_secure_tls_protocol_version;
 #endif
 #endif
 
+        case NX_SECURE_TLS_EXTENSION_ALPN:
+
+            /* RFC 7301 3.2, the server half.  The selection is made here and
+               written into the ServerHello (TLS 1.2) or EncryptedExtensions
+               (TLS 1.3) later; no overlap selects nothing and the server then
+               answers with no ALPN extension at all.
+               src/tls/alpn/nx_secure_tls_alpn.c. */
+            status = _nx_secure_tls_alpn_process_offer(tls_session,
+                                                       &packet_buffer[offset - 2],
+                                                       (message_length - offset) + 2u);
+            if (status != NX_SUCCESS)
+            {
+                return(status);
+            }
+            break;
+
         case NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS:
         case NX_SECURE_TLS_EXTENSION_SERVER_NAME_INDICATION:
         case NX_SECURE_TLS_EXTENSION_MAX_FRAGMENT_LENGTH:
