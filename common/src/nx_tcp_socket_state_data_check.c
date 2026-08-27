@@ -1289,17 +1289,6 @@ NX_IP         *ip_ptr;
         ULONG ack_limit;
 
             ack_limit = _nx_tcp_socket_window_update_step(socket_ptr);
-#if defined(AMINETXDUO_TCP_ACK_CAP_MSS) && (AMINETXDUO_TCP_ACK_CAP_MSS > 0)
-            {
-            ULONG ack_cap = socket_ptr -> nx_tcp_socket_connect_mss *
-                            (ULONG)AMINETXDUO_TCP_ACK_CAP_MSS;
-
-                if (ack_limit > ack_cap)
-                {
-                    ack_limit = ack_cap;
-                }
-            }
-#endif
             ack_threshold = socket_ptr -> nx_tcp_socket_ack_n_packet_counter;
 
             /* nx_tcp_socket_create.c leaves this at zero, and a socket that has
