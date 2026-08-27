@@ -633,7 +633,8 @@ static UINT _nx_secure_tls_check_ciphersuite(const NX_SECURE_TLS_CIPHERSUITE_INF
         }
         else
         {
-            if (cert -> nx_secure_x509_public_algorithm != NX_SECURE_TLS_X509_TYPE_RSA)
+            if (cert -> nx_secure_x509_public_algorithm != NX_SECURE_TLS_X509_TYPE_RSA ||
+                cert -> nx_secure_x509_public_key_identifier == NX_SECURE_TLS_X509_TYPE_RSA_PSS)
             {
                 /* RSA auth requires RSA certificate. */
                 return(NX_SECURE_TLS_UNSUPPORTED_PUBLIC_CIPHER);
@@ -690,7 +691,8 @@ static UINT _nx_secure_tls_check_ciphersuite(const NX_SECURE_TLS_CIPHERSUITE_INF
         break;
 
     case NX_CRYPTO_KEY_EXCHANGE_RSA:
-        if (cert == NX_NULL || cert -> nx_secure_x509_public_algorithm != NX_SECURE_TLS_X509_TYPE_RSA)
+        if (cert == NX_NULL || cert -> nx_secure_x509_public_algorithm != NX_SECURE_TLS_X509_TYPE_RSA ||
+            cert -> nx_secure_x509_public_key_identifier == NX_SECURE_TLS_X509_TYPE_RSA_PSS)
         {
             /* RSA key exchange requires RSA certificate. */
             return(NX_SECURE_TLS_UNSUPPORTED_PUBLIC_CIPHER);

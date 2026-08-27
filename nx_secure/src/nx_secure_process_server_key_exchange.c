@@ -132,6 +132,8 @@ UCHAR                                 hash_algorithm;
 UCHAR                                 signature_algorithm;
 USHORT                                signature_algorithm_id;
 UINT                                  is_pss = NX_FALSE;
+UINT                                  is_pss_pss = NX_FALSE;
+UINT                                  pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_UNKNOWN;
 #if (NX_SECURE_TLS_TLS_1_0_ENABLED || NX_SECURE_TLS_TLS_1_1_ENABLED)
 UINT                                  i;
 #endif /* NX_SECURE_TLS_TLS_1_0_ENABLED || NX_SECURE_TLS_TLS_1_1_ENABLED */
@@ -345,20 +347,72 @@ UINT                                  i;
             	    hash_algorithm      = NX_SECURE_TLS_HASH_ALGORITHM_SHA256;
             	    signature_algorithm = NX_SECURE_TLS_SIGNATURE_ALGORITHM_RSA;
             	    is_pss              = NX_TRUE;
+                    pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256;
             	    break;
             	case 0x0805u: /* rsa_pss_rsae_sha384 */
             	    hash_algorithm      = NX_SECURE_TLS_HASH_ALGORITHM_SHA384;
             	    signature_algorithm = NX_SECURE_TLS_SIGNATURE_ALGORITHM_RSA;
             	    is_pss              = NX_TRUE;
+                    pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384;
             	    break;
             	case 0x0806u: /* rsa_pss_rsae_sha512 */
             	    hash_algorithm      = NX_SECURE_TLS_HASH_ALGORITHM_SHA512;
             	    signature_algorithm = NX_SECURE_TLS_SIGNATURE_ALGORITHM_RSA;
             	    is_pss              = NX_TRUE;
+                    pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512;
+                    break;
+                case 0x0809u: /* rsa_pss_pss_sha256 */
+                    hash_algorithm      = NX_SECURE_TLS_HASH_ALGORITHM_SHA256;
+                    signature_algorithm = NX_SECURE_TLS_SIGNATURE_ALGORITHM_RSA;
+                    is_pss              = NX_TRUE;
+                    is_pss_pss          = NX_TRUE;
+                    pss_key_algorithm   = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256;
+                    break;
+                case 0x080au: /* rsa_pss_pss_sha384 */
+                    hash_algorithm      = NX_SECURE_TLS_HASH_ALGORITHM_SHA384;
+                    signature_algorithm = NX_SECURE_TLS_SIGNATURE_ALGORITHM_RSA;
+                    is_pss              = NX_TRUE;
+                    is_pss_pss          = NX_TRUE;
+                    pss_key_algorithm   = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384;
+                    break;
+                case 0x080bu: /* rsa_pss_pss_sha512 */
+                    hash_algorithm      = NX_SECURE_TLS_HASH_ALGORITHM_SHA512;
+                    signature_algorithm = NX_SECURE_TLS_SIGNATURE_ALGORITHM_RSA;
+                    is_pss              = NX_TRUE;
+                    is_pss_pss          = NX_TRUE;
+                    pss_key_algorithm   = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512;
             	    break;
             	default:
             	    break;
             	}
+
+                if (certificate -> nx_secure_x509_public_key_identifier ==
+                        NX_SECURE_TLS_X509_TYPE_RSA_PSS && !is_pss)
+                {
+                    return(NX_SECURE_TLS_UNSUPPORTED_SIGNATURE_ALGORITHM);
+                }
+
+                if (is_pss)
+                {
+                    UINT pss_spki = (certificate -> nx_secure_x509_public_key_identifier ==
+                                     NX_SECURE_TLS_X509_TYPE_RSA_PSS);
+                    UINT tls_salt_length = (pss_key_algorithm == NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256) ? 32u :
+                                           (pss_key_algorithm == NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384) ? 48u : 64u;
+
+                    /* RFC 8446 gives these schemes the same parameter
+                       semantics when TLS 1.2 is negotiated: a PSS-key
+                       AlgorithmIdentifier, when present, must match the
+                       signature scheme exactly. */
+                    if (pss_spki != is_pss_pss ||
+                        (pss_spki &&
+                         certificate -> nx_secure_x509_public_key_pss_algorithm !=
+                             NX_SECURE_TLS_X509_TYPE_UNKNOWN &&
+                         (certificate -> nx_secure_x509_public_key_pss_algorithm != pss_key_algorithm ||
+                          certificate -> nx_secure_x509_public_key_pss_salt_length != tls_salt_length)))
+                    {
+                        return(NX_SECURE_TLS_UNSUPPORTED_SIGNATURE_ALGORITHM);
+                    }
+                }
             }
         }
 

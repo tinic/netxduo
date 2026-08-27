@@ -196,7 +196,8 @@ const NX_CRYPTO_METHOD  *curve_method;
         public_cipher_method -> nx_crypto_algorithm == NX_CRYPTO_DIGITAL_SIGNATURE_RSA)
     {
         /* Make sure the public algorithm of the issuer certificate is RSA. */
-        if (issuer_certificate -> nx_secure_x509_public_algorithm != NX_SECURE_TLS_X509_TYPE_RSA)
+        if (issuer_certificate -> nx_secure_x509_public_algorithm != NX_SECURE_TLS_X509_TYPE_RSA ||
+            issuer_certificate -> nx_secure_x509_public_key_identifier == NX_SECURE_TLS_X509_TYPE_RSA_PSS)
         {
 #ifdef NX_SECURE_KEY_CLEAR
             NX_SECURE_MEMSET(generated_hash, 0, sizeof(generated_hash));

@@ -241,6 +241,15 @@ NX_CRYPTO_EXTENDED_OUTPUT             extended_output;
             /* Get the public cipher method from the ciphersuite. */
             public_cipher_method = ciphersuite -> nx_secure_tls_public_cipher;
 
+            /* An id-RSASSA-PSS key is signature-only; it must never be used
+               for the PKCS#1 v1.5 RSA key transport below. */
+            if (public_cipher_method -> nx_crypto_algorithm == NX_CRYPTO_KEY_EXCHANGE_RSA &&
+                remote_certificate -> nx_secure_x509_public_key_identifier ==
+                    NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+            {
+                return(NX_SECURE_TLS_UNSUPPORTED_PUBLIC_CIPHER);
+            }
+
             /* If using RSA, the length is equal to the key size. */
             data_size = remote_certificate -> nx_secure_x509_public_key.rsa_public_key.nx_secure_rsa_public_modulus_length;
 

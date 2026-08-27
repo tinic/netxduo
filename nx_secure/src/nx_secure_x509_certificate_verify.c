@@ -161,6 +161,30 @@ const NX_CRYPTO_METHOD  *curve_method;
         break;
     }
 
+    /* An id-RSASSA-PSS SubjectPublicKeyInfo certifies this modulus only for
+       PSS. If its parameters are present, RFC 4055 3.3 also requires the
+       signature hash/MGF/trailer to match and its salt to be at least the
+       key's minimum. The parser has already required MGF1 with the same hash
+       and trailer field 1 for both parameter sets. */
+    if (issuer_certificate -> nx_secure_x509_public_key_identifier ==
+            NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+    {
+        if (is_pss == NX_CRYPTO_FALSE)
+        {
+            return(NX_SECURE_X509_WRONG_SIGNATURE_METHOD);
+        }
+
+        if (issuer_certificate -> nx_secure_x509_public_key_pss_algorithm !=
+                NX_SECURE_TLS_X509_TYPE_UNKNOWN &&
+            (issuer_certificate -> nx_secure_x509_public_key_pss_algorithm !=
+                 certificate -> nx_secure_x509_signature_algorithm ||
+             certificate -> nx_secure_x509_signature_salt_length <
+                 issuer_certificate -> nx_secure_x509_public_key_pss_salt_length))
+        {
+            return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
+        }
+    }
+
     /* Find certificate crypto methods for this certificate. */
     status = _nx_secure_x509_find_certificate_methods(certificate, (USHORT)signature_algorithm, &crypto_methods);
     if (status != NX_SECURE_X509_SUCCESS)
@@ -486,4 +510,3 @@ const NX_CRYPTO_METHOD  *curve_method;
     /* Comparison failed, return error. */
     return(NX_SECURE_X509_CERTIFICATE_SIG_CHECK_FAILED);
 }
-

@@ -34,7 +34,7 @@ static UINT _nx_secure_x509_parse_signature_algorithm(const UCHAR *buffer, ULONG
                                                       UINT *bytes_processed,
                                                       NX_SECURE_X509_CERT *cert);
 static UINT _nx_secure_x509_parse_pss_parameters(const UCHAR *buffer, ULONG length,
-                                                 NX_SECURE_X509_CERT *cert);
+                                                 UINT *algorithm, USHORT *salt_length);
 static UINT _nx_secure_x509_parse_issuer(const UCHAR *buffer, ULONG length, UINT *bytes_processed,
                                          NX_SECURE_X509_CERT *cert);
 static UINT _nx_secure_x509_parse_validity(const UCHAR *buffer, ULONG length,
@@ -926,7 +926,10 @@ UCHAR        oid_found = NX_CRYPTO_FALSE;
                downstream can act on, and every branch below this call is a
                refusal, so an unreadable parameter set fails the certificate
                rather than silently picking a digest. */
-            status = _nx_secure_x509_parse_pss_parameters(tlv_data, tlv_length, cert);
+            status = _nx_secure_x509_parse_pss_parameters(
+                tlv_data, tlv_length,
+                &cert -> nx_secure_x509_signature_algorithm,
+                &cert -> nx_secure_x509_signature_salt_length);
 
             if (status != NX_SECURE_X509_SUCCESS)
             {
@@ -1098,7 +1101,7 @@ UINT         status;
 /*                                                                        */
 /**************************************************************************/
 static UINT _nx_secure_x509_parse_pss_parameters(const UCHAR *buffer, ULONG length,
-                                                 NX_SECURE_X509_CERT *cert)
+                                                 UINT *algorithm, USHORT *parsed_salt_length)
 {
 USHORT       tlv_type;
 USHORT       tlv_type_class;
@@ -1256,22 +1259,22 @@ ULONG        i;
     switch (hash_oid)
     {
     case NX_SECURE_TLS_X509_TYPE_HASH_SHA_256:
-        cert -> nx_secure_x509_signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256;
+        *algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256;
         break;
 
     case NX_SECURE_TLS_X509_TYPE_HASH_SHA_384:
-        cert -> nx_secure_x509_signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384;
+        *algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384;
         break;
 
     case NX_SECURE_TLS_X509_TYPE_HASH_SHA_512:
-        cert -> nx_secure_x509_signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512;
+        *algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512;
         break;
 
     default:
         return(NX_SECURE_X509_UNSUPPORTED_SIGNATURE_PARAMETERS);
     }
 
-    cert -> nx_secure_x509_signature_salt_length = (USHORT)salt_length;
+    *parsed_salt_length = (USHORT)salt_length;
 
     return(NX_SECURE_X509_SUCCESS);
 }
@@ -1595,6 +1598,7 @@ const UCHAR *tlv_data;
 const UCHAR *bitstring_ptr;
 ULONG        bitstring_len;
 ULONG        header_length;
+ULONG        parameter_length;
 UINT         oid;
 UINT         oid_parameter;
 UINT         status;
@@ -1676,36 +1680,86 @@ UINT         status;
     {
         /* The OID is in the data we extracted. */
         _nx_secure_x509_oid_parse(tlv_data, tlv_length, &oid);
+        cert -> nx_secure_x509_public_key_identifier = oid;
         cert -> nx_secure_x509_public_algorithm = oid;
 
-        /* The OID is followed by a NULL or a parameter OID. */
-        tlv_data = &tlv_data[tlv_length];
-        status = _nx_secure_x509_asn1_tlv_block_parse(tlv_data, &length, &tlv_type, &tlv_type_class, &tlv_length, &tlv_data, &header_length);
-        if (status != 0)
+        /* id-RSASSA-PSS carries the same RSAPublicKey bit string as
+           rsaEncryption, but certifies it for PSS signatures only. Preserve
+           that policy in public_key_identifier and normalize the operation
+           type so the existing RSA primitive and key union remain usable. */
+        if (oid == NX_SECURE_TLS_X509_TYPE_RSA_PSS)
         {
-            return status;
+            cert -> nx_secure_x509_public_algorithm = NX_SECURE_TLS_X509_TYPE_RSA;
+            cert -> nx_secure_x509_public_key_pss_algorithm = NX_SECURE_TLS_X509_TYPE_UNKNOWN;
+            cert -> nx_secure_x509_public_key_pss_salt_length = 0;
         }
 
+        /* The OID is followed by NULL, a parameter OID, PSS parameters, or
+           nothing (the latter is valid only for an id-RSASSA-PSS SPKI). */
+        tlv_data = &tlv_data[tlv_length];
         oid_parameter = 0;
 
-        if (tlv_type == NX_SECURE_ASN_TAG_OID)
-        {
-            /* The OID is in the data we extracted. */
-            _nx_secure_x509_oid_parse(tlv_data, tlv_length, &oid_parameter);
-
-        }
-        else if (tlv_type != NX_SECURE_ASN_TAG_NULL || tlv_type_class != NX_SECURE_ASN_TAG_CLASS_UNIVERSAL)
+        if (length == 0 && oid != NX_SECURE_TLS_X509_TYPE_RSA_PSS)
         {
             return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
         }
 
+        if (length > 0)
+        {
+            parameter_length = length;
+            status = _nx_secure_x509_asn1_tlv_block_parse(tlv_data, &length, &tlv_type,
+                                                          &tlv_type_class, &tlv_length,
+                                                          &tlv_data, &header_length);
+            if (status != 0)
+            {
+                return status;
+            }
 
-        /* Update our bytes count. */
-        *bytes_processed += (header_length + tlv_length);
+            if (oid == NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+            {
+                /* RFC 4055 permits absent PSS SPKI parameters, but if a
+                   value is present it must be RSASSA-PSS-params, never NULL
+                   or an unrelated AlgorithmIdentifier. */
+                if (tlv_type != NX_SECURE_ASN_TAG_SEQUENCE ||
+                    tlv_type_class != NX_SECURE_ASN_TAG_CLASS_UNIVERSAL)
+                {
+                    return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+                }
+
+                status = _nx_secure_x509_parse_pss_parameters(
+                    tlv_data, tlv_length,
+                    &cert -> nx_secure_x509_public_key_pss_algorithm,
+                    &cert -> nx_secure_x509_public_key_pss_salt_length);
+                if (status != NX_SECURE_X509_SUCCESS)
+                {
+                    return(status);
+                }
+            }
+            else if (tlv_type == NX_SECURE_ASN_TAG_OID)
+            {
+                _nx_secure_x509_oid_parse(tlv_data, tlv_length, &oid_parameter);
+            }
+            else if (tlv_type != NX_SECURE_ASN_TAG_NULL ||
+                     tlv_type_class != NX_SECURE_ASN_TAG_CLASS_UNIVERSAL)
+            {
+                return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+            }
+
+            /* AlgorithmIdentifier contains exactly one parameters value. */
+            if ((header_length + tlv_length) != parameter_length)
+            {
+                return(NX_SECURE_X509_UNEXPECTED_ASN1_TAG);
+            }
+
+            *bytes_processed += (header_length + tlv_length);
+        }
 
         /* Extract the data in the block following the OID sequence. Use the calculated remaining
          * length for the length of the data going in. */
-        status = _nx_secure_x509_extract_oid_data(bitstring_ptr, oid, oid_parameter, bitstring_len, &bytes, cert);
+        status = _nx_secure_x509_extract_oid_data(bitstring_ptr,
+                                                  (oid == NX_SECURE_TLS_X509_TYPE_RSA_PSS) ?
+                                                      NX_SECURE_TLS_X509_TYPE_RSA : oid,
+                                                  oid_parameter, bitstring_len, &bytes, cert);
         if (status != 0)
         {
             return status;
@@ -2052,4 +2106,3 @@ UINT         status;
 
     return(NX_SECURE_X509_SUCCESS);
 }
-

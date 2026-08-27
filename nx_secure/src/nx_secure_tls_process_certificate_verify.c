@@ -103,6 +103,8 @@ UINT                                  status;
 VOID                                 *handler = NX_NULL;
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
 UINT handshake_hash_length = 0;
+UINT wire_signature_algorithm = 0;
+UINT pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_UNKNOWN;
 CHAR *metadata;
 ULONG metadata_size;
 const CHAR server_context[] = "TLS 1.3, server CertificateVerify\0"; /* Includes 0-byte separator. */
@@ -173,7 +175,8 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
     if (tls_session -> nx_secure_tls_1_3)
     {
         /* Select crypto methods based on the wire signature algorithm code. */
-        switch ((UINT)((packet_buffer[0] << 8) + packet_buffer[1]))
+        wire_signature_algorithm = (UINT)((packet_buffer[0] << 8) + packet_buffer[1]);
+        switch (wire_signature_algorithm)
         {
         case NX_SECURE_TLS_SIGNATURE_ECDSA_SHA256:
             signature_algorithm = NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_256;
@@ -186,15 +189,54 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
             break;
         case 0x0804u: /* rsa_pss_rsae_sha256 */
             signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_256;
+            pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256;
             break;
         case 0x0805u: /* rsa_pss_rsae_sha384 */
             signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_384;
+            pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384;
             break;
         case 0x0806u: /* rsa_pss_rsae_sha512 */
             signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_512;
+            pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512;
+            break;
+        case 0x0809u: /* rsa_pss_pss_sha256 */
+            signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_256;
+            pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256;
+            break;
+        case 0x080au: /* rsa_pss_pss_sha384 */
+            signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_384;
+            pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384;
+            break;
+        case 0x080bu: /* rsa_pss_pss_sha512 */
+            signature_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_SHA_512;
+            pss_key_algorithm = NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_512;
             break;
         default:
             return(NX_SECURE_TLS_UNSUPPORTED_CERT_SIGN_ALG);
+        }
+
+        /* rsa_pss_rsae_* is only for rsaEncryption SPKI keys and
+           rsa_pss_pss_* only for id-RSASSA-PSS SPKI keys. If the latter
+           carries restrictions, RFC 8446 requires the signature parameters
+           to match them exactly. */
+        if (client_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_RSA)
+        {
+            UINT pss_spki = (client_certificate -> nx_secure_x509_public_key_identifier ==
+                             NX_SECURE_TLS_X509_TYPE_RSA_PSS);
+            UINT pss_scheme = (wire_signature_algorithm >= 0x0809u &&
+                               wire_signature_algorithm <= 0x080bu);
+            UINT tls_salt_length = (pss_key_algorithm == NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_256) ? 32u :
+                                   (pss_key_algorithm == NX_SECURE_TLS_X509_TYPE_RSA_PSS_SHA_384) ? 48u : 64u;
+
+            if (pss_spki != pss_scheme ||
+                (pss_spki &&
+                 client_certificate -> nx_secure_x509_public_key_pss_algorithm !=
+                     NX_SECURE_TLS_X509_TYPE_UNKNOWN &&
+                 (client_certificate -> nx_secure_x509_public_key_pss_algorithm != pss_key_algorithm ||
+                  client_certificate -> nx_secure_x509_public_key_pss_salt_length != tls_salt_length)))
+            {
+                return(NX_SECURE_TLS_UNSUPPORTED_CERT_SIGN_ALG);
+            }
         }
     }
     else
@@ -515,6 +557,14 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
     /* Use RSA? */
     if (client_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_RSA)
     {
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+        if (!tls_session -> nx_secure_tls_1_3 &&
+            client_certificate -> nx_secure_x509_public_key_identifier ==
+                NX_SECURE_TLS_X509_TYPE_RSA_PSS)
+        {
+            return(NX_SECURE_TLS_UNSUPPORTED_CERT_SIGN_ALG);
+        }
+#endif
 #if (NX_SECURE_TLS_TLS_1_2_ENABLED || NX_SECURE_TLS_TLS_1_3_ENABLED)
 #ifdef NX_SECURE_ENABLE_DTLS
         if (tls_session -> nx_secure_tls_protocol_version == NX_SECURE_TLS_VERSION_TLS_1_2 ||
@@ -964,4 +1014,3 @@ NX_SECURE_EC_PUBLIC_KEY              *ec_pubkey;
     return(NX_NOT_SUPPORTED);
 #endif
 }
-
