@@ -216,6 +216,7 @@ NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
     }
 
 
+#ifndef NX_DISABLE_IGMP
     /* Leave multicast groups related to the interface to be detached. */
     for (i = 0; i < NX_MAX_MULTICAST_GROUPS; i++)
     {
@@ -234,6 +235,7 @@ NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
                                                     ip_ptr -> nx_ipv4_multicast_entry[i].nx_ipv4_multicast_join_list,
                                                     index);
     }
+#endif /* NX_DISABLE_IGMP */
 #endif /* !NX_DISABLE_IPV4  */
 
 #ifdef NX_ENABLE_IPV6_MULTICAST

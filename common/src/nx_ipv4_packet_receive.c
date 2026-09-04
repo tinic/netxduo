@@ -548,10 +548,14 @@ UINT            packet_consumed;
 
         /* Check for loopback address.  */
         ((ip_header_ptr -> nx_ip_header_destination_ip >= NX_IP_LOOPBACK_FIRST) &&
-         (ip_header_ptr -> nx_ip_header_destination_ip <= NX_IP_LOOPBACK_LAST)) ||
+         (ip_header_ptr -> nx_ip_header_destination_ip <= NX_IP_LOOPBACK_LAST))
+#ifndef NX_DISABLE_IGMP
+         ||
 
         /* Check for valid Multicast address.  */
-        (_nx_igmp_multicast_check(ip_ptr, ip_header_ptr -> nx_ip_header_destination_ip, if_ptr)))
+        (_nx_igmp_multicast_check(ip_ptr, ip_header_ptr -> nx_ip_header_destination_ip, if_ptr))
+#endif /* NX_DISABLE_IGMP */
+        )
     {
 
         /* Determine if this packet is fragmented.  If so, place it on the deferred processing
