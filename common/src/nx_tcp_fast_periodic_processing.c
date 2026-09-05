@@ -565,6 +565,10 @@ ULONG  _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr)
 {
 ULONG  step;
 
+#ifndef AMINETXDUO_WINDOW_UPDATE_DIVISOR
+#define AMINETXDUO_WINDOW_UPDATE_DIVISOR 2
+#endif
+
     /* RCV.BUFF/2 alone, without RFC 1122 4.2.3.3's min(MSS, ...) term.  The
        MSS term made this stack announce at the earliest moment the RFC
        permits, and on a receiver slower than its peer that is an oscillator:
@@ -598,7 +602,14 @@ ULONG  step;
        do.  The term costs a quarter to a third of the read path.  It stays
        out, and this note is here so the next reading of the RFC does not
        spend another afternoon on it.  */
-    step = socket_ptr -> nx_tcp_socket_rx_window_default / 2;
+    /* AMINETXDUO: the divisor is a build knob so the direction the note above
+       establishes can be pushed further and measured, rather than assumed.
+       The 2*MSS arm proved that MORE, SMALLER announcements cost a quarter to
+       a third of the read path; whether FEWER, LARGER ones than RCV.BUFF/2
+       help is the untested other side of the same axis.  Default 2 is the
+       measured shipping value -- an unset knob changes nothing. */
+    step = socket_ptr -> nx_tcp_socket_rx_window_default /
+           AMINETXDUO_WINDOW_UPDATE_DIVISOR;
 
     return(step);
 }
