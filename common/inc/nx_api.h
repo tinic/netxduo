@@ -2434,8 +2434,16 @@ typedef struct NX_TCP_LISTEN_STRUCT
    target; 512 of them and 128 chain heads cost 41,548 bytes -- about 40 KB --
    of the IP instance, measured, one percent of the four megabytes the project
    targets.  */
+/* Overridable: a machine with a megabyte of RAM cannot spend 37 KB of it on
+   half-open connections it will never have.  Below the size the cookie takes
+   over, so a smaller cache costs option fidelity under a flood and nothing
+   else -- see the paragraph above. */
+#ifndef NX_TCP_SYNCACHE_SIZE
 #define NX_TCP_SYNCACHE_SIZE                    512
+#endif
+#ifndef NX_TCP_SYNCACHE_BUCKETS
 #define NX_TCP_SYNCACHE_BUCKETS                 128
+#endif
 
 /* A half-open entry is given up after this many ticks.  Twenty seconds
    outlasts the SYN retry ladder of every client that matters (Linux gives up
