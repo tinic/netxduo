@@ -602,12 +602,26 @@ ULONG  step;
        do.  The term costs a quarter to a third of the read path.  It stays
        out, and this note is here so the next reading of the RFC does not
        spend another afternoon on it.  */
-    /* AMINETXDUO: the divisor is a build knob so the direction the note above
-       establishes can be pushed further and measured, rather than assumed.
-       The 2*MSS arm proved that MORE, SMALLER announcements cost a quarter to
-       a third of the read path; whether FEWER, LARGER ones than RCV.BUFF/2
-       help is the untested other side of the same axis.  Default 2 is the
-       measured shipping value -- an unset knob changes nothing. */
+    /* AMINETXDUO: MEASURED ON BOTH SIDES, 2026-09-06, and RCV.BUFF/2 is a
+       real optimum rather than a resting place.  The note above had settled
+       only the more-smaller-announcements side; the other side turned out to
+       fall off just as hard.  a2065 / A1200, tools/check-rate.sh, five rounds
+       per arm, medians, the comparison arm rebuilt in the same sitting:
+
+         divisor 1, announce only on a whole free buffer   4,134,551  -23.4%
+         divisor 2, RCV.BUFF/2, ships                      5,398,483      --
+         divisor 3, RCV.BUFF/3                             5,268,734   -2.4%
+
+       With the 2*MSS arm above at -25.7 to -32.2%, the axis is characterised
+       end to end and symmetric: too many announcements and too few cost
+       about the same quarter of the read path.  Writes moved under a quarter
+       of a per cent on every arm, which is what a receive-side threshold
+       should do.
+
+       The knob stays because that is how this tree keeps such answers -- two
+       libraries out of one tree differing in one decision.  Default 2 is the
+       shipping value, so an unset knob compiles to what was here before.
+       DO NOT SWEEP THIS AGAIN. */
     step = socket_ptr -> nx_tcp_socket_rx_window_default /
            AMINETXDUO_WINDOW_UPDATE_DIVISOR;
 
