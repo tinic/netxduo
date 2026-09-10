@@ -3715,6 +3715,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_ip_gateway_address_clear                     _nx_ip_gateway_address_clear
 #define nx_ip_gateway_address_get                       _nx_ip_gateway_address_get
 #define nx_ip_gateway_address_set                       _nx_ip_gateway_address_set
+#define nx_ip_gateway_interface_address_set             _nx_ip_gateway_interface_address_set
 #define nx_ip_info_get                                  _nx_ip_info_get
 #define nx_ip_interface_address_get                     _nx_ip_interface_address_get
 #define nx_ip_interface_address_mapping_configure       _nx_ip_interface_address_mapping_configure
@@ -3913,6 +3914,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nx_ip_gateway_address_clear                     _nxe_ip_gateway_address_clear
 #define nx_ip_gateway_address_get                       _nxe_ip_gateway_address_get
 #define nx_ip_gateway_address_set                       _nxe_ip_gateway_address_set
+#define nx_ip_gateway_interface_address_set             _nxe_ip_gateway_interface_address_set
 #define nx_ip_info_get                                  _nxe_ip_info_get
 #define nx_ip_interface_address_get                     _nxe_ip_interface_address_get
 #define nx_ip_interface_address_mapping_configure       _nxe_ip_interface_address_mapping_configure
@@ -4131,6 +4133,8 @@ UINT nx_ip_fragment_enable(NX_IP *ip_ptr);
 UINT nx_ip_gateway_address_clear(NX_IP *ip_ptr);
 UINT nx_ip_gateway_address_get(NX_IP *ip_ptr, ULONG *ip_address);
 UINT nx_ip_gateway_address_set(NX_IP *ip_ptr, ULONG ip_address);
+UINT nx_ip_gateway_interface_address_set(NX_IP *ip_ptr, UINT interface_index,
+                                         ULONG ip_address);
 UINT nx_ip_info_get(NX_IP *ip_ptr, ULONG *ip_total_packets_sent, ULONG *ip_total_bytes_sent,
                     ULONG *ip_total_packets_received, ULONG *ip_total_bytes_received,
                     ULONG *ip_invalid_packets, ULONG *ip_receive_packets_dropped,
@@ -4559,4 +4563,3 @@ UINT _nx_utility_base64_decode(UCHAR *base64name, UINT base64name_size, UCHAR *n
 #endif
 
 #endif
-

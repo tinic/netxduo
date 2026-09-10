@@ -159,6 +159,8 @@ UINT _nx_ip_address_change_notify(NX_IP *ip_ptr, VOID (*ip_address_change_notify
 UINT _nx_ip_address_get(NX_IP *ip_ptr, ULONG *ip_address, ULONG *network_mask);
 UINT _nx_ip_address_set(NX_IP *ip_ptr, ULONG ip_address, ULONG network_mask);
 UINT _nx_ip_gateway_address_set(NX_IP *ip_ptr, ULONG ip_address);
+UINT _nx_ip_gateway_interface_address_set(NX_IP *ip_ptr, UINT interface_index,
+                                          ULONG ip_address);
 UINT _nx_ip_gateway_address_get(NX_IP *ip_ptr, ULONG *ip_address);
 UINT _nx_ip_gateway_address_clear(NX_IP *ip_ptr);
 UINT _nx_ip_interface_address_get(NX_IP *ip_ptr, UINT interface_index, ULONG *ip_address, ULONG *network_mask);
@@ -182,6 +184,8 @@ UINT _nxe_ip_address_set(NX_IP *ip_ptr, ULONG ip_address, ULONG network_mask);
 UINT _nxe_ip_interface_address_get(NX_IP *ip_ptr, UINT interface_index, ULONG *ip_address, ULONG *network_mask);
 UINT _nxe_ip_interface_address_set(NX_IP *ip_ptr, UINT interface_index, ULONG ip_address, ULONG network_mask);
 UINT _nxe_ip_gateway_address_set(NX_IP *ip_ptr, ULONG ip_address);
+UINT _nxe_ip_gateway_interface_address_set(NX_IP *ip_ptr, UINT interface_index,
+                                           ULONG ip_address);
 UINT _nxe_ip_gateway_address_get(NX_IP *ip_ptr, ULONG *ip_address);
 UINT _nxe_ip_gateway_address_clear(NX_IP *ip_ptr);
 UINT _nxe_ip_raw_packet_send(NX_IP *ip_ptr, NX_PACKET **packet_ptr_ptr,
@@ -201,4 +205,3 @@ UINT _nxe_ipv4_multicast_interface_leave(NX_IP *ip_ptr, ULONG group_address, UIN
 #endif /* NX_IPSEC_ENABLE */
 #endif /* FEATURE_NX_IPV6 */
 #endif /* NX_IPV4_H */
-

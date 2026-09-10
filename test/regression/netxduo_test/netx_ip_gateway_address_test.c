@@ -84,7 +84,7 @@ UINT    status;
 
 #if (NX_MAX_PHYSICAL_INTERFACES > 1) && defined(__PRODUCT_NETXDUO__)
     /* Attach the second interface. */
-    status += nx_ip_interface_attach(&ip_0, "Second Interface", IP_ADDRESS(1, 3, 3, 4), 0xFFFF0000UL, _nx_ram_network_driver_1500);
+    status += nx_ip_interface_attach(&ip_0, "Second Interface", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, _nx_ram_network_driver_1500);
 
     if (status)
         error_counter++;                                   
@@ -164,7 +164,28 @@ NX_PACKET  *packet_ptr;
     {                         
         printf("ERROR!\n");
         test_control_return(1);
-    }            
+    }
+
+    /* Both interfaces share a subnet. Select the second one explicitly and
+       verify that address matching does not silently choose the first. */
+    status = nx_ip_gateway_interface_address_set(&ip_0, 1,
+                                                  IP_ADDRESS(1, 2, 3, 1));
+    if ((status) ||
+        (ip_0.nx_ip_gateway_interface != &ip_0.nx_ip_interface[1]))
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+
+    /* Restore the first interface for the source-interface test below. */
+    status = nx_ip_gateway_interface_address_set(&ip_0, 0,
+                                                  IP_ADDRESS(1, 2, 3, 1));
+    if ((status) ||
+        (ip_0.nx_ip_gateway_interface != &ip_0.nx_ip_interface[0]))
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
 #endif
 
     /* Create a UDP socket.  */

@@ -90,6 +90,14 @@ extern   "C" {
 #define NX_DHCP_CLIENT_DISABLE_DEFAULT_INTERFACE
 */
 
+/* Disable automatic updates to the IP instance's default gateway.  The
+   gateway received from option 3 is still retained in each interface record
+   and is available through nx_dhcp_interface_user_option_retrieve().  This is
+   intended for multi-homed applications which must choose one interface's
+   router rather than letting the most recent DHCP reply choose globally.
+#define NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
+*/
+
 /* Define the DHCP ID that is used to mark the DHCP structure as created.  */
 #define NX_DHCP_ID                      0x44484350UL
 

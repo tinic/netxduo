@@ -1119,7 +1119,9 @@ UINT _nx_dhcp_interface_reinitialize(NX_DHCP *dhcp_ptr, UINT iface_index)
 UINT                      status;
 ULONG                     ip_address;
 ULONG                     network_mask;
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
 ULONG                     gateway_address;
+#endif /* NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY */
 NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
 
   
@@ -1153,6 +1155,7 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
         }
     }
 
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
     /* Check if have gateway address.  */
     if (interface_record -> nx_dhcp_gateway_address)
     {
@@ -1168,6 +1171,7 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
             nx_ip_gateway_address_clear(dhcp_ptr -> nx_dhcp_ip_ptr);
         }
     }
+#endif /* NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY */
 
     /* Initialize the client DHCP IP address with the NULL IP address.  */
     interface_record -> nx_dhcp_ip_address =  NX_BOOTP_NO_ADDRESS; 
@@ -5037,6 +5041,7 @@ ULONG       probing_delay;
                                                 interface_record -> nx_dhcp_ip_address,
                                                 interface_record -> nx_dhcp_network_mask);
 
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
                     /* Check if the gateway address is valid.  */
                     if (interface_record -> nx_dhcp_gateway_address)
                     {
@@ -5044,6 +5049,7 @@ ULONG       probing_delay;
                         /* Set the gateway address.  */
                         nx_ip_gateway_address_set(dhcp_ptr -> nx_dhcp_ip_ptr, interface_record -> nx_dhcp_gateway_address);
                     }
+#endif /* NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY */
 
                     /* Change to the Bound state.  */
                     interface_record -> nx_dhcp_state =  NX_DHCP_STATE_BOUND;
@@ -5143,6 +5149,7 @@ ULONG       probing_delay;
                                                 interface_record -> nx_dhcp_ip_address,  
                                                 interface_record -> nx_dhcp_network_mask);
 
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
                     /* Check if the gateway address is valid.  */
                     if (interface_record -> nx_dhcp_gateway_address)
                     {
@@ -5150,6 +5157,7 @@ ULONG       probing_delay;
                         /* Set the gateway address.  */
                         nx_ip_gateway_address_set(dhcp_ptr -> nx_dhcp_ip_ptr, interface_record -> nx_dhcp_gateway_address);
                     }
+#endif /* NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY */
 
                     /* Lease has been renewed, set the countdown timer back to the renewal time and go back
                        to the Bound state*/
@@ -5214,6 +5222,7 @@ ULONG       probing_delay;
                                                 interface_record -> nx_dhcp_ip_address,  
                                                 interface_record -> nx_dhcp_network_mask);
 
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
                     /* Check if the gateway address is valid.  */
                     if (interface_record -> nx_dhcp_gateway_address)
                     {
@@ -5221,6 +5230,7 @@ ULONG       probing_delay;
                         /* Set the gateway address.  */
                         nx_ip_gateway_address_set(dhcp_ptr -> nx_dhcp_ip_ptr, interface_record -> nx_dhcp_gateway_address);
                     }
+#endif /* NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY */
 
                     /* Lease has been renewed, set the countdown timer back to the renewal time and go back
                        to the Bound state.  */
@@ -8945,6 +8955,7 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
         return status;
     }
 
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
     /* Check if the gateway address is valid.  */
     if (interface_record -> nx_dhcp_gateway_address)
     {
@@ -8961,6 +8972,7 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
             return(status);
         }
     }
+#endif /* NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY */
 
     /* Now apply the time elapsed to update the DHCP Client time remaining on its lease and current DHCP state. */
     status = _nx_dhcp_client_interface_update_time_remaining(dhcp_ptr, interface_record-> nx_dhcp_interface_index, time_elapsed);

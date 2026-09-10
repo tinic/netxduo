@@ -109,6 +109,7 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_gateway_address_clear.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_gateway_address_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_gateway_address_set.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_gateway_interface_address_set.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_header_add.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_info_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_initialize.c
@@ -436,6 +437,7 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_ip_gateway_address_clear.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_ip_gateway_address_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_ip_gateway_address_set.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/nxe_ip_gateway_interface_address_set.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_ip_info_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_ip_interface_address_get.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nxe_ip_interface_address_mapping_configure.c
