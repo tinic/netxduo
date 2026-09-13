@@ -57,7 +57,11 @@ if("-DNX_BSD_ENABLE" IN_LIST ${CMAKE_BUILD_TYPE})
       ${SOURCE_DIR}/bsd_test/netx_bsd_select_spurious_event_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_socket_options_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_select_improvements_test.c
-      ${SOURCE_DIR}/bsd_test/netx_bsd_recvfromto_test.c)
+      ${SOURCE_DIR}/bsd_test/netx_bsd_recvfromto_test.c
+      ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_accept_socket_limit_test.c
+      ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_accept_socket_limit_shared_test.c
+      ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_oob_errno_test.c
+      ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_oob_test.c)
   if("-DNX_BSD_RAW_SUPPORT" IN_LIST ${CMAKE_BUILD_TYPE})
     list(
       APPEND
@@ -1379,6 +1383,9 @@ endif()
 foreach(test_case ${test_cases})
   get_filename_component(test_name ${test_case} NAME_WE)
   add_executable(${test_name} ${test_case})
+  if(test_name STREQUAL netx_dns_nxe_api_test)
+    target_compile_definitions(${test_name} PRIVATE NX_DNS_SOURCE_CODE)
+  endif()
   target_link_libraries(${test_name} PRIVATE test_utility)
   add_test(${CMAKE_BUILD_TYPE}::${test_name} ${test_name})
 endforeach()

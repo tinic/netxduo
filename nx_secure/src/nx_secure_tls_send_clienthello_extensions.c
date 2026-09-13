@@ -27,7 +27,7 @@
 #ifndef NX_SECURE_TLS_CLIENT_DISABLED
 
 #ifndef NX_SECURE_DISABLE_X509
-static UINT _nx_secure_tls_send_clienthello_sig_extension(NX_SECURE_TLS_SESSION *tls_session,
+UINT _nx_secure_tls_send_clienthello_sig_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                           UCHAR *packet_buffer, ULONG *packet_offset,
                                                           USHORT *extension_length,
                                                           ULONG available_size);
@@ -383,7 +383,7 @@ UINT   status;
 /*                                                                        */
 /**************************************************************************/
 #ifndef NX_SECURE_DISABLE_X509
-static UINT _nx_secure_tls_send_clienthello_sig_extension(NX_SECURE_TLS_SESSION *tls_session,
+UINT _nx_secure_tls_send_clienthello_sig_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                           UCHAR *packet_buffer, ULONG *packet_offset,
                                                           USHORT *extension_length,
                                                           ULONG available_size)
