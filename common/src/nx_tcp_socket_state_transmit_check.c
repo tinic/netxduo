@@ -74,7 +74,17 @@ VOID  _nx_tcp_socket_state_transmit_check(NX_TCP_SOCKET *socket_ptr)
 ULONG tx_window_current;
 
     /* Now check to see if there is a thread suspended attempting to transmit.  */
-    if (socket_ptr -> nx_tcp_socket_transmit_suspension_list)
+    /* AmiNetXDuo: the vendor ran this block only for a suspended sender, so a
+       NON-blocking writer parked in WaitSelect() was never told that an
+       acknowledgment had freed its transmit queue -- it woke on its own
+       timeout instead.  On an A1200/PiStorm32 with genet.device (5 ms round
+       trip) that held a non-blocking sender at 5.7 Mbit/s where a blocking
+       one did 17 and Roadshow 44.  The callback is cheap on the far side
+       (src/bsdsocket/select.c posts FD_WRITE only when a writer has hit the
+       wall), so it is called whenever a segment could go, and a suspended
+       sender is resumed exactly as before.  */
+    if ((socket_ptr -> nx_tcp_socket_transmit_suspension_list) ||
+        (socket_ptr -> nx_tcp_socket_window_update_notify))
     {
 
         /* Yes, a thread is suspended attempting to transmit when the transmit window
@@ -143,11 +153,16 @@ ULONG tx_window_current;
             }
 
 
-            /* Decrement the suspension count.  */
-            socket_ptr -> nx_tcp_socket_transmit_suspended_count--;
+            /* A suspended sender, if there is one, can go again.  */
+            if (socket_ptr -> nx_tcp_socket_transmit_suspension_list)
+            {
 
-            /* Remove the suspended thread from the list.  */
-            _nx_tcp_socket_thread_resume(&(socket_ptr -> nx_tcp_socket_transmit_suspension_list), NX_SUCCESS);
+                /* Decrement the suspension count.  */
+                socket_ptr -> nx_tcp_socket_transmit_suspended_count--;
+
+                /* Remove the suspended thread from the list.  */
+                _nx_tcp_socket_thread_resume(&(socket_ptr -> nx_tcp_socket_transmit_suspension_list), NX_SUCCESS);
+            }
         }
     }
 }
