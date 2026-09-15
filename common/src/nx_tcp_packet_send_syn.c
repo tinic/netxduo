@@ -300,13 +300,29 @@ ULONG        mss = 0;
         /* Sets the window scaling option. */
         option_word_2 = NX_TCP_RWIN_OPTION;
 
-        /* Compute the window scaling factor */
-        for (scale_factor = 0; scale_factor < 15; scale_factor++)
+        /* Compute the window scaling factor.  From the largest window this
+           socket may ever advertise, not the one it opens with: a port that
+           starts a socket small and lets it grow once the round trip is
+           known (nx_tcp_socket_rx_window_maximum raised after create) needs
+           the shift negotiated for the grown size now, because RFC 7323 2.2
+           fixes it for the connection here.  A port that never touches the
+           maximum has it equal to the window it created with, and nothing
+           changes. */
         {
+        ULONG scale_window = socket_ptr -> nx_tcp_socket_rx_window_current;
 
-            if ((socket_ptr -> nx_tcp_socket_rx_window_current >> scale_factor) < 65536)
+            if (socket_ptr -> nx_tcp_socket_rx_window_maximum > scale_window)
             {
-                break;
+                scale_window = socket_ptr -> nx_tcp_socket_rx_window_maximum;
+            }
+
+            for (scale_factor = 0; scale_factor < 15; scale_factor++)
+            {
+
+                if ((scale_window >> scale_factor) < 65536)
+                {
+                    break;
+                }
             }
         }
 
