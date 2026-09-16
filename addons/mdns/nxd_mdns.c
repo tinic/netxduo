@@ -7757,6 +7757,71 @@ static VOID _nx_mdns_yield(NX_MDNS *mdns_ptr)
 /*    _nx_mdns_thread_entry                 Processing thread for mDNS    */ 
 /*                                                                        */ 
 /**************************************************************************/
+/* AMINETXDUO: two questions asked of a received response before its records
+   are worked on, because on a busy LAN the answer to both is nearly always
+   "no" and the work is the single most expensive thing this thread does.
+   Measured on a 25 MHz 68030 (A3000, X-Surf 100): the mDNS thread took 9%
+   of the CPU during an unrelated TCP transfer, all of it decoding, interning
+   and caching other machines' announcements that nothing here had asked for.
+
+   Is anything waiting for peer records?  A one-shot lookup and a continuous
+   (browse) query both park a record in NX_MDNS_RR_STATE_QUERY in the peer
+   cache for as long as they are open, so an empty scan means no reader: a
+   record cached now would only age out unread.  A lookup made later sends
+   its own query and reads the answer to that, which is what a resolver
+   without a passive cache does.  */
+static UINT _nx_mdns_peer_query_pending(NX_MDNS *mdns_ptr)
+{
+NX_MDNS_RR *p;
+ULONG      *head;
+
+    if ((mdns_ptr -> nx_mdns_peer_service_cache == NX_NULL) ||
+        (mdns_ptr -> nx_mdns_peer_service_cache_size == 0))
+    {
+        return(NX_FALSE);
+    }
+
+    head = (ULONG *)mdns_ptr -> nx_mdns_peer_service_cache;
+    head = (ULONG *)(*head);
+    for (p = (NX_MDNS_RR *)((UCHAR *)mdns_ptr -> nx_mdns_peer_service_cache + sizeof(ULONG)); (ULONG *)p < head; p++)
+    {
+        if (p -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY)
+        {
+            return(NX_TRUE);
+        }
+    }
+
+    return(NX_FALSE);
+}
+
+/* Does this record's name belong to one of our own records?  Conflict
+   detection and duplicate-answer suppression (the server steps below) can
+   only ever act on a name that is in the local cache, and the local string
+   table is where every local name is interned, so a name that is not in it
+   has nothing to conflict with.  One decode and one walk of a table holding
+   a handful of strings, against the two decodes and the peer-cache insert
+   the record would otherwise cost.  */
+static UINT _nx_mdns_rr_name_is_local(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr)
+{
+UINT  length;
+VOID *found;
+
+    if (!_nx_mdns_name_string_decode(packet_ptr -> nx_packet_prepend_ptr,
+                                     (UINT)(data_ptr - packet_ptr -> nx_packet_prepend_ptr),
+                                     packet_ptr -> nx_packet_length,
+                                     temp_string_buffer, NX_MDNS_NAME_MAX))
+    {
+        return(NX_FALSE);
+    }
+    if (_nx_utility_string_length_check((CHAR *)temp_string_buffer, &length, NX_MDNS_NAME_MAX))
+    {
+        return(NX_FALSE);
+    }
+
+    return(_nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, temp_string_buffer, length,
+                                     &found, NX_TRUE, NX_TRUE) == NX_MDNS_SUCCESS);
+}
+
 static UINT _nx_mdns_packet_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UINT interface_index)
 {
     
@@ -7777,6 +7842,7 @@ ULONG               match_count;
 NX_MDNS_RR         *nsec_rr;
 #endif /* NX_MDNS_ENABLE_SERVER_NEGATIVE_RESPONSES  */
 #endif /* NX_MDNS_DISABLE_SERVER  */
+UINT                peer_wanted = NX_FALSE;
 
 
 #ifdef NX_MDNS_ENABLE_ADDRESS_CHECK
@@ -8051,6 +8117,13 @@ NX_MDNS_RR         *nsec_rr;
         }
     }
     
+    /* AMINETXDUO: asked once per packet, not once per record; the peer
+       cache does not change underneath this thread.  */
+    if ((mdns_flags & NX_MDNS_RESPONSE_FLAG) == NX_MDNS_RESPONSE_FLAG)
+    {
+        peer_wanted = _nx_mdns_peer_query_pending(mdns_ptr);
+    }
+
     /* Process all the Known-Answer records.  */
     for (index = 0; index < answer_count; index++)
     {
@@ -8071,6 +8144,14 @@ NX_MDNS_RR         *nsec_rr;
 
         if ((mdns_flags & NX_MDNS_RESPONSE_FLAG) == NX_MDNS_RESPONSE_FLAG)
         {
+            /* AMINETXDUO: a record about a name that is not ours, with no
+               lookup or browse open, is skipped whole (see the two helpers
+               above _nx_mdns_packet_process).  */
+            if (!peer_wanted && !_nx_mdns_rr_name_is_local(mdns_ptr, packet_ptr, data_ptr))
+            {
+                data_ptr += _nx_mdns_rr_size_get(data_ptr, packet_ptr);
+                continue;
+            }
 
 #ifndef NX_MDNS_DISABLE_SERVER
             /* Step1, Cooperating Multicast DNS Responders, RFC6762, Section6.6, Page21. */
@@ -8162,7 +8243,11 @@ NX_MDNS_RR         *nsec_rr;
 
 #ifndef NX_MDNS_DISABLE_CLIENT
             /* Step2. Add the response resource records in remote buffer.  */  
-            _nx_mdns_packet_rr_process(mdns_ptr, packet_ptr, data_ptr, interface_index);
+            /* AMINETXDUO: only while something is waiting to read it.  */
+            if (peer_wanted)
+            {
+                _nx_mdns_packet_rr_process(mdns_ptr, packet_ptr, data_ptr, interface_index);
+            }
 #endif /* NX_MDNS_DISABLE_CLIENT */
         }
         else

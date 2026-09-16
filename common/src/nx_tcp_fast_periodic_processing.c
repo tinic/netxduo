@@ -625,5 +625,23 @@ ULONG  step;
     step = socket_ptr -> nx_tcp_socket_rx_window_default /
            AMINETXDUO_WINDOW_UPDATE_DIVISOR;
 
+    /* AMINETXDUO: a window no larger than sixteen segments is one that was
+       cut to what the network card holds from the wire
+       (bsdsocket_window.c, ami_bsd_tcp_window_fit): eight segments on an
+       X-Surf 100, two on a 3c589.  Half of that is a step the sender
+       reaches only at the window's edge, where it stops and waits for an
+       announcement, and the announcement then waits on the delayed-ACK
+       timer.  Measured on a 25 MHz A3000 with the X-Surf 100 (window
+       11,680): every fourth batch stalled 100-200 ms and the CPU idled 16%
+       of a transfer.  Two segments is the runt-window escape's own floor
+       and keeps such a window turning over; the half-buffer step above is
+       untouched for every window an application's pool sizes.  */
+    if ((step > ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1)) &&
+        (socket_ptr -> nx_tcp_socket_rx_window_default <=
+         ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 4)))
+    {
+        step = (ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1;
+    }
+
     return(step);
 }
