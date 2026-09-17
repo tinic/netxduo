@@ -2232,6 +2232,14 @@ typedef struct NX_TCP_SOCKET_STRUCT
        they only ever cause a segment to be skipped, never released.  */
     ULONG       nx_tcp_socket_sack_left[NX_TCP_SACK_MAX_BLOCKS];
     ULONG       nx_tcp_socket_sack_right[NX_TCP_SACK_MAX_BLOCKS];
+
+    /* RFC 6675 section 3's HighRxt: the end of the highest segment resent in
+       the fast recovery under way.  A segment below it has been resent once
+       already and is not resent again on the strength of the same blocks;
+       the retransmission timeout, which drops the blocks, is what resends it
+       a second time.  Set to the first unacknowledged byte when a fast
+       retransmit begins.  */
+    ULONG       nx_tcp_socket_tx_high_rxt;
 #endif /* NX_ENABLE_TCP_SACK */
 
     /* Define the TCP keepalive timer parameters.  If enabled with NX_ENABLE_TCP_KEEPALIVE,

@@ -349,6 +349,20 @@ UINT           dupack_threshold;
 
                         /* CWND += MSS  */
                         socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
+
+#ifdef NX_ENABLE_TCP_SACK
+                        /* RFC 6675 section 5 step 4: every further duplicate
+                           acknowledgment has moved a block, taken a segment
+                           out of the pipe and added one to the window, so
+                           what the blocks show lost and the pipe rule allows
+                           goes out now, not at the next partial
+                           acknowledgment.  Nothing is resent twice
+                           (nx_tcp_socket_tx_high_rxt).  */
+                        if (socket_ptr -> nx_tcp_socket_sack_block_count != 0)
+                        {
+                            _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_FALSE);
+                        }
+#endif /* NX_ENABLE_TCP_SACK */
                     }
                 }
 
