@@ -736,6 +736,13 @@ UINT             i;
 
 
 /* The coarse clock a cookie's counter is read off.  */
+/* The clock a handshake is timed with: milliseconds, any origin, from the
+   port (nx_user.h); 0 when the port has none, and then no accepted socket
+   reports a round trip.  */
+#ifndef NX_TCP_SYNCACHE_CLOCK
+#define NX_TCP_SYNCACHE_CLOCK()     0UL
+#endif
+
 static ULONG  _nx_tcp_syncache_counter(VOID)
 {
 
@@ -1177,6 +1184,7 @@ UINT                   bucket;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
     entry -> nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+    entry -> nx_tcp_syncache_stamp = NX_TCP_SYNCACHE_CLOCK();
 
     /* The sequence number is a cookie here too.  It costs one hash and it
        means an entry that aged out between the SYN and the ACK is not a lost
@@ -1268,6 +1276,7 @@ UINT index;
 
     socket_ptr -> nx_tcp_socket_peer_mss = entry -> nx_tcp_syncache_peer_mss;
     socket_ptr -> nx_tcp_socket_connect_mss = entry -> nx_tcp_syncache_connect_mss;
+    socket_ptr -> nx_tcp_socket_handshake_rtt = entry -> nx_tcp_syncache_stamp;
     socket_ptr -> nx_tcp_socket_connect_mss2 =
         (ULONG)entry -> nx_tcp_syncache_connect_mss * (ULONG)entry -> nx_tcp_syncache_connect_mss;
 
@@ -1626,6 +1635,18 @@ UINT                   bucket;
             (entry -> nx_tcp_syncache_options & NX_TCP_SYNCACHE_OPT_TIMESTAMP))
         {
             entry -> nx_tcp_syncache_ts_recent = timestamp_value;
+        }
+
+        /* The handshake's round trip, measured now rather than when the
+           socket is built: a connection that waits in the accept queue for
+           an application to relisten would otherwise count the wait.  */
+        if (entry -> nx_tcp_syncache_stamp != 0)
+        {
+            ULONG rtt = NX_TCP_SYNCACHE_CLOCK() - entry -> nx_tcp_syncache_stamp;
+
+            /* 0 would read as "not measured"; a round trip inside one
+               millisecond is one.  */
+            entry -> nx_tcp_syncache_stamp = (rtt != 0) ? rtt : 1;
         }
 
         /* Take a copy and give the slot back now.  Everything below either
@@ -1989,6 +2010,9 @@ ULONG                  age;
         {
 
             entry -> nx_tcp_syncache_retries++;
+            /* Karn: an ACK to a retransmitted SYN-ACK could answer either
+               copy, so the round trip is not measured.  */
+            entry -> nx_tcp_syncache_stamp = 0;
             _nx_tcp_syncache_send_synack(ip_ptr, entry);
         }
 

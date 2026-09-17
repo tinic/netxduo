@@ -1964,6 +1964,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
        It is computed and stored here once for later use. */
     ULONG       nx_tcp_socket_connect_mss2;
 
+    /* An accepted socket's handshake round trip, SYN-ACK out to ACK in, in
+       milliseconds of the port's clock; 0 when nothing was measured (a
+       socket this end connected, a cookie, a retransmitted SYN-ACK, no
+       clock).  Set by the SYN cache when it builds the socket.  */
+    ULONG       nx_tcp_socket_handshake_rtt;
+
     ULONG       nx_tcp_socket_tx_slow_start_threshold;
 
     /* Define the state of the TCP connection.  */
@@ -2539,6 +2545,12 @@ typedef struct NX_TCP_SYNCACHE_ENTRY_STRUCT
     /* RFC 7323 TS.Recent, and the tick the entry was created on.  */
     ULONG        nx_tcp_syncache_ts_recent;
     ULONG        nx_tcp_syncache_time;
+
+    /* The port's clock (NX_TCP_SYNCACHE_CLOCK, milliseconds, 0 = none) when
+       the SYN-ACK went out; once the ACK has come, the round trip that
+       measured.  0 after a retransmitted SYN-ACK and on the cookie path:
+       nothing was measured.  */
+    ULONG        nx_tcp_syncache_stamp;
 
     /* The receive window the SYN-ACK advertised, kept so a retransmission of
        it carries the same window and the same scale.  */
