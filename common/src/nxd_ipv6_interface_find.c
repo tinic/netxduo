@@ -73,6 +73,7 @@ UINT _nxd_ipv6_interface_find(NX_IP *ip_ptr, ULONG *dest_address,
 UINT                          i;
 NXD_IPV6_ADDRESS             *ipv6_address;
 NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
+NXD_IPV6_ADDRESS             *best_address;
 UINT                          start_index;
 UINT                          end_index;
 ULONG                         address_type = IPv6_Address_Type(dest_address);
@@ -161,7 +162,10 @@ ULONG                         address_type = IPv6_Address_Type(dest_address);
         end_index = NX_MAX_PHYSICAL_INTERFACES;
     }
 
-    /* Loop through interfaces. */
+    /* Loop through interfaces.  Every interface with a fitting address is a
+       candidate; the highest priority takes it, the first among equals
+       (AmiNetXDuo: nx_interface_priority). */
+    best_address = NX_NULL;
     for (i = start_index; i < end_index; i++)
     {
 
@@ -232,13 +236,21 @@ ULONG                         address_type = IPv6_Address_Type(dest_address);
             }
         }
 
-        if (ipv6_address)
+        if (ipv6_address &&
+            ((best_address == NX_NULL) ||
+             (ip_ptr -> nx_ip_interface[i].nx_interface_priority >
+              best_address -> nxd_ipv6_address_attached -> nx_interface_priority)))
         {
 
-            /* Found a proper address. */
-            *ipv6_addr = ipv6_address;
-            return(NX_SUCCESS);
+            /* Found a proper address, the best so far. */
+            best_address = ipv6_address;
         }
+    }
+
+    if (best_address)
+    {
+        *ipv6_addr = best_address;
+        return(NX_SUCCESS);
     }
 
 #ifndef NX_DISABLE_LOOPBACK_INTERFACE
@@ -260,7 +272,10 @@ ULONG                         address_type = IPv6_Address_Type(dest_address);
     if (address_type & IPV6_ADDRESS_GLOBAL)
     {
 
-        /* Yes. Check default router. */
+        /* Yes. Check default router: of the routers on live interfaces, the
+           one on the highest-priority interface, the first among equals
+           (AmiNetXDuo: nx_interface_priority). */
+        best_address = NX_NULL;
         for (i = 0; i < NX_IPV6_DEFAULT_ROUTER_TABLE_SIZE; i++)
         {
 
@@ -302,12 +317,24 @@ ULONG                         address_type = IPv6_Address_Type(dest_address);
                 }
                 else
                 {
-                    *ipv6_addr = ipv6_address;
 
-                    /* Found global address as link-local address. */
-                    return(NX_SUCCESS);
+                    /* Found a global address behind this router; keep the
+                       best interface's. */
+                    if ((best_address == NX_NULL) ||
+                        (rt_entry -> nx_ipv6_default_router_entry_interface_ptr -> nx_interface_priority >
+                         best_address -> nxd_ipv6_address_attached -> nx_interface_priority))
+                    {
+                        best_address = ipv6_address;
+                    }
+                    break;
                 }
             }
+        }
+
+        if (best_address)
+        {
+            *ipv6_addr = best_address;
+            return(NX_SUCCESS);
         }
     }
 

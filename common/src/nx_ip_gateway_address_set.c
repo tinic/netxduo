@@ -85,21 +85,22 @@ NX_INTERFACE *ip_interface_ptr = NX_NULL;
     /* Obtain the IP internal mutex so the Gateway IP address can be setup.  */
     tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
 
-    /* Loop through all the interfaces to find the one for the input gateway address. */
+    /* Loop through all the interfaces to find the one for the input gateway
+       address: of those whose subnet holds it, the highest priority, the
+       first among equals (AmiNetXDuo: nx_interface_priority). */
     for (i = 0; i < NX_MAX_PHYSICAL_INTERFACES; i++)
     {
 
         /* Must be a valid interface. Match the network subnet of the interface and input address. */
         if ((ip_ptr -> nx_ip_interface[i].nx_interface_valid) &&
             ((ip_address & (ip_ptr -> nx_ip_interface[i].nx_interface_ip_network_mask)) ==
-             ip_ptr -> nx_ip_interface[i].nx_interface_ip_network))
+             ip_ptr -> nx_ip_interface[i].nx_interface_ip_network) &&
+            ((ip_interface_ptr == NX_NULL) ||
+             (ip_ptr -> nx_ip_interface[i].nx_interface_priority > ip_interface_ptr -> nx_interface_priority)))
         {
 
-            /* This is the interface for the gateway.  */
+            /* This is the interface for the gateway, so far.  */
             ip_interface_ptr = &(ip_ptr -> nx_ip_interface[i]);
-
-            /* Break out of the search. */
-            break;
         }
     }
 

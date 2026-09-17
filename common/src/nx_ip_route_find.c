@@ -86,6 +86,7 @@ ULONG  _nx_ip_route_find(NX_IP *ip_ptr, ULONG destination_address, NX_INTERFACE 
 {
 
 NX_INTERFACE *interface_ptr;
+NX_INTERFACE *best_ptr;
 ULONG         i;
 
     /* Initialize the next hop address. */
@@ -103,15 +104,23 @@ ULONG         i;
         if (*ip_interface_ptr == NX_NULL)
         {
 
-            /* Find an interface whose link is up. */
+            /* Find an interface whose link is up: the highest priority, and
+               among equals the first (AmiNetXDuo: nx_interface_priority). */
+            best_ptr = NX_NULL;
             for (i = 0; i < NX_MAX_PHYSICAL_INTERFACES; i++)
             {
 
-                if (ip_ptr -> nx_ip_interface[i].nx_interface_link_up)
+                if (ip_ptr -> nx_ip_interface[i].nx_interface_link_up &&
+                    ((best_ptr == NX_NULL) ||
+                     (ip_ptr -> nx_ip_interface[i].nx_interface_priority > best_ptr -> nx_interface_priority)))
                 {
-                    *ip_interface_ptr = &(ip_ptr -> nx_ip_interface[i]);
-                    return(NX_SUCCESS);
+                    best_ptr = &(ip_ptr -> nx_ip_interface[i]);
                 }
+            }
+            if (best_ptr)
+            {
+                *ip_interface_ptr = best_ptr;
+                return(NX_SUCCESS);
             }
         }
         /* If the specified interface is up, return success. */
@@ -194,7 +203,11 @@ ULONG         i;
 #endif /* NX_ENABLE_IP_STATIC_ROUTING */
 
     /* Search through the interfaces associated with the IP instance,
-       check if the entry exists. */
+       check if the entry exists.  With no interface named by the caller the
+       whole set is walked and the highest priority takes it, the first among
+       equals (AmiNetXDuo: nx_interface_priority); the loopback interface, when
+       it matches, takes it regardless, as it always did.  */
+    best_ptr = NX_NULL;
     for (i = 0; i < NX_MAX_IP_INTERFACES; i++)
     {
 
@@ -207,28 +220,48 @@ ULONG         i;
             ((interface_ptr -> nx_interface_ip_network_mask & destination_address) == interface_ptr -> nx_interface_ip_network))
         {
 
-            /* Yes, use the entry information for interface and next hop. */
-            if (*ip_interface_ptr == NX_NULL)
-            {
-                *ip_interface_ptr = interface_ptr;
-            }
             /* Match loopback interface.  */
             /* Suppress constant value, since "NX_MAX_IP_INTERFACES" can be redefined. */
 #if (NX_MAX_IP_INTERFACES == (NX_MAX_PHYSICAL_INTERFACES + 1))
-            else if (i == NX_MAX_PHYSICAL_INTERFACES)
+            if (i == NX_MAX_PHYSICAL_INTERFACES)
             {
                 *ip_interface_ptr = interface_ptr;
+                *next_hop_address = destination_address;
+
+                return(NX_SUCCESS);
             }
 #endif
-            else if (*ip_interface_ptr != interface_ptr)
+
+            /* The caller named an interface: only that one can match. */
+            if (*ip_interface_ptr != NX_NULL)
             {
-                continue;
+                if (*ip_interface_ptr != interface_ptr)
+                {
+                    continue;
+                }
+
+                *next_hop_address = destination_address;
+
+                return(NX_SUCCESS);
             }
 
-            *next_hop_address = destination_address;
-
-            return(NX_SUCCESS);
+            /* Yes, remember the best of them. */
+            if ((best_ptr == NX_NULL) ||
+                (interface_ptr -> nx_interface_priority > best_ptr -> nx_interface_priority))
+            {
+                best_ptr = interface_ptr;
+            }
         }
+    }
+
+    if (best_ptr)
+    {
+
+        /* Use the entry information for interface and next hop. */
+        *ip_interface_ptr = best_ptr;
+        *next_hop_address = destination_address;
+
+        return(NX_SUCCESS);
     }
 
     /* Search the interfaces for IPv4 Link-Local Address according to RFC3927, section2.6.  */

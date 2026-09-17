@@ -2744,6 +2744,13 @@ typedef struct NX_INTERFACE_STRUCT
        used by the link driver. */
     VOID *nx_interface_additional_link_info;
 
+    /* Define the interface's routing priority (AmiNetXDuo).  When more than one
+       interface could carry a packet -- two cards on one subnet, two default
+       routers, a broadcast with no interface named -- the one with the highest
+       priority is used, and among equal priorities the lowest index, which is
+       what NetX Duo always did.  Zero unless the application sets it.  */
+    INT   nx_interface_priority;
+
     /* Define the Link Driver entry point.  */
     VOID        (*nx_interface_link_driver_entry)(struct NX_IP_DRIVER_STRUCT *);
 
