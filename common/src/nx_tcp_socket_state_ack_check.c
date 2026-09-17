@@ -576,6 +576,7 @@ UINT           dupack_threshold;
                 {
                     socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
                 }
+                socket_ptr -> nx_tcp_socket_tx_cwnd_acked = 0;
             }
             else
             {
@@ -585,20 +586,30 @@ UINT           dupack_threshold;
                 if (socket_ptr -> nx_tcp_socket_tx_window_congestion >= socket_ptr -> nx_tcp_socket_tx_slow_start_threshold)
                 {
 
-                    /* In Congestion avoidance phase, for every ACK it receives, increase the window size using the
-                       following approximation:
-                       cwnd = cwnd + MSS * MSS / cwnd;  */
-                    temp = socket_ptr -> nx_tcp_socket_connect_mss2 / socket_ptr -> nx_tcp_socket_tx_window_congestion;
-
-                    /* If the above formula yields 0, the result SHOULD be rounded up to 1 byte.  */
-                    if (temp == 0)
+                    /* Congestion avoidance by the byte count of RFC 3465 2.1,
+                       the second form RFC 5681 3.1 allows: the window grows by
+                       one segment once a window's worth of bytes has been
+                       acknowledged.  The same one segment a round trip as
+                       "cwnd += MSS*MSS/cwnd on every ACK", without the
+                       division per ACK -- on a 68000-codegen build that was a
+                       subroutine, 1.7% of an A1200's transmit profile at
+                       24,000 frames a second.  Cumulative: an ACK that covers
+                       more than a window (after a stall) still buys one
+                       segment, not several at once.  */
+                    socket_ptr -> nx_tcp_socket_tx_cwnd_acked += acked_bytes;
+                    if (socket_ptr -> nx_tcp_socket_tx_cwnd_acked >= socket_ptr -> nx_tcp_socket_tx_window_congestion)
                     {
-                        temp = 1;
+                        socket_ptr -> nx_tcp_socket_tx_cwnd_acked -= socket_ptr -> nx_tcp_socket_tx_window_congestion;
+                        if (socket_ptr -> nx_tcp_socket_tx_cwnd_acked > socket_ptr -> nx_tcp_socket_tx_window_congestion)
+                        {
+                            socket_ptr -> nx_tcp_socket_tx_cwnd_acked = socket_ptr -> nx_tcp_socket_tx_window_congestion;
+                        }
+                        socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
                     }
-                    socket_ptr -> nx_tcp_socket_tx_window_congestion = socket_ptr -> nx_tcp_socket_tx_window_congestion + temp;
                 }
                 else
                 {
+                    socket_ptr -> nx_tcp_socket_tx_cwnd_acked = 0;
 
                     /* In Slow start phase:
                        cwnd += min (N, SMSS),

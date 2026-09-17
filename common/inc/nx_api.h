@@ -1999,6 +1999,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
        run down to a sliver is not judged by the sliver.  */
     ULONG       nx_tcp_socket_tx_window_advertised_max;
     ULONG       nx_tcp_socket_tx_window_congestion;
+
+    /* Bytes acknowledged towards the next congestion-avoidance increment
+       (RFC 3465 2.1): the window grows by one segment once a window's worth
+       has been acknowledged, and this is what has been so far.  Reset when
+       the window is reset -- slow start, fast recovery.  */
+    ULONG       nx_tcp_socket_tx_cwnd_acked;
     ULONG       nx_tcp_socket_tx_outstanding_bytes; /* Data transmitted but not acked. */
 
     /* Define the transmit sequence that enters fast transmit. */
