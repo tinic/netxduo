@@ -2385,6 +2385,17 @@ typedef struct NX_TCP_LISTEN_STRUCT
        what the SYN-ACK actually said.  */
     ULONG       nx_tcp_listen_rx_window;
 
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    /* The largest window a socket accepted on this port may grow to
+       (nx_tcp_socket_rx_window_maximum of the socket put on the request).
+       The SYN-ACK's window scale is derived from this rather than from the
+       window it advertises, for the same reason _nx_tcp_packet_send_syn
+       does it for a SYN: the shift is fixed for the connection at the
+       handshake, and a port that opens its sockets small and grows them once
+       the link is known needs the shift for the grown size.  */
+    ULONG       nx_tcp_listen_rx_window_maximum;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
 #ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
     /* Define the callback function for notifying the host application of
        a new connect request in the listen queue. */
@@ -2532,6 +2543,12 @@ typedef struct NX_TCP_SYNCACHE_ENTRY_STRUCT
     /* The receive window the SYN-ACK advertised, kept so a retransmission of
        it carries the same window and the same scale.  */
     ULONG        nx_tcp_syncache_rx_window;
+
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    /* The largest window the accepted socket may grow to, which is what the
+       SYN-ACK's window scale is computed from (nx_tcp_listen_rx_window_maximum).  */
+    ULONG        nx_tcp_syncache_rx_window_maximum;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
     /* The MSS the peer asked for, and the one the two ends settled on.  */
     USHORT       nx_tcp_syncache_peer_mss;

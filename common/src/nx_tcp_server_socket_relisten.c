@@ -170,6 +170,10 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                 {
                     listen_ptr -> nx_tcp_listen_rx_window =
                         socket_ptr -> nx_tcp_socket_rx_window_default;
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+                    listen_ptr -> nx_tcp_listen_rx_window_maximum =
+                        socket_ptr -> nx_tcp_socket_rx_window_maximum;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
                 }
 
                 /* A handshake that finished while this listen request had no

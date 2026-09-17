@@ -188,6 +188,9 @@ UINT                         bound;
        lives.  nx_api.h says why it is recorded rather than read off the
        socket each time.  */
     listen_ptr -> nx_tcp_listen_rx_window =      socket_ptr -> nx_tcp_socket_rx_window_default;
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    listen_ptr -> nx_tcp_listen_rx_window_maximum = socket_ptr -> nx_tcp_socket_rx_window_maximum;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
     listen_ptr -> nx_tcp_listen_queue_maximum =  listen_queue_size;
     listen_ptr -> nx_tcp_listen_queue_current =  0;

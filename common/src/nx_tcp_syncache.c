@@ -850,6 +850,26 @@ static ULONG  _nx_tcp_syncache_window(NX_TCP_LISTEN *listen_ptr)
 }
 
 
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+/* The window the SYN-ACK's scale is derived from: the largest the accepted
+ * socket may grow to, never less than what it advertises.  Recorded on the
+ * listen request beside the window, for the same reason.
+ */
+static ULONG  _nx_tcp_syncache_window_maximum(NX_TCP_LISTEN *listen_ptr)
+{
+
+ULONG window = _nx_tcp_syncache_window(listen_ptr);
+
+    if ((listen_ptr) && (listen_ptr -> nx_tcp_listen_rx_window_maximum > window))
+    {
+        return(listen_ptr -> nx_tcp_listen_rx_window_maximum);
+    }
+
+    return(window);
+}
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -893,6 +913,9 @@ NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
     socket_ptr -> nx_tcp_socket_rx_window_current = entry -> nx_tcp_syncache_rx_window;
     socket_ptr -> nx_tcp_socket_rx_window_default = entry -> nx_tcp_syncache_rx_window;
     socket_ptr -> nx_tcp_socket_rx_window_last_sent = entry -> nx_tcp_syncache_rx_window;
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    socket_ptr -> nx_tcp_socket_rx_window_maximum = entry -> nx_tcp_syncache_rx_window_maximum;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
     socket_ptr -> nx_tcp_socket_peer_mss = entry -> nx_tcp_syncache_peer_mss;
 
 #ifndef NX_DISABLE_IPV4
@@ -1127,6 +1150,9 @@ UINT                   bucket;
             (USHORT)_nx_tcp_syncache_mss_decode(_nx_tcp_syncache_mss_encode(peer_mss));
 
         cookie_entry.nx_tcp_syncache_rx_window = _nx_tcp_syncache_window(listen_ptr);
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+        cookie_entry.nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
         cookie_entry.nx_tcp_syncache_iss =
             _nx_tcp_syncache_cookie_build(cache -> nx_tcp_syncache_key, tuple, tuple_words, irs,
@@ -1148,6 +1174,9 @@ UINT                   bucket;
                           timestamp_value);
 
     entry -> nx_tcp_syncache_rx_window = _nx_tcp_syncache_window(listen_ptr);
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    entry -> nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
     /* The sequence number is a cookie here too.  It costs one hash and it
        means an entry that aged out between the SYN and the ACK is not a lost
@@ -1387,9 +1416,16 @@ UCHAR         scale;
 
     if (entry -> nx_tcp_syncache_snd_win_scale != NX_TCP_SYNCACHE_NO_WINDOW_SCALE)
     {
+
+        /* From the largest window the socket may grow to, as the sender did
+           (nx_tcp_syncache_rx_window_maximum is never below the window).  */
         for (scale = 0; scale < 14; scale++)
         {
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+            if ((entry -> nx_tcp_syncache_rx_window_maximum >> scale) < 65536)
+#else
             if ((entry -> nx_tcp_syncache_rx_window >> scale) < 65536)
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
             {
                 break;
             }
@@ -1633,6 +1669,9 @@ UINT                   bucket;
 
         final.nx_tcp_syncache_iss = cookie;
         final.nx_tcp_syncache_rx_window = _nx_tcp_syncache_window(listen_ptr);
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+        final.nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
         /* The segment size and the window scale this end announced in the
            SYN-ACK are not carried in the cookie: they are what this machine's
