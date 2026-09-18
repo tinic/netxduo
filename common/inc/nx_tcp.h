@@ -182,6 +182,23 @@
 #define NX_TCP_MAXIMUM_RETRIES          10          /* Maximum number of transmit    */
 #endif                                              /*   retries allowed             */
 
+/* The slow-start threshold a connection starts with.  RFC 5681 3.1: "The
+   initial value of ssthresh SHOULD be set arbitrarily high (e.g., to the size
+   of the largest possible advertised window)", so that a connection leaves slow
+   start on the first loss and not before.  Stock NetX Duo set it to the window
+   the peer's SYN carried, and a SYN's window is never scaled (RFC 7323 2.2), so
+   that is at most 65,535 and in practice a Linux peer's 29,200 or 42,340:
+   slow start ended after two round trips at ~43 KB and congestion avoidance
+   then grew the window one segment a round trip.  On a 23 ms path a 60 MB
+   upload spent five seconds climbing from 43 KB to 415 KB in flight (86 Mbit/s
+   against a peer window of 660 KB and a 300 Mbit/s link, A1200 2026-09-18).
+   Kept out of an ULONG's reach: slow start adds at most the bytes each
+   acknowledgment covers, so the window cannot pass this by more than one
+   segment and cannot wrap.  */
+#ifndef NX_TCP_INITIAL_SSTHRESH
+#define NX_TCP_INITIAL_SSTHRESH         0x7FFFFFFFUL
+#endif
+
 #ifndef NX_TCP_RETRY_SHIFT
 #define NX_TCP_RETRY_SHIFT              0           /* Shift that is applied to      */
 #endif                                              /*   last timeout for back off,  */

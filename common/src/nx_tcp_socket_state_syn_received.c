@@ -116,8 +116,9 @@ VOID  _nx_tcp_socket_state_syn_received(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER
                to work with before the first acknowledgment arrives.  */
             socket_ptr -> nx_tcp_socket_tx_window_advertised_max = socket_ptr -> nx_tcp_socket_tx_window_advertised;
 
-            /* Set the initial slow start threshold to be the advertised window size. */
-            socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+            /* RFC 5681 3.1: the initial threshold is arbitrarily high, so slow
+               start runs until the first loss (nx_tcp.h, NX_TCP_INITIAL_SSTHRESH).  */
+            socket_ptr -> nx_tcp_socket_tx_slow_start_threshold = NX_TCP_INITIAL_SSTHRESH;
 
             /* Set the initial congestion control window size. */
             /* Section 3.1, Page 5, RFC5681. */
