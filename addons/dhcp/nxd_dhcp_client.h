@@ -107,6 +107,11 @@ extern   "C" {
 #define NX_DHCP_THREAD_STACK_SIZE       (4096) 
 #endif
 
+/* The name of the DHCP thread, for a port whose threads are visible by name.  */
+#ifndef NX_DHCP_THREAD_NAME
+#define NX_DHCP_THREAD_NAME             "NetX DHCP Client"
+#endif
+
 
 /* Define the number of interfaces the Client is running on. This can be any
    size but practically speaking should be less than or equal to the number

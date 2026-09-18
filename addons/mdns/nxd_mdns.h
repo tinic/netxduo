@@ -65,6 +65,11 @@ extern   "C" {
 /* Define the Multicast DNS ID.  */
 #define NX_MDNS_ID                              0x4d444e53UL
 
+/* The name of the mDNS thread, for a port whose threads are visible by name.  */
+#ifndef NX_MDNS_THREAD_NAME
+#define NX_MDNS_THREAD_NAME                     "mDNS Thread"
+#endif
+
 /* Define macros that get the data on unaligned address.  */
 #define NX_MDNS_GET_USHORT_DATA(data)           (USHORT)((*(data) << 8) | (*(data + 1)))
 #define NX_MDNS_GET_ULONG_DATA(data)            (((ULONG)(*(data)) << 24) | ((ULONG)(*(data + 1)) << 16) | ((ULONG)(*(data + 2)) << 8) | ((ULONG)(*(data + 3))))

@@ -62,6 +62,11 @@ extern   "C" {
 
 /* Define the timing and retry constants for AutoIP.  */
 
+/* The name of the AutoIP thread, for a port whose threads are visible by name.  */
+#ifndef NX_AUTO_IP_THREAD_NAME
+#define NX_AUTO_IP_THREAD_NAME              "NetX AutoIP"
+#endif
+
 #ifndef NX_AUTO_IP_PROBE_WAIT
 #define NX_AUTO_IP_PROBE_WAIT               1
 #endif

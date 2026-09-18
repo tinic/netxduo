@@ -400,7 +400,7 @@ UINT    label_length = 0;
     }
 
     /* Create the DHCP processing thread.  */
-    status =  tx_thread_create(&(dhcp_ptr -> nx_dhcp_thread), "NetX DHCP Client", _nx_dhcp_thread_entry, (ULONG)(ALIGN_TYPE)dhcp_ptr,
+    status =  tx_thread_create(&(dhcp_ptr -> nx_dhcp_thread), NX_DHCP_THREAD_NAME, _nx_dhcp_thread_entry, (ULONG)(ALIGN_TYPE)dhcp_ptr,
                                 dhcp_ptr -> nx_dhcp_thread_stack, NX_DHCP_THREAD_STACK_SIZE, 
                                 NX_DHCP_THREAD_PRIORITY, NX_DHCP_THREAD_PRIORITY, 1, TX_DONT_START);
 

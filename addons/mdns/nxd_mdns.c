@@ -527,7 +527,7 @@ UINT    host_name_size;
     }
 
     /* Create the mDNS processing thread.  */
-    status =  tx_thread_create(&(mdns_ptr -> nx_mdns_thread), "mDNS Thread",
+    status =  tx_thread_create(&(mdns_ptr -> nx_mdns_thread), NX_MDNS_THREAD_NAME,
                                _nx_mdns_thread_entry, (ULONG) mdns_ptr,
                                stack_ptr, stack_size, priority, priority, 
                                1, TX_AUTO_START);

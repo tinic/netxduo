@@ -169,7 +169,7 @@ UINT  status;
     }
 
     /* Create the AutoIP processing thread.  */
-    status =  tx_thread_create(&(auto_ip_ptr -> nx_auto_ip_thread), "NetX AutoIP", _nx_auto_ip_thread_entry, (ULONG) auto_ip_ptr,
+    status =  tx_thread_create(&(auto_ip_ptr -> nx_auto_ip_thread), NX_AUTO_IP_THREAD_NAME, _nx_auto_ip_thread_entry, (ULONG) auto_ip_ptr,
                         stack_ptr, stack_size, priority, priority, 1, TX_DONT_START);
 
     /* Determine if the thread creation was successful.  */

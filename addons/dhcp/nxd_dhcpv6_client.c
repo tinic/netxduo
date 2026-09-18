@@ -1212,7 +1212,7 @@ UINT  status;
     }
 
     /* Create the DHCPV6 processing thread. */
-    status =  tx_thread_create(&(dhcpv6_ptr -> nx_dhcpv6_thread), "NetX DHCPV6 Client", _nx_dhcpv6_thread_entry, 
+    status =  tx_thread_create(&(dhcpv6_ptr -> nx_dhcpv6_thread), NX_DHCPV6_THREAD_NAME, _nx_dhcpv6_thread_entry, 
                                (ULONG)(ALIGN_TYPE)dhcpv6_ptr, stack_ptr, stack_size, 
                                NX_DHCPV6_THREAD_PRIORITY, NX_DHCPV6_THREAD_PRIORITY, 1, TX_DONT_START);
 

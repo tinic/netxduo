@@ -322,6 +322,11 @@ typedef enum
 #define NX_DHCPV6_THREAD_PRIORITY                       2
 #endif
 
+/* The name of the DHCPv6 Client thread, for a port whose threads are visible by name.  */
+#ifndef NX_DHCPV6_THREAD_NAME
+#define NX_DHCPV6_THREAD_NAME                           "NetX DHCPV6 Client"
+#endif
+
 
 /* Define the time out option to obtain a DHCPv6 Client mutex lock. If the
    the Client appears to be locking up, this can be set to a finite value
