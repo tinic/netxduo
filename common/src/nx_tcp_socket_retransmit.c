@@ -588,17 +588,27 @@ UINT       sack_index;
         sack_blocks++;
     }
 
-    /* A SACK peer that reports no block during a fast recovery has nothing
-       out of order: whatever a partial acknowledgment left at the head of the
-       queue was not lost, or the peer would be holding what came after it.
-       NewReno's rule -- resend the head on every partial acknowledgment --
-       is for a peer that cannot say, and on this peer it resent, one per
-       acknowledgment, 87 segments the peer already had (test_tcp_lossrecovery).
-       The fast retransmit itself, and the timeout, still send.  */
+    /* A SACK peer that reports no block during a fast recovery normally has
+       nothing out of order: whatever a partial acknowledgment left at the
+       head may still be in flight.  NewReno's rule -- resend the head on every
+       partial acknowledgment -- resent, one per acknowledgment, 87 segments
+       the peer already had (test_tcp_lossrecovery).
+
+       There is one case where the empty scoreboard is conclusive: the
+       cumulative acknowledgment jumped over a held run and left only one
+       segment outstanding.  It is the recovery tail, not a run still
+       travelling behind the acknowledged hole.  Both parts matter: without
+       the jump, ordinary acknowledgments walking to the end of a long flight
+       would spuriously resend its last segment.  Suppressing the partial-ACK
+       retransmit in the jump case strands a second tail loss until the RTO. */
     if ((need_fast_retransmit == NX_FALSE) &&
         (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE) &&
         (socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE) &&
-        (sack_blocks == 0))
+        (sack_blocks == 0) &&
+        ((socket_ptr -> nx_tcp_socket_tx_outstanding_bytes >
+          socket_ptr -> nx_tcp_socket_connect_mss) ||
+         (((INT)(unacked - socket_ptr -> nx_tcp_socket_previous_highest_ack)) <=
+          (INT)socket_ptr -> nx_tcp_socket_connect_mss)))
     {
         return;
     }
