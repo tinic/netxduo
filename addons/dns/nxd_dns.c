@@ -1263,6 +1263,28 @@ UINT  _nxd_dns_server_remove(NX_DNS *dns_ptr, NXD_ADDRESS *server_address)
 } 
 
         
+#ifdef NX_DNS_CACHE_ENABLE
+/* AmiNetXDuo: a server removed takes every answer it gave with it.  A lookup
+   consults the cache before it looks for a server (see
+   _nx_dns_host_resource_data_by_name_get), so a name resolved while the
+   machine had a lease went on resolving after NetShutdown for the rest of
+   its TTL, and a program that decides "online" by gethostbyname() read a
+   machine with no interface as connected (AmiTCP_NG issue #4; Roadshow
+   refuses the lookup).  What _nx_dns_cache_initialize() does, without its
+   mutex: every caller already holds it.  */
+static VOID  _nx_dns_cache_drop(NX_DNS *dns_ptr)
+{
+
+    if (dns_ptr -> nx_dns_cache)
+    {
+        memset(dns_ptr -> nx_dns_cache, 0, dns_ptr -> nx_dns_cache_size);
+        dns_ptr -> nx_dns_rr_count = 0;
+        dns_ptr -> nx_dns_string_count = 0;
+        dns_ptr -> nx_dns_string_bytes = 0;
+    }
+}
+#endif /* NX_DNS_CACHE_ENABLE */
+
 /**************************************************************************/ 
 /*                                                                        */ 
 /*  FUNCTION                                               RELEASE        */ 
@@ -1419,6 +1441,10 @@ UINT            found_match;
     /* Terminate the last slot. */
     memset(&dns_ptr -> nx_dns_server_ip_array[NX_DNS_MAX_SERVERS - 1], 0, sizeof(NXD_ADDRESS));
 
+#ifdef NX_DNS_CACHE_ENABLE
+    _nx_dns_cache_drop(dns_ptr);
+#endif
+
     /* Release the mutex and return.  */
     tx_mutex_put(&(dns_ptr -> nx_dns_mutex));
 
@@ -1528,6 +1554,10 @@ UINT    status;
 
     /* Remove all DNS servers.  */
     memset(&dns_ptr -> nx_dns_server_ip_array[0], 0, NX_DNS_MAX_SERVERS * sizeof(NXD_ADDRESS));
+
+#ifdef NX_DNS_CACHE_ENABLE
+    _nx_dns_cache_drop(dns_ptr);
+#endif
 
     /* Release the mutex and return.  */
     tx_mutex_put(&(dns_ptr -> nx_dns_mutex));
