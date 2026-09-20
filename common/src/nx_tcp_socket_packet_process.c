@@ -254,11 +254,27 @@ ULONG         tcpip_offload;
         }
         else
         {
+            /* Test the two half-open ranges for overlap, not only whether
+               either endpoint of the segment lies in the receive window.
+
+               Normally those tests are equivalent.  They are not when one
+               incoming packet covers the whole window: its first byte is
+               below RCV.NXT and its last byte is beyond RCV.NXT+RCV.WND, so
+               neither endpoint is in the window even though all of the
+               window is useful data.  A packet chain produced by receive
+               coalescing reaches this case naturally when a retransmitted
+               prefix and new segments are handed up together.  Rejecting the
+               chain loses the new segments along with the duplicate prefix.
+
+               _nx_tcp_socket_state_data_check() already trims both sides to
+               the receive window.  Admit every non-empty intersection here
+               and let that one trimming path do its job.  The signed
+               differences retain the existing serial-number wrap handling;
+               TCP windows and packet lengths are below half the sequence
+               space. */
             if ((rx_window > 0) &&
-                ((((INT)(packet_sequence - rx_sequence) >= 0) &&
-                  ((INT)(rx_sequence + rx_window - packet_sequence) > 0)) ||
-                 (((INT)(packet_sequence + (packet_data_length - 1) - rx_sequence) >= 0) &&
-                  ((INT)(rx_sequence + 1 + (rx_window - packet_sequence) - packet_data_length) > 0))))
+                ((INT)(packet_sequence - (rx_sequence + rx_window)) < 0) &&
+                ((INT)((packet_sequence + packet_data_length) - rx_sequence) > 0))
             {
                 outside_of_window = NX_FALSE;
             }
@@ -745,4 +761,3 @@ ULONG         tcpip_offload;
         _nx_packet_release(packet_ptr);
     }
 }
-
