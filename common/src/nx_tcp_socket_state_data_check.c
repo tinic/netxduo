@@ -627,6 +627,14 @@ NX_IP         *ip_ptr;
             /* Release this packet. */
             _nx_packet_release(packet_ptr);
 
+#ifndef NX_DISABLE_TCP_INFO
+            /* A segment the window admitted, dropped because the receive
+               queue is at its packet cap: counted where the other drops
+               are, or nothing on the machine can tell this apart from wire
+               loss -- the peer retransmits either way.  */
+            socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
+#endif
+
             /* Set window to zero. */
             socket_ptr -> nx_tcp_socket_rx_window_current = 0;
             socket_ptr -> nx_tcp_socket_rx_window_last_sent = 0;
@@ -687,6 +695,14 @@ NX_IP         *ip_ptr;
 
             /* Release this packet. */
             _nx_packet_release(packet_ptr);
+
+#ifndef NX_DISABLE_TCP_INFO
+            /* A segment the window admitted, dropped because the receive
+               queue is at its packet cap: counted where the other drops
+               are, or nothing on the machine can tell this apart from wire
+               loss -- the peer retransmits either way.  */
+            socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
+#endif
 
             /* Set window to zero. */
             socket_ptr -> nx_tcp_socket_rx_window_current = 0;
