@@ -350,6 +350,28 @@ NXD_IPV6_ADDRESS *interface_ipv6_address;
             }
         }
 
+#ifdef NX_ENABLE_IP_CORK_EVENT
+        /* AmiNetXDuo: flush the small writes an application left pending.
+           After the TCP queue, so an acknowledgment that arrived in the same
+           pass has already opened the window.  The handler is cleared before
+           the IP instance goes, and a bit set after that finds NX_NULL.  */
+        if (ip_events & NX_IP_CORK_EVENT)
+        {
+
+            if (ip_ptr -> nx_ip_cork_handler)
+            {
+                (ip_ptr -> nx_ip_cork_handler)(ip_ptr);
+            }
+
+            /* Determine if there is anything else to do in the loop.  */
+            ip_events =  ip_events & ~(NX_IP_CORK_EVENT);
+            if (!ip_events)
+            {
+                continue;
+            }
+        }
+#endif /* NX_ENABLE_IP_CORK_EVENT */
+
         /* Check for a fast TCP event.  */
         if (ip_events & NX_IP_FAST_EVENT)
         {

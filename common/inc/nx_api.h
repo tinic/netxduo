@@ -3635,6 +3635,13 @@ typedef struct NX_IP_STRUCT
     /* Define the link status change notify routine. */
     VOID        (*nx_ip_link_status_change_callback)(struct NX_IP_STRUCT *, UINT, UINT);
 
+#ifdef NX_ENABLE_IP_CORK_EVENT
+    /* AmiNetXDuo: the deferred small-write flush.  Called on the IP thread,
+       with nx_ip_protection held, when NX_IP_CORK_EVENT is set.  NX_NULL
+       when nothing has installed one. */
+    VOID        (*nx_ip_cork_handler)(struct NX_IP_STRUCT *);
+#endif /* NX_ENABLE_IP_CORK_EVENT */
+
 #ifdef NX_ENABLE_IP_PACKET_FILTER
     /* Define the IP packet filter routine.  */
     UINT        (*nx_ip_packet_filter)(VOID *, UINT);

@@ -80,6 +80,9 @@
 #define NX_IP_HW_DONE_EVENT          ((ULONG)0x00002000)       /* HW done event                */
 #endif /* NX_IPSEC_ENABLE */
 #define NX_IP_LINK_STATUS_EVENT      ((ULONG)0x00004000)       /* Link status change event     */
+#ifdef NX_ENABLE_IP_CORK_EVENT
+#define NX_IP_CORK_EVENT             ((ULONG)0x00008000)       /* AmiNetXDuo small-write flush */
+#endif /* NX_ENABLE_IP_CORK_EVENT */
 
 
 #ifndef NX_IP_FAST_TIMER_RATE
