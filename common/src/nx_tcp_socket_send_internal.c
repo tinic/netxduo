@@ -403,20 +403,10 @@ ULONG  half_max_window;
     }
 
     /* Rule (1): a full-sized segment fits.  Measured against the window and
-       not against min(D, U): see the Nagle note above.  */
-    send_mss = socket_ptr -> nx_tcp_socket_connect_mss;
-
-#ifdef NX_ENABLE_TCP_TIMESTAMP
-
-    /* The option comes out of the payload, so a "full-sized segment" on a
-       timestamped connection is twelve bytes shorter.  Same subtraction the
-       send path makes before it carves the packet up.  */
-    if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
-        (send_mss > (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE))
-    {
-        send_mss = send_mss - (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE;
-    }
-#endif /* NX_ENABLE_TCP_TIMESTAMP */
+       not against min(D, U): see the Nagle note above.  A "full-sized
+       segment" on a timestamped connection is twelve bytes shorter, the same
+       size the send path carves the packet up by.  */
+    send_mss = _nx_tcp_socket_payload_mss(socket_ptr);
 
     if ((send_mss != 0) && (usable_window >= send_mss))
     {
@@ -658,22 +648,11 @@ UINT            compute_checksum = 1;
     /* If trace is enabled, insert this event into the trace buffer.  */
     NX_TRACE_IN_LINE_INSERT(NX_TRACE_TCP_SOCKET_SEND, socket_ptr, packet_ptr, packet_ptr -> nx_packet_length, socket_ptr -> nx_tcp_socket_tx_sequence, NX_TRACE_TCP_EVENTS, 0, 0);
 
-    /* Get the max mss this socket could send  */
-    send_mss = socket_ptr -> nx_tcp_socket_connect_mss;
-
-#ifdef NX_ENABLE_TCP_TIMESTAMP
-
-    /* The option is twelve bytes of the segment, so it comes out of what the
-       payload may be, not out of the MSS the peer announced.  Subtracting it
-       here rather than at nx_tcp_socket_connect_mss keeps that field the
-       number the peer actually sent, and keeps the carve below and the header
-       built later agreeing about how much fits.  */
-    if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
-        (send_mss > (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE))
-    {
-        send_mss = send_mss - (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE;
-    }
-#endif /* NX_ENABLE_TCP_TIMESTAMP */
+    /* Get the max mss this socket could send.  The timestamp option comes
+       out of what the payload may be, not out of the MSS the peer announced:
+       nx_tcp_socket_connect_mss stays the number the peer actually sent, and
+       the carve below and the header built later agree about how much fits.  */
+    send_mss = _nx_tcp_socket_payload_mss(socket_ptr);
 
     /* Get original pool. */
     pool_ptr = packet_ptr -> nx_packet_pool_owner;

@@ -639,6 +639,50 @@ UINT _nxe_tcp_socket_queue_depth_notify_set(NX_TCP_SOCKET *socket_ptr,  VOID (*t
 UINT _nxe_tcp_socket_timed_wait_callback(NX_TCP_SOCKET *socket_ptr, VOID (*tcp_timed_wait_callback)(NX_TCP_SOCKET *socket_ptr));
 UINT _nxe_tcp_socket_vlan_priority_set(NX_TCP_SOCKET *socket_ptr, UINT vlan_priority);
 
+/* What one segment of an established connection may carry: the peer's MSS,
+   less the timestamp option when the connection has one.  RFC 1323 section
+   3.2 puts the option on every segment, so its twelve bytes are part of the
+   segment and not part of what fits inside it.  A caller sizing writes off the
+   peer's number would leave a twelve byte tail behind every full segment,
+   which cost about forty per cent of the write rate measured on an A1200.  */
+static inline ULONG _nx_tcp_socket_payload_mss(NX_TCP_SOCKET *socket_ptr)
+{
+ULONG mss;
+
+    mss =  socket_ptr -> nx_tcp_socket_connect_mss;
+
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+    if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
+        (mss > (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE))
+    {
+        mss -= (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE;
+    }
+#endif /* NX_ENABLE_TCP_TIMESTAMP */
+
+    return(mss);
+}
+
+/* The answer _nx_tcp_socket_mss_get() gives, without the IP mutex around it:
+   before ESTABLISHED the configured MSS or NX_TCP_MSS_SIZE, after it
+   _nx_tcp_socket_payload_mss().  The caller must already exclude every other
+   writer of the socket, which on AmiNetXDuo's single-baton port means holding
+   the baton.  Makes no ThreadX call.  */
+static inline ULONG _nx_tcp_socket_mss_compute(NX_TCP_SOCKET *socket_ptr)
+{
+
+    if (socket_ptr -> nx_tcp_socket_state < NX_TCP_ESTABLISHED)
+    {
+        if (socket_ptr -> nx_tcp_socket_mss)
+        {
+            return(socket_ptr -> nx_tcp_socket_mss);
+        }
+
+        return(NX_TCP_MSS_SIZE);
+    }
+
+    return(_nx_tcp_socket_payload_mss(socket_ptr));
+}
+
 /* TCP component data declarations follow.  */
 
 /* Determine if the initialization function of this component is including

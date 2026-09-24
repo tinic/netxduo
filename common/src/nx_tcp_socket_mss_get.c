@@ -75,45 +75,8 @@ NX_IP *ip_ptr;
     /* Obtain the IP mutex so we can examine the bound port.  */
     tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
 
-    if (socket_ptr -> nx_tcp_socket_state < NX_TCP_ESTABLISHED)
-    {
-
-        /* The socket is not connected. */
-        if (socket_ptr -> nx_tcp_socket_mss)
-        {
-
-            /* Return custom MSS. */
-            *mss = socket_ptr -> nx_tcp_socket_mss;
-        }
-        else
-        {
-
-            /* Return default MSS. */
-            *mss = NX_TCP_MSS_SIZE;
-        }
-    }
-    else
-    {
-
-        /* Pickup SMSS value.  */
-        *mss =  socket_ptr -> nx_tcp_socket_connect_mss;
-
-#ifdef NX_ENABLE_TCP_TIMESTAMP
-
-        /* What a caller sizing a write off this can actually put in one
-           segment.  RFC 1323 section 3.2 puts the option on every segment of
-           the connection, so the twelve bytes are part of the segment and not
-           part of what fits inside it.  A caller handing down the peer's number
-           instead would leave a twelve byte tail behind every full segment, and
-           a stream of alternating full and twelve byte segments costs about
-           forty per cent of the write rate measured on an A1200.  */
-        if ((socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE) &&
-            (*mss > (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE))
-        {
-            *mss -= (ULONG)NX_TCP_TIMESTAMP_OPTION_SIZE;
-        }
-#endif /* NX_ENABLE_TCP_TIMESTAMP */
-    }
+    /* The whole answer, computed under the mutex.  */
+    *mss =  _nx_tcp_socket_mss_compute(socket_ptr);
 
     /* Release protection.  */
     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
