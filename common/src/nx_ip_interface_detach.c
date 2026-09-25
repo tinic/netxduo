@@ -276,6 +276,11 @@ NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
 
     (interface_ptr -> nx_interface_link_driver_entry)(&driver_request);
 
+    /* Invalid from here, under the same hold as the flush below: a SYN still
+       queued for this interface is refused by the SYN cache, not recorded
+       after the flush.  Only the memsets below follow.  */
+    interface_ptr -> nx_interface_valid = NX_FALSE;
+
     /* Drop half-open and queued handshakes that arrived on this interface,
        sending nothing: they hold pointers to the interface and its IPv6
        addresses, both zeroed below.  Here, after the driver has let go and

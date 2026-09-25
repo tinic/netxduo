@@ -688,6 +688,51 @@ UINT                   bucket;
 }
 
 
+/* Whether a segment arrived on something still attached, at the address it
+   was sent to.  A packet waiting in the IP thread's deferred queue keeps the
+   interface, and for IPv6 the address, it arrived on; a detach or an address
+   delete can zero either, and an attach can refill the slot under another
+   address, before it is processed.  Nothing is recorded or sent for such a
+   segment.  */
+static UINT  _nx_tcp_syncache_arrival_live(NX_PACKET *packet_ptr, NX_INTERFACE *interface_ptr,
+                                           ULONG *dest_ip)
+{
+
+    if ((interface_ptr == NX_NULL) || (interface_ptr -> nx_interface_valid == NX_FALSE))
+    {
+        return(NX_FALSE);
+    }
+
+#ifdef FEATURE_NX_IPV6
+    if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
+    {
+        NXD_IPV6_ADDRESS *address = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr;
+
+        if ((address == NX_NULL) || (address -> nxd_ipv6_address_valid == NX_FALSE) ||
+            (address -> nxd_ipv6_address_attached != interface_ptr) ||
+            !CHECK_IPV6_ADDRESSES_SAME(address -> nxd_ipv6_address, dest_ip))
+        {
+            return(NX_FALSE);
+        }
+        return(NX_TRUE);
+    }
+#endif /* FEATURE_NX_IPV6 */
+
+#ifndef NX_DISABLE_IPV4
+    if ((dest_ip[0] != interface_ptr -> nx_interface_ip_address) &&
+        ((dest_ip[0] < NX_IP_LOOPBACK_FIRST) || (dest_ip[0] > NX_IP_LOOPBACK_LAST)))
+    {
+        return(NX_FALSE);
+    }
+#endif /* !NX_DISABLE_IPV4 */
+
+    NX_PARAMETER_NOT_USED(packet_ptr);
+    NX_PARAMETER_NOT_USED(dest_ip);
+
+    return(NX_TRUE);
+}
+
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -1056,7 +1101,8 @@ UINT                   local_port;
 UINT                   bucket;
 
 
-    if (cache -> nx_tcp_syncache_initialized != NX_TRUE)
+    if ((cache -> nx_tcp_syncache_initialized != NX_TRUE) ||
+        (_nx_tcp_syncache_arrival_live(packet_ptr, interface_ptr, dest_ip) != NX_TRUE))
     {
         return;
     }
@@ -1595,7 +1641,8 @@ UINT                   local_port;
 UINT                   bucket;
 
 
-    if (cache -> nx_tcp_syncache_initialized != NX_TRUE)
+    if ((cache -> nx_tcp_syncache_initialized != NX_TRUE) ||
+        (_nx_tcp_syncache_arrival_live(packet_ptr, interface_ptr, dest_ip) != NX_TRUE))
     {
         return(NX_FALSE);
     }
