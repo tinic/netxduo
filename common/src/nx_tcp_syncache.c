@@ -1957,6 +1957,58 @@ NX_TCP_SYNCACHE_ENTRY *next;
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
+/*    _nx_tcp_syncache_interface_flush                    PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Drop every entry that arrived on interface_ptr or was addressed to  */
+/*    ipv6_address (either may be NX_NULL), sending nothing.  An entry    */
+/*    keeps both as raw pointers, and the caller is about to zero them:   */
+/*    a later SYN-ACK or RST would go out through a detached or reused    */
+/*    slot, or reach the IPv6 send's NX_ASSERT.  Caller holds the mutex.  */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_ip_interface_detach                                             */
+/*    _nxd_ipv6_address_delete                                            */
+/*                                                                        */
+/**************************************************************************/
+VOID  _nx_tcp_syncache_interface_flush(NX_IP *ip_ptr, NX_INTERFACE *interface_ptr,
+                                       NXD_IPV6_ADDRESS *ipv6_address)
+{
+
+NX_TCP_SYNCACHE       *cache = &(ip_ptr -> nx_ip_tcp_syncache);
+NX_TCP_SYNCACHE_ENTRY *entry;
+NX_TCP_SYNCACHE_ENTRY *next;
+UINT                   pass;
+
+
+    if (cache -> nx_tcp_syncache_initialized != NX_TRUE)
+    {
+        return;
+    }
+
+    for (pass = 0; pass < 2; pass++)
+    {
+        entry = pass ? cache -> nx_tcp_syncache_accept_head : cache -> nx_tcp_syncache_age_head;
+        while (entry)
+        {
+            next = entry -> nx_tcp_syncache_age_next;
+            if ((interface_ptr && (entry -> nx_tcp_syncache_interface == interface_ptr)) ||
+                (ipv6_address && (entry -> nx_tcp_syncache_ipv6_addr == ipv6_address)))
+            {
+                _nx_tcp_syncache_release(ip_ptr, entry);
+            }
+            entry = next;
+        }
+    }
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
 /*    _nx_tcp_syncache_periodic                           PORTABLE C      */
 /*                                                                        */
 /*  DESCRIPTION                                                           */

@@ -125,6 +125,11 @@ NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
         } while (socket_ptr != ip_ptr -> nx_ip_tcp_created_sockets_ptr);
     }
 
+    /* Drop half-open and queued handshakes that arrived on this interface,
+       sending nothing: they hold pointers to the interface and its IPv6
+       addresses, both zeroed below.  */
+    _nx_tcp_syncache_interface_flush(ip_ptr, interface_ptr, NX_NULL);
+
     /* Release the IP internal mutex. */
     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 

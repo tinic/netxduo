@@ -28,6 +28,7 @@
 #include "nx_api.h"
 #include "nx_ip.h"
 #include "nx_ipv6.h"
+#include "nx_tcp.h"
 
 /**************************************************************************/
 /*                                                                        */
@@ -140,6 +141,10 @@ ULONG             obsoleted_address[4];
 
             if_index = ipv6_address -> nxd_ipv6_address_attached -> nx_interface_index;
 #endif /* NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY */
+
+            /* Drop handshakes addressed to it, sending nothing: they point
+               at the entry the memset below zeroes.  */
+            _nx_tcp_syncache_interface_flush(ip_ptr, NX_NULL, ipv6_address);
 
             /* At this point ipv6_address is off the interface IPv6 address list. */
             memset(ipv6_address, 0, sizeof(NXD_IPV6_ADDRESS));

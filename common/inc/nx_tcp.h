@@ -541,6 +541,8 @@ VOID _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, NX_TCP_HEADER *tcp_header_pt
 UINT _nx_tcp_syncache_deliver(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                               NX_TCP_SOCKET *socket_ptr);
 VOID _nx_tcp_syncache_flush(NX_IP *ip_ptr, UINT port);
+VOID _nx_tcp_syncache_interface_flush(NX_IP *ip_ptr, NX_INTERFACE *interface_ptr,
+                                      NXD_IPV6_ADDRESS *ipv6_address);
 VOID _nx_tcp_syncache_periodic(NX_IP *ip_ptr);
 
 /* Split out so a host test can drive the cookie without a stack.  */
