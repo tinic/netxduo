@@ -274,10 +274,11 @@ TX_THREAD     *thread_ptr;
     {
 
         /* Yes, notification is requested.  The callback is deferred: the fan-out
-           in _nx_udp_packet_receive runs under the protection mutex, so the
-           callback cannot run here (it may call bind/unbind/delete, which take
-           the mutex).  Mark the socket pending; the caller invokes the callback
-           once the mutex is released and the primary socket has been delivered.  */
+           in _nx_udp_packet_receive runs under the protection mutex, and the
+           callback must run only after the primary socket has been delivered so
+           a sibling cannot unbind or delete the primary first.  Mark the socket
+           pending; the caller invokes the callback under the mutex after the
+           primary delivery.  */
         socket_ptr -> nx_udp_socket_notify_pending =  NX_TRUE;
     }
 }
@@ -328,6 +329,7 @@ VOID           (*receive_callback)(struct NX_UDP_SOCKET_STRUCT *socket_ptr);
 UINT           index;
 UINT           port;
 UINT           is_multicast;
+UINT           deferred_pending;
 TX_THREAD     *thread_ptr;
 NX_UDP_SOCKET *socket_ptr;
 NX_UDP_SOCKET *sibling_ptr;
@@ -531,6 +533,13 @@ NX_IPV6_HEADER *ipv6_header_ptr;
        delivered, and running one mid-walk would let it mutate the list being
        walked, so _nx_udp_socket_receive_shared only marks them pending and
        they are invoked, under the mutex, after the primary delivery.  */
+    /* No sibling notification is owed until the fan-out below clones a datagram
+       to a sharer that has a receive callback.  The deferred notify walk after
+       the primary delivery is gated on this flag so the ordinary unicast and
+       non-sharing paths keep their old single acquire/release and do not
+       re-walk the port list on every packet.  */
+    deferred_pending = NX_FALSE;
+
     if ((socket_ptr -> nx_udp_socket_port == port) &&
         (socket_ptr -> nx_udp_socket_share))
     {
@@ -584,8 +593,14 @@ NX_IPV6_HEADER *ipv6_header_ptr;
                     {
 
                         /* Deliver the clone.  The sibling's receive callback is
-                           deferred via nx_udp_socket_notify_pending.  */
+                           deferred via nx_udp_socket_notify_pending; a sibling
+                           that has a receive callback owes a deferred notify.  */
                         _nx_udp_socket_receive_shared(ip_ptr, sibling_ptr, clone_packet_ptr);
+
+                        if (sibling_ptr -> nx_udp_receive_callback)
+                        {
+                            deferred_pending = NX_TRUE;
+                        }
                     }
 #ifndef NX_DISABLE_UDP_INFO
                     else
@@ -881,69 +896,76 @@ NX_IPV6_HEADER *ipv6_header_ptr;
        the primary path above keeps the mutex released and allows blocking.  The
        pending flag is cleared before each invoke so each callback fires at most
        once, and the walk restarts from the current port-table head after each
-       callback because a callback may unbind or delete any socket.  */
-    if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
+       callback because a callback may unbind or delete any socket.  This whole
+       phase is gated on deferred_pending: an ordinary unicast or non-sharing
+       packet set no flag, so it skips the mutex re-acquire and port-list walk
+       below and keeps the original single acquire/release on the hot path.  */
+    if (deferred_pending)
     {
 
-        /* Get mutex protection for the pending-flag walk.  */
-        tx_mutex_get(&(ip_ptr -> nx_ip_protection), NX_WAIT_FOREVER);
-    }
-
-    for (;;)
-    {
-
-        /* Walk the bound list looking for the next pending notification.  */
-        sibling_ptr =  ip_ptr -> nx_ip_udp_port_table[index];
-        notify_ptr =   NX_NULL;
-
-        if (sibling_ptr)
+        if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
         {
 
-            do
+            /* Get mutex protection for the pending-flag walk.  */
+            tx_mutex_get(&(ip_ptr -> nx_ip_protection), NX_WAIT_FOREVER);
+        }
+
+        for (;;)
+        {
+
+            /* Walk the bound list looking for the next pending notification.  */
+            sibling_ptr =  ip_ptr -> nx_ip_udp_port_table[index];
+            notify_ptr =   NX_NULL;
+
+            if (sibling_ptr)
             {
 
-                if ((sibling_ptr -> nx_udp_socket_notify_pending) &&
-                    (sibling_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
-                    (sibling_ptr -> nx_udp_socket_bound_next != NX_NULL))
+                do
                 {
 
-                    notify_ptr =  sibling_ptr;
-                    break;
-                }
+                    if ((sibling_ptr -> nx_udp_socket_notify_pending) &&
+                        (sibling_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
+                        (sibling_ptr -> nx_udp_socket_bound_next != NX_NULL))
+                    {
 
-                sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
-            } while (sibling_ptr != ip_ptr -> nx_ip_udp_port_table[index]);
+                        notify_ptr =  sibling_ptr;
+                        break;
+                    }
+
+                    sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
+                } while (sibling_ptr != ip_ptr -> nx_ip_udp_port_table[index]);
+            }
+
+            if (!notify_ptr)
+            {
+
+                /* No deferred notification remains.  */
+                break;
+            }
+
+            /* Clear the pending flag and capture the callback while the mutex is
+               still held, so this socket is not notified twice if the callback
+               mutates the list.  */
+            notify_ptr -> nx_udp_socket_notify_pending =  NX_FALSE;
+            receive_callback =  notify_ptr -> nx_udp_receive_callback;
+
+            /* Invoke the callback with the protection mutex still held.  ThreadX
+               mutexes are recursive, so a callback that binds, unbinds, or deletes
+               re-acquires the mutex without deadlock, and a concurrent task cannot
+               unbind, delete, or free the socket between the walk above and this
+               invoke because it blocks on the same mutex.  */
+            if (receive_callback)
+            {
+                (receive_callback)(notify_ptr);
+            }
         }
 
-        if (!notify_ptr)
+        if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
         {
 
-            /* No deferred notification remains.  */
-            break;
+            /* Release mutex protection.  */
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
         }
-
-        /* Clear the pending flag and capture the callback while the mutex is
-           still held, so this socket is not notified twice if the callback
-           mutates the list.  */
-        notify_ptr -> nx_udp_socket_notify_pending =  NX_FALSE;
-        receive_callback =  notify_ptr -> nx_udp_receive_callback;
-
-        /* Invoke the callback with the protection mutex still held.  ThreadX
-           mutexes are recursive, so a callback that binds, unbinds, or deletes
-           re-acquires the mutex without deadlock, and a concurrent task cannot
-           unbind, delete, or free the socket between the walk above and this
-           invoke because it blocks on the same mutex.  */
-        if (receive_callback)
-        {
-            (receive_callback)(notify_ptr);
-        }
-    }
-
-    if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
-    {
-
-        /* Release mutex protection.  */
-        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
     }
 }
 
