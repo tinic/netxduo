@@ -867,11 +867,16 @@ NX_IPV6_HEADER *ipv6_header_ptr;
        bind/unbind/delete, which take it), so they run here, after the primary
        socket has been delivered and its own callback invoked.  Callback
        ordering is therefore: primary delivery, primary callback, then each
-       sibling callback in bound-list order.  Each callback runs without the
-       mutex; the pending flags are re-walked under the mutex and re-anchored to
-       the port-table head after each callback because a callback may unbind or
-       delete any socket.  Clearing the pending flag before invoking makes each
-       callback fire at most once.  */
+       sibling callback in bound-list order.  Each callback runs with the mutex
+       released, exactly like the primary receive callback above; the pending
+       flags are re-walked under the mutex and the walk starts again from the
+       current port-table head after each callback, because a callback may
+       unbind or delete any socket.  Clearing the pending flag before invoking
+       makes each callback fire at most once.  Before each invoke the socket's
+       bound/id state is re-verified so an unbind or delete that finished in
+       the unlock-to-call gap is skipped; a socket whose memory the application
+       frees in that same window is still forbidden, by the same receive-notify
+       lifetime contract the primary path above already imposes.  */
     if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
     {
 
@@ -925,8 +930,15 @@ NX_IPV6_HEADER *ipv6_header_ptr;
             tx_mutex_put(&(ip_ptr -> nx_ip_protection));
         }
 
-        /* Invoke the deferred callback, if still specified.  */
-        if (receive_callback)
+        /* Invoke the deferred callback, if still specified and the socket was
+           not unbound or deleted in the unlock-to-call gap above (both leave
+           bound_next null / the id cleared).  This narrows the gap for a racing
+           unbind or delete that already finished; it cannot guard the socket's
+           memory against the application freeing it in the same window, which
+           the receive-notify contract forbids.  */
+        if ((notify_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
+            (notify_ptr -> nx_udp_socket_bound_next != NX_NULL) &&
+            (receive_callback))
         {
             (receive_callback)(notify_ptr);
         }
