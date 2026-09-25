@@ -652,21 +652,29 @@ NX_IPV6_HEADER *ipv6_header_ptr;
 #endif
 
         /* Walk the remainder of the bound-port circular list.  A sibling's
-           receive callback may close its own socket, unlinking it and leaving
-           its bound_next NULL; capture the next entry before each delivery so
-           the walk never follows a pointer out of an entry a callback removed.  */
+           receive callback may close a socket — its own, or any other still
+           pending in this walk.  Each iteration therefore captures the
+           successor before delivering, re-reads it after (a survivor's
+           re-linked successor is authoritative), and only delivers to a
+           socket that is still bound and sharing the port.  unbind clears a
+           removed node's bound_next (but keeps its id), so the bound check
+           rejects a node a prior callback closed before it is dereferenced.  */
         if (is_multicast)
         {
             sibling_ptr =  socket_ptr -> nx_udp_socket_bound_next;
-            while (sibling_ptr != socket_ptr)
+            while ((sibling_ptr != socket_ptr) && (sibling_ptr != NX_NULL))
             {
 
                 /* Capture the next entry before the delivery below can run a
                    sibling callback that mutates the bound list.  */
                 next_sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
 
-                /* Only same-port sharers receive a copy.  */
-                if ((sibling_ptr -> nx_udp_socket_port == port) &&
+                /* Deliver only to a socket that is still bound and shares the
+                   port.  The bound check, not just the id check, rejects a
+                   sibling a prior callback unbound (unbind keeps the id).  */
+                if ((sibling_ptr -> nx_udp_socket_bound_next != NX_NULL) &&
+                    (sibling_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
+                    (sibling_ptr -> nx_udp_socket_port == port) &&
                     (sibling_ptr -> nx_udp_socket_share))
                 {
 
@@ -689,6 +697,19 @@ NX_IPV6_HEADER *ipv6_header_ptr;
                         ip_ptr -> nx_ip_udp_receive_packets_dropped++;
                     }
 #endif
+                }
+
+                /* Re-read the successor now that any callback has returned.
+                   If the sibling survived (still bound), a callback that
+                   removed some other node re-linked its neighbors, so its
+                   bound_next is authoritative.  If it closed itself its
+                   bound_next is NULL and we keep the successor captured
+                   above; the bound check on the next pass rejects it if it
+                   too was removed.  */
+                if (sibling_ptr -> nx_udp_socket_bound_next != NX_NULL)
+                {
+
+                    next_sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
                 }
 
                 /* Move to the next entry in the bound index.  */
