@@ -279,8 +279,12 @@ UINT           status = NX_SUCCESS;
         } while (search_ptr != end_ptr);
     }
 
-    /* Now determine if the port is available.  */
-    if ((search_ptr == NX_NULL) || (search_ptr -> nx_udp_socket_port != port))
+    /* Now determine if the port is available.  A port already held by a
+       shared socket is available to a socket that is itself opting in, so
+       several SO_REUSEPORT sockets can carry one UDP port.  */
+    if ((search_ptr == NX_NULL) ||
+        (search_ptr -> nx_udp_socket_port != port) ||
+        ((search_ptr -> nx_udp_socket_share) && (socket_ptr -> nx_udp_socket_share)))
     {
 
         /* Place this UDP socket structure on the list of bound ports.  */

@@ -1839,11 +1839,19 @@ typedef struct NX_UDP_SOCKET_STRUCT
     /* Defined the vlan priority for this UDP socket. */
     UCHAR       nx_udp_socket_vlan_priority;
 
+    /* Opt-in SO_REUSEPORT sharing: a second socket may bind this port when
+       both sockets set this before bind.  Consumes one former reserved byte,
+       so the structure size is unchanged. */
+    UCHAR       nx_udp_socket_share;
+
+    /* It is reserved for future use. */
+    UCHAR       nx_udp_socket_reserved[1];
+#else
+    /* Opt-in SO_REUSEPORT sharing, see the VLAN arm above. */
+    UCHAR       nx_udp_socket_share;
+
     /* It is reserved for future use. */
     UCHAR       nx_udp_socket_reserved[2];
-#else
-    /* It is reserved for future use. */
-    UCHAR       nx_udp_socket_reserved[3];
 #endif /* NX_ENABLE_VLAN */
 
     /* Define the UDP receive packet queue pointers, queue counter, and
