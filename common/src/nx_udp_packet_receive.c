@@ -325,6 +325,7 @@ UINT           is_multicast;
 TX_THREAD     *thread_ptr;
 NX_UDP_SOCKET *socket_ptr;
 NX_UDP_SOCKET *sibling_ptr;
+NX_UDP_SOCKET *next_sibling_ptr;
 NX_UDP_HEADER *udp_header_ptr;
 NX_IPV4_HEADER *ipv4_header_ptr;
 NX_PACKET     *clone_packet_ptr;
@@ -609,6 +610,97 @@ NX_IPV6_HEADER *ipv6_header_ptr;
         ip_ptr -> nx_ip_udp_port_table[index] =  socket_ptr;
     }
 
+    /* Restore interrupts so a sibling receive callback below runs in the same
+       enabled state as the primary receive callback further down.  The fan-out
+       only reads packet_ptr and walks the bound list; the suspension-list and
+       queue manipulation of the primary delivery is re-protected after it.  */
+    TX_RESTORE
+
+    /* Fan out a clone to every other same-port sharer.  This has to run while
+       packet_ptr is still owned: the primary delivery below either hands it to
+       a waiting receiver (which can release it), queues it (and, on overflow,
+       frees the oldest packet packet_ptr is reassigned to), or runs the receive
+       callback (which can dequeue and release it).  Reading or copying
+       packet_ptr after any of those would touch freed or wrong packet memory.  */
+    if ((socket_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
+        (socket_ptr -> nx_udp_socket_share))
+    {
+
+        /* Determine whether this datagram is destined to a multicast group.  */
+        is_multicast = NX_FALSE;
+        if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
+        {
+
+            /* Test the class-D destination range.  */
+            ipv4_header_ptr =  (NX_IPV4_HEADER *)(packet_ptr -> nx_packet_ip_header);
+            if ((ipv4_header_ptr -> nx_ip_header_destination_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE)
+            {
+                is_multicast = NX_TRUE;
+            }
+        }
+#ifdef FEATURE_NX_IPV6
+        else if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
+        {
+
+            /* Test the leading 0xFF of the IPv6 destination.  */
+            ipv6_header_ptr =  (NX_IPV6_HEADER *)(packet_ptr -> nx_packet_ip_header);
+            if ((ipv6_header_ptr -> nx_ip_header_destination_ip[0] & (ULONG)0xFF000000) == (ULONG)0xFF000000)
+            {
+                is_multicast = NX_TRUE;
+            }
+        }
+#endif
+
+        /* Walk the remainder of the bound-port circular list.  A sibling's
+           receive callback may close its own socket, unlinking it and leaving
+           its bound_next NULL; capture the next entry before each delivery so
+           the walk never follows a pointer out of an entry a callback removed.  */
+        if (is_multicast)
+        {
+            sibling_ptr =  socket_ptr -> nx_udp_socket_bound_next;
+            while (sibling_ptr != socket_ptr)
+            {
+
+                /* Capture the next entry before the delivery below can run a
+                   sibling callback that mutates the bound list.  */
+                next_sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
+
+                /* Only same-port sharers receive a copy.  */
+                if ((sibling_ptr -> nx_udp_socket_port == port) &&
+                    (sibling_ptr -> nx_udp_socket_share))
+                {
+
+                    /* Clone the packet.  On an empty pool this fails without
+                       blocking; the sibling is skipped rather than starving
+                       the primary.  */
+                    if (_nx_packet_copy(packet_ptr, &clone_packet_ptr,
+                                        packet_ptr -> nx_packet_pool_owner,
+                                        NX_NO_WAIT) == NX_SUCCESS)
+                    {
+
+                        /* Deliver the clone.  */
+                        _nx_udp_socket_receive_shared(ip_ptr, sibling_ptr, clone_packet_ptr);
+                    }
+#ifndef NX_DISABLE_UDP_INFO
+                    else
+                    {
+
+                        /* Account for the clone that could not be made.  */
+                        ip_ptr -> nx_ip_udp_receive_packets_dropped++;
+                    }
+#endif
+                }
+
+                /* Move to the next entry in the bound index.  */
+                sibling_ptr =  next_sibling_ptr;
+            }
+        }
+    }
+
+    /* Disable interrupts again for the atomic suspension-list / queue
+       manipulation of the primary delivery below.  */
+    TX_DISABLE
+
     /* Determine if there is thread waiting for a packet from this port.  */
     thread_ptr =  socket_ptr -> nx_udp_socket_receive_suspension_list;
     if (thread_ptr)
@@ -771,85 +863,6 @@ NX_IPV6_HEADER *ipv6_header_ptr;
         /* Yes, notification is requested.  Call the application's receive notification
            function for this socket.  */
         (receive_callback)(socket_ptr);
-    }
-
-    /* A socket that did not opt into port sharing (the normal case) takes this
-       path with no extra work.  Only a still-valid sharer fans out, and only
-       for a multicast datagram; unicast is delivered to the single primary
-       above.  The id check also covers the rare case where the primary's own
-       receive callback closed the socket: _nx_udp_socket_delete clears the id,
-       and fanning out from an unlinked socket would otherwise walk a broken
-       bound list.  */
-    if ((socket_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
-        (socket_ptr -> nx_udp_socket_share))
-    {
-
-        /* Determine whether this datagram is destined to a multicast group.  */
-        is_multicast = NX_FALSE;
-        if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
-        {
-
-            /* Test the class-D destination range.  */
-            ipv4_header_ptr =  (NX_IPV4_HEADER *)(packet_ptr -> nx_packet_ip_header);
-            if ((ipv4_header_ptr -> nx_ip_header_destination_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE)
-            {
-                is_multicast = NX_TRUE;
-            }
-        }
-#ifdef FEATURE_NX_IPV6
-        else if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
-        {
-
-            /* Test the leading 0xFF of the IPv6 destination.  */
-            ipv6_header_ptr =  (NX_IPV6_HEADER *)(packet_ptr -> nx_packet_ip_header);
-            if ((ipv6_header_ptr -> nx_ip_header_destination_ip[0] & (ULONG)0xFF000000) == (ULONG)0xFF000000)
-            {
-                is_multicast = NX_TRUE;
-            }
-        }
-#endif
-
-        /* Fan out a copy to every other same-port sharer.  The bind rule
-           guarantees a shared port carries only sharers, so the siblings
-           below are the remaining ones.  */
-        if (is_multicast)
-        {
-
-            /* Walk the remainder of the bound-port circular list.  */
-            sibling_ptr =  socket_ptr -> nx_udp_socket_bound_next;
-            while (sibling_ptr != socket_ptr)
-            {
-
-                /* Only same-port sharers receive a copy.  */
-                if ((sibling_ptr -> nx_udp_socket_port == port) &&
-                    (sibling_ptr -> nx_udp_socket_share))
-                {
-
-                    /* Clone the packet.  On an empty pool this fails without
-                       blocking; the sibling is skipped rather than starving
-                       the primary.  */
-                    if (_nx_packet_copy(packet_ptr, &clone_packet_ptr,
-                                        packet_ptr -> nx_packet_pool_owner,
-                                        NX_NO_WAIT) == NX_SUCCESS)
-                    {
-
-                        /* Deliver the clone.  */
-                        _nx_udp_socket_receive_shared(ip_ptr, sibling_ptr, clone_packet_ptr);
-                    }
-#ifndef NX_DISABLE_UDP_INFO
-                    else
-                    {
-
-                        /* Account for the clone that could not be made.  */
-                        ip_ptr -> nx_ip_udp_receive_packets_dropped++;
-                    }
-#endif
-                }
-
-                /* Move to the next entry in the bound index.  */
-                sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
-            }
-        }
     }
 }
 
