@@ -58,9 +58,10 @@
 /*    receiver is resumed with the packet, otherwise the packet is        */
 /*    queued, subject to the low-watermark and queue-depth limits.  The   */
 /*    caller holds the IP protection mutex; this routine manages its own  */
-/*    interrupt state.  The receive callback is not run here (it may      */
-/*    take the mutex the caller holds); instead the socket is marked      */
-/*    notify-pending and the caller invokes the callback afterwards.      */
+/*    interrupt state.  The receive callback is not run here; it must     */
+/*    wait for the primary delivery and cannot run mid-walk, so the       */
+/*    socket is marked notify-pending and the caller invokes the          */
+/*    callback afterwards, under the mutex.                               */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -525,9 +526,11 @@ NX_IPV6_HEADER *ipv6_header_ptr;
        so a concurrent bind/unbind/delete cannot mutate the bound list mid-walk;
        with the mutex held the list is stable and a bound sibling's bound_next is
        never NULL, so no successor capture or re-read is required.  The sibling
-       receive callbacks cannot run here (they may take the mutex themselves), so
-       _nx_udp_socket_receive_shared only marks them pending and they are invoked
-       after the primary delivery.  */
+       receive callbacks cannot run here; they must wait for the primary
+       delivery so a sibling cannot unbind or delete the primary before it is
+       delivered, and running one mid-walk would let it mutate the list being
+       walked, so _nx_udp_socket_receive_shared only marks them pending and
+       they are invoked, under the mutex, after the primary delivery.  */
     if ((socket_ptr -> nx_udp_socket_port == port) &&
         (socket_ptr -> nx_udp_socket_share))
     {
@@ -863,20 +866,22 @@ NX_IPV6_HEADER *ipv6_header_ptr;
     }
 
     /* Deliver the deferred sibling receive callbacks owed by the fan-out above.
-       They cannot run under the protection mutex (a callback may call
-       bind/unbind/delete, which take it), so they run here, after the primary
-       socket has been delivered and its own callback invoked.  Callback
-       ordering is therefore: primary delivery, primary callback, then each
-       sibling callback in bound-list order.  Each callback runs with the mutex
-       released, exactly like the primary receive callback above; the pending
-       flags are re-walked under the mutex and the walk starts again from the
-       current port-table head after each callback, because a callback may
-       unbind or delete any socket.  Clearing the pending flag before invoking
-       makes each callback fire at most once.  Before each invoke the socket's
-       bound/id state is re-verified so an unbind or delete that finished in
-       the unlock-to-call gap is skipped; a socket whose memory the application
-       frees in that same window is still forbidden, by the same receive-notify
-       lifetime contract the primary path above already imposes.  */
+       They are deferred to here, after the primary socket has been delivered and
+       its own callback invoked, so a sibling callback cannot unbind or delete
+       the primary before its delivery; callback ordering is: primary delivery,
+       primary callback, then each sibling callback in bound-list order.  Each
+       sibling callback is invoked with the protection mutex still held.  ThreadX
+       mutexes are recursive, so a callback that binds, unbinds, or deletes takes
+       the mutex again without deadlock, and a concurrent task cannot unbind,
+       delete, or free the socket between the walk and the invoke because it
+       blocks on the same mutex: the dispatch is lifetime-safe.  That same
+       serialization keeps the binding identity stable for the duration of the
+       callback, so a rebind cannot deliver an old notification into a new
+       binding.  The cost is that a shared-path receive callback must not block;
+       the primary path above keeps the mutex released and allows blocking.  The
+       pending flag is cleared before each invoke so each callback fires at most
+       once, and the walk restarts from the current port-table head after each
+       callback because a callback may unbind or delete any socket.  */
     if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
     {
 
@@ -917,37 +922,20 @@ NX_IPV6_HEADER *ipv6_header_ptr;
             break;
         }
 
-        /* Clear the pending flag and capture the callback before releasing the
-           mutex, so this socket is not notified twice if the callback mutates
-           the list.  */
+        /* Clear the pending flag and capture the callback while the mutex is
+           still held, so this socket is not notified twice if the callback
+           mutates the list.  */
         notify_ptr -> nx_udp_socket_notify_pending =  NX_FALSE;
         receive_callback =  notify_ptr -> nx_udp_receive_callback;
 
-        if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
-        {
-
-            /* Release the mutex so the callback may take it.  */
-            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-        }
-
-        /* Invoke the deferred callback, if still specified and the socket was
-           not unbound or deleted in the unlock-to-call gap above (both leave
-           bound_next null / the id cleared).  This narrows the gap for a racing
-           unbind or delete that already finished; it cannot guard the socket's
-           memory against the application freeing it in the same window, which
-           the receive-notify contract forbids.  */
-        if ((notify_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
-            (notify_ptr -> nx_udp_socket_bound_next != NX_NULL) &&
-            (receive_callback))
+        /* Invoke the callback with the protection mutex still held.  ThreadX
+           mutexes are recursive, so a callback that binds, unbinds, or deletes
+           re-acquires the mutex without deadlock, and a concurrent task cannot
+           unbind, delete, or free the socket between the walk above and this
+           invoke because it blocks on the same mutex.  */
+        if (receive_callback)
         {
             (receive_callback)(notify_ptr);
-        }
-
-        if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
-        {
-
-            /* Re-acquire the mutex for the next walk.  */
-            tx_mutex_get(&(ip_ptr -> nx_ip_protection), NX_WAIT_FOREVER);
         }
     }
 
