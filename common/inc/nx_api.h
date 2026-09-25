@@ -1844,14 +1844,20 @@ typedef struct NX_UDP_SOCKET_STRUCT
        so the structure size is unchanged. */
     UCHAR       nx_udp_socket_share;
 
-    /* It is reserved for future use. */
-    UCHAR       nx_udp_socket_reserved[1];
+    /* Set by the multicast fan-out in _nx_udp_packet_receive when a clone has
+       been delivered to this socket and its receive notify callback is still
+       owed.  Cleared when the deferred callback is invoked.  Consumes one
+       former reserved byte, so the structure size is unchanged. */
+    UCHAR       nx_udp_socket_notify_pending;
 #else
     /* Opt-in SO_REUSEPORT sharing, see the VLAN arm above. */
     UCHAR       nx_udp_socket_share;
 
+    /* Deferred fan-out receive notification, see the VLAN arm above. */
+    UCHAR       nx_udp_socket_notify_pending;
+
     /* It is reserved for future use. */
-    UCHAR       nx_udp_socket_reserved[2];
+    UCHAR       nx_udp_socket_reserved[1];
 #endif /* NX_ENABLE_VLAN */
 
     /* Define the UDP receive packet queue pointers, queue counter, and
