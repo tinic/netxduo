@@ -254,6 +254,11 @@ NX_PACKET     *next_packet_ptr;
     /* An ICMP error nobody collected belongs to the port being given up.  */
     socket_ptr -> nx_udp_socket_icmp_error =  NX_SUCCESS;
 
+    /* A deferred fan-out notification is no longer owed: the socket is off the
+       bound list, and if it is later rebound a stale pending flag must not fire
+       its receive callback for a datagram it never received.  */
+    socket_ptr -> nx_udp_socket_notify_pending =  NX_FALSE;
+
     /* Restore interrupts.  */
     TX_RESTORE
 

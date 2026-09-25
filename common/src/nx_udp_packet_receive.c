@@ -58,7 +58,10 @@
 /*    receiver is resumed with the packet, otherwise the packet is        */
 /*    queued, subject to the low-watermark and queue-depth limits.  The   */
 /*    caller holds the IP protection mutex; this routine manages its own  */
-/*    interrupt state.                                                    */
+/*    interrupt state.  The receive callback is not run here; it must     */
+/*    wait for the primary delivery and cannot run mid-walk, so the       */
+/*    socket is marked notify-pending and the caller invokes the          */
+/*    callback afterwards, under the mutex.                               */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -270,9 +273,13 @@ TX_THREAD     *thread_ptr;
     if (receive_callback)
     {
 
-        /* Yes, notification is requested.  Call the application's receive notification
-           function for this socket.  */
-        (receive_callback)(socket_ptr);
+        /* Yes, notification is requested.  The callback is deferred: the fan-out
+           in _nx_udp_packet_receive runs under the protection mutex, and the
+           callback must run only after the primary socket has been delivered so
+           a sibling cannot unbind or delete the primary first.  Mark the socket
+           pending; the caller invokes the callback under the mutex after the
+           primary delivery.  */
+        socket_ptr -> nx_udp_socket_notify_pending =  NX_TRUE;
     }
 }
 
@@ -322,9 +329,11 @@ VOID           (*receive_callback)(struct NX_UDP_SOCKET_STRUCT *socket_ptr);
 UINT           index;
 UINT           port;
 UINT           is_multicast;
+UINT           deferred_pending;
 TX_THREAD     *thread_ptr;
 NX_UDP_SOCKET *socket_ptr;
 NX_UDP_SOCKET *sibling_ptr;
+NX_UDP_SOCKET *notify_ptr;
 NX_UDP_HEADER *udp_header_ptr;
 NX_IPV4_HEADER *ipv4_header_ptr;
 NX_PACKET     *clone_packet_ptr;
@@ -510,6 +519,104 @@ NX_IPV6_HEADER *ipv6_header_ptr;
             socket_ptr =  socket_ptr -> nx_udp_socket_bound_next;
         }
     } while (socket_ptr != ip_ptr -> nx_ip_udp_port_table[index]);
+
+    /* Fan out a clone to every other same-port sharer.  This has to run while
+       packet_ptr is still owned — the primary delivery below either hands it to
+       a waiting receiver (which can release it), queues it (and, on overflow,
+       frees the oldest packet packet_ptr is reassigned to), or runs the primary
+       receive callback.  It also has to run while the protection mutex is held
+       so a concurrent bind/unbind/delete cannot mutate the bound list mid-walk;
+       with the mutex held the list is stable and a bound sibling's bound_next is
+       never NULL, so no successor capture or re-read is required.  The sibling
+       receive callbacks cannot run here; they must wait for the primary
+       delivery so a sibling cannot unbind or delete the primary before it is
+       delivered, and running one mid-walk would let it mutate the list being
+       walked, so _nx_udp_socket_receive_shared only marks them pending and
+       they are invoked, under the mutex, after the primary delivery.  */
+    /* No sibling notification is owed until the fan-out below clones a datagram
+       to a sharer that has a receive callback.  The deferred notify walk after
+       the primary delivery is gated on this flag so the ordinary unicast and
+       non-sharing paths keep their old single acquire/release and do not
+       re-walk the port list on every packet.  */
+    deferred_pending = NX_FALSE;
+
+    if ((socket_ptr -> nx_udp_socket_port == port) &&
+        (socket_ptr -> nx_udp_socket_share))
+    {
+
+        /* Determine whether this datagram is destined to a multicast group.  */
+        is_multicast = NX_FALSE;
+        if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
+        {
+
+            /* Test the class-D destination range.  */
+            ipv4_header_ptr =  (NX_IPV4_HEADER *)(packet_ptr -> nx_packet_ip_header);
+            if ((ipv4_header_ptr -> nx_ip_header_destination_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE)
+            {
+                is_multicast = NX_TRUE;
+            }
+        }
+#ifdef FEATURE_NX_IPV6
+        else if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
+        {
+
+            /* Test the leading 0xFF of the IPv6 destination.  */
+            ipv6_header_ptr =  (NX_IPV6_HEADER *)(packet_ptr -> nx_packet_ip_header);
+            if ((ipv6_header_ptr -> nx_ip_header_destination_ip[0] & (ULONG)0xFF000000) == (ULONG)0xFF000000)
+            {
+                is_multicast = NX_TRUE;
+            }
+        }
+#endif
+
+        /* Walk the remainder of the bound-port circular list and deliver a
+           clone to each socket that is still bound and shares the port.  */
+        if (is_multicast)
+        {
+            sibling_ptr =  socket_ptr -> nx_udp_socket_bound_next;
+            while (sibling_ptr != socket_ptr)
+            {
+
+                /* Deliver only to a socket that is still bound and shares the
+                   port.  */
+                if ((sibling_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
+                    (sibling_ptr -> nx_udp_socket_port == port) &&
+                    (sibling_ptr -> nx_udp_socket_share))
+                {
+
+                    /* Clone the packet.  On an empty pool this fails without
+                       blocking; the sibling is skipped rather than starving
+                       the primary.  */
+                    if (_nx_packet_copy(packet_ptr, &clone_packet_ptr,
+                                        packet_ptr -> nx_packet_pool_owner,
+                                        NX_NO_WAIT) == NX_SUCCESS)
+                    {
+
+                        /* Deliver the clone.  The sibling's receive callback is
+                           deferred via nx_udp_socket_notify_pending; a sibling
+                           that has a receive callback owes a deferred notify.  */
+                        _nx_udp_socket_receive_shared(ip_ptr, sibling_ptr, clone_packet_ptr);
+
+                        if (sibling_ptr -> nx_udp_receive_callback)
+                        {
+                            deferred_pending = NX_TRUE;
+                        }
+                    }
+#ifndef NX_DISABLE_UDP_INFO
+                    else
+                    {
+
+                        /* Account for the clone that could not be made.  */
+                        ip_ptr -> nx_ip_udp_receive_packets_dropped++;
+                    }
+#endif
+                }
+
+                /* Move to the next entry in the bound index.  */
+                sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
+            }
+        }
+    }
 
     /* Determine if the caller is a thread. If so, release the mutex protection previously setup.  */
     if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
@@ -773,82 +880,91 @@ NX_IPV6_HEADER *ipv6_header_ptr;
         (receive_callback)(socket_ptr);
     }
 
-    /* A socket that did not opt into port sharing (the normal case) takes this
-       path with no extra work.  Only a still-valid sharer fans out, and only
-       for a multicast datagram; unicast is delivered to the single primary
-       above.  The id check also covers the rare case where the primary's own
-       receive callback closed the socket: _nx_udp_socket_delete clears the id,
-       and fanning out from an unlinked socket would otherwise walk a broken
-       bound list.  */
-    if ((socket_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
-        (socket_ptr -> nx_udp_socket_share))
+    /* Deliver the deferred sibling receive callbacks owed by the fan-out above.
+       They are deferred to here, after the primary socket has been delivered and
+       its own callback invoked, so a sibling callback cannot unbind or delete
+       the primary before its delivery; callback ordering is: primary delivery,
+       primary callback, then each sibling callback in bound-list order.  Each
+       sibling callback is invoked with the protection mutex still held.  ThreadX
+       mutexes are recursive, so a callback that binds, unbinds, or deletes takes
+       the mutex again without deadlock, and a concurrent task cannot unbind,
+       delete, or free the socket between the walk and the invoke because it
+       blocks on the same mutex: the dispatch is lifetime-safe.  That same
+       serialization keeps the binding identity stable for the duration of the
+       callback, so a rebind cannot deliver an old notification into a new
+       binding.  The cost is that a shared-path receive callback must not block;
+       the primary path above keeps the mutex released and allows blocking.  The
+       pending flag is cleared before each invoke so each callback fires at most
+       once, and the walk restarts from the current port-table head after each
+       callback because a callback may unbind or delete any socket.  This whole
+       phase is gated on deferred_pending: an ordinary unicast or non-sharing
+       packet set no flag, so it skips the mutex re-acquire and port-list walk
+       below and keeps the original single acquire/release on the hot path.  */
+    if (deferred_pending)
     {
 
-        /* Determine whether this datagram is destined to a multicast group.  */
-        is_multicast = NX_FALSE;
-        if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
+        if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
         {
 
-            /* Test the class-D destination range.  */
-            ipv4_header_ptr =  (NX_IPV4_HEADER *)(packet_ptr -> nx_packet_ip_header);
-            if ((ipv4_header_ptr -> nx_ip_header_destination_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE)
-            {
-                is_multicast = NX_TRUE;
-            }
+            /* Get mutex protection for the pending-flag walk.  */
+            tx_mutex_get(&(ip_ptr -> nx_ip_protection), NX_WAIT_FOREVER);
         }
-#ifdef FEATURE_NX_IPV6
-        else if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
+
+        for (;;)
         {
 
-            /* Test the leading 0xFF of the IPv6 destination.  */
-            ipv6_header_ptr =  (NX_IPV6_HEADER *)(packet_ptr -> nx_packet_ip_header);
-            if ((ipv6_header_ptr -> nx_ip_header_destination_ip[0] & (ULONG)0xFF000000) == (ULONG)0xFF000000)
-            {
-                is_multicast = NX_TRUE;
-            }
-        }
-#endif
+            /* Walk the bound list looking for the next pending notification.  */
+            sibling_ptr =  ip_ptr -> nx_ip_udp_port_table[index];
+            notify_ptr =   NX_NULL;
 
-        /* Fan out a copy to every other same-port sharer.  The bind rule
-           guarantees a shared port carries only sharers, so the siblings
-           below are the remaining ones.  */
-        if (is_multicast)
-        {
-
-            /* Walk the remainder of the bound-port circular list.  */
-            sibling_ptr =  socket_ptr -> nx_udp_socket_bound_next;
-            while (sibling_ptr != socket_ptr)
+            if (sibling_ptr)
             {
 
-                /* Only same-port sharers receive a copy.  */
-                if ((sibling_ptr -> nx_udp_socket_port == port) &&
-                    (sibling_ptr -> nx_udp_socket_share))
+                do
                 {
 
-                    /* Clone the packet.  On an empty pool this fails without
-                       blocking; the sibling is skipped rather than starving
-                       the primary.  */
-                    if (_nx_packet_copy(packet_ptr, &clone_packet_ptr,
-                                        packet_ptr -> nx_packet_pool_owner,
-                                        NX_NO_WAIT) == NX_SUCCESS)
+                    if ((sibling_ptr -> nx_udp_socket_notify_pending) &&
+                        (sibling_ptr -> nx_udp_socket_id == NX_UDP_ID) &&
+                        (sibling_ptr -> nx_udp_socket_bound_next != NX_NULL))
                     {
 
-                        /* Deliver the clone.  */
-                        _nx_udp_socket_receive_shared(ip_ptr, sibling_ptr, clone_packet_ptr);
+                        notify_ptr =  sibling_ptr;
+                        break;
                     }
-#ifndef NX_DISABLE_UDP_INFO
-                    else
-                    {
 
-                        /* Account for the clone that could not be made.  */
-                        ip_ptr -> nx_ip_udp_receive_packets_dropped++;
-                    }
-#endif
-                }
-
-                /* Move to the next entry in the bound index.  */
-                sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
+                    sibling_ptr =  sibling_ptr -> nx_udp_socket_bound_next;
+                } while (sibling_ptr != ip_ptr -> nx_ip_udp_port_table[index]);
             }
+
+            if (!notify_ptr)
+            {
+
+                /* No deferred notification remains.  */
+                break;
+            }
+
+            /* Clear the pending flag and capture the callback while the mutex is
+               still held, so this socket is not notified twice if the callback
+               mutates the list.  */
+            notify_ptr -> nx_udp_socket_notify_pending =  NX_FALSE;
+            receive_callback =  notify_ptr -> nx_udp_receive_callback;
+
+            /* Invoke the callback with the protection mutex still held.  ThreadX
+               mutexes are recursive, so a callback that binds, unbinds, or deletes
+               re-acquires the mutex without deadlock, and a concurrent task cannot
+               unbind, delete, or free the socket between the walk above and this
+               invoke because it blocks on the same mutex.  */
+            if (receive_callback)
+            {
+                (receive_callback)(notify_ptr);
+            }
+        }
+
+        if ((_tx_thread_current_ptr) && (TX_THREAD_GET_SYSTEM_STATE() == 0))
+        {
+
+            /* Release mutex protection.  */
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
         }
     }
 }
