@@ -606,8 +606,10 @@ NX_IPV6_HEADER *ipv6_header_ptr;
                     else
                     {
 
-                        /* Account for the clone that could not be made.  */
+                        /* Account for the clone that could not be made, as
+                           the sibling's own drop too.  */
                         ip_ptr -> nx_ip_udp_receive_packets_dropped++;
+                        sibling_ptr -> nx_udp_socket_packets_dropped++;
                     }
 #endif
                 }

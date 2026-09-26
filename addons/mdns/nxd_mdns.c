@@ -468,8 +468,10 @@ UINT    host_name_size;
     }
     
     /* Opt into port sharing so a BSD SO_REUSEPORT socket (e.g. mcastfilter)
-       can co-bind port 5353 alongside the internal responder.  */
-    mdns_ptr -> nx_mdns_socket.nx_udp_socket_share = NX_TRUE;
+       can co-bind port 5353 alongside the internal responder.  SHARE_FIRST
+       keeps the responder first match for unicast 5353 when a sharer was
+       bound before it.  */
+    mdns_ptr -> nx_mdns_socket.nx_udp_socket_share = NX_UDP_SOCKET_SHARE_FIRST;
 
     /* Bind the UDP socket to the mDNS port.  */
     status =  nx_udp_socket_bind(&(mdns_ptr -> nx_mdns_socket), NX_MDNS_UDP_PORT, TX_NO_WAIT);

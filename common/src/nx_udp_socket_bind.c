@@ -302,6 +302,14 @@ UINT           status = NX_SUCCESS;
             socket_ptr -> nx_udp_socket_bound_previous =   (ip_ptr -> nx_ip_udp_port_table[index]) -> nx_udp_socket_bound_previous;
             ((ip_ptr -> nx_ip_udp_port_table[index]) -> nx_udp_socket_bound_previous) -> nx_udp_socket_bound_next = socket_ptr;
             (ip_ptr -> nx_ip_udp_port_table[index]) -> nx_udp_socket_bound_previous =   socket_ptr;
+
+            /* A SHARE_FIRST socket becomes the head of the circular list, so
+               it is the first same-port match for a unicast datagram.  The
+               order of the others is unchanged.  */
+            if (socket_ptr -> nx_udp_socket_share == NX_UDP_SOCKET_SHARE_FIRST)
+            {
+                ip_ptr -> nx_ip_udp_port_table[index] =  socket_ptr;
+            }
         }
         else
         {
