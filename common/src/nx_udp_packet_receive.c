@@ -78,6 +78,9 @@
 /*    _nx_udp_packet_receive                                               */
 /*                                                                        */
 /**************************************************************************/
+/* A shared multicast datagram is cloned from the original packet's pool, so N
+   sharers hold N pool buffers per datagram until each reads or drops it (N4);
+   the endurance tier watches that pressure.  */
 static void _nx_udp_socket_receive_shared(NX_IP *ip_ptr, NX_UDP_SOCKET *socket_ptr, NX_PACKET *packet_ptr)
 {
 
@@ -540,6 +543,11 @@ NX_IPV6_HEADER *ipv6_header_ptr;
        re-walk the port list on every packet.  */
     deferred_pending = NX_FALSE;
 
+    /* Unicast went to the first matching socket in the loop above; only a
+       multicast datagram fans clones out to the other sharers.  If the mDNS
+       responder unbinds and rebinds while another socket shares the port, that
+       other socket becomes first-match and takes the responder's unicast
+       replies; the ordering is accepted, not a bug (N2).  */
     if ((socket_ptr -> nx_udp_socket_port == port) &&
         (socket_ptr -> nx_udp_socket_share))
     {
@@ -606,8 +614,10 @@ NX_IPV6_HEADER *ipv6_header_ptr;
                     else
                     {
 
-                        /* Account for the clone that could not be made.  */
+                        /* Account for the clone that could not be made, on the
+                           sibling too and not only IP-wide (N3).  */
                         ip_ptr -> nx_ip_udp_receive_packets_dropped++;
+                        sibling_ptr -> nx_udp_socket_packets_dropped++;
                     }
 #endif
                 }
