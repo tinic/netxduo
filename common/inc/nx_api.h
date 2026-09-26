@@ -1185,6 +1185,13 @@ typedef struct NX_IPV6_DEFAULT_ROUTER_ENTRY_STRUCT
 #define NX_UDP_PORT_TABLE_SIZE                     32
 #define NX_UDP_PORT_TABLE_MASK                     (NX_UDP_PORT_TABLE_SIZE - 1)
 
+/* Values of nx_udp_socket_share.  Any nonzero value opts into port sharing.
+   A unicast datagram goes to the first same-port socket on the bound list;
+   SHARE_FIRST binds at the head of that list, so the socket stays first
+   match whichever sharers were bound before it.  */
+#define NX_UDP_SOCKET_SHARE                        1
+#define NX_UDP_SOCKET_SHARE_FIRST                  2
+
 
 /* Define the constants that determine how big the hash table is for TCP ports.  The
    value must be a power of two, so subtracting one gives us the mask.  */
