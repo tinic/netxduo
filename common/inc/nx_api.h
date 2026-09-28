@@ -2815,6 +2815,12 @@ typedef struct NX_INTERFACE_STRUCT
        what NetX Duo always did.  Zero unless the application sets it.  */
     INT   nx_interface_priority;
 
+#ifdef NX_TCP_ACK_THRESHOLD_MAX
+    /* Zero uses the port default; a nonzero value caps TCP ACK spacing on
+       connections bound to this interface.  Set before bringing it online. */
+    ULONG nx_interface_tcp_ack_threshold_max;
+#endif
+
     /* Define the Link Driver entry point.  */
     VOID        (*nx_interface_link_driver_entry)(struct NX_IP_DRIVER_STRUCT *);
 

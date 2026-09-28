@@ -1325,18 +1325,26 @@ NX_IP         *ip_ptr;
         {
         ULONG ack_threshold;
         ULONG ack_limit;
+#ifdef NX_TCP_ACK_THRESHOLD_MAX
+        ULONG ack_max = NX_TCP_ACK_THRESHOLD_MAX;
+#endif
 
             ack_limit = _nx_tcp_socket_window_update_step(socket_ptr);
 #ifdef NX_TCP_ACK_THRESHOLD_MAX
-            /* Half the receive buffer is the right unit while the buffer is
-               sized by memory; once it is sized by the link's bandwidth-delay
-               product (a quarter megabyte, bsdsocket_window.h) half of it is
-               a stretch acknowledgment that releases a burst the card's
-               receive ring must absorb at wire speed.  The port pins the
-               cadence at what the largest pre-scaling buffer produced. */
-            if (ack_limit > NX_TCP_ACK_THRESHOLD_MAX)
+            /* The receive-buffer step is bounded by this connection's
+               interface policy.  An unset interface field uses the port
+               default; different links can use different ceilings without
+               changing the policy of every socket in the IP instance. */
+            if (socket_ptr -> nx_tcp_socket_connect_interface != NX_NULL &&
+                socket_ptr -> nx_tcp_socket_connect_interface ->
+                    nx_interface_tcp_ack_threshold_max != 0)
             {
-                ack_limit = NX_TCP_ACK_THRESHOLD_MAX;
+                ack_max = socket_ptr -> nx_tcp_socket_connect_interface ->
+                    nx_interface_tcp_ack_threshold_max;
+            }
+            if (ack_limit > ack_max)
+            {
+                ack_limit = ack_max;
             }
 #endif
             ack_threshold = socket_ptr -> nx_tcp_socket_ack_n_packet_counter;
