@@ -446,6 +446,8 @@ typedef struct NX_DHCP_INTERFACE_RECORD_STRUCT
 #endif
     UINT            nx_dhcp_clear_broadcast;    /* Client sends messages with unicast reply requested       */
     UINT            nx_dhcp_skip_discovery;     /* Indicate if host should skip the discovery message       */
+    ULONG           nx_dhcp_requested_lease;    /* Lease the Client asks for (option 51) in seconds;
+                                                   0 asks for an infinite lease, as without it              */
     UCHAR           nx_dhcp_options_buffer[NX_DHCP_OPTIONS_BUFFER_SIZE];   
     UINT            nx_dhcp_options_size;       /* The total size of DHCP options.                          */ 
 
@@ -569,6 +571,7 @@ typedef struct NX_DHCP_STRUCT
 #define nx_dhcp_interface_reinitialize                  _nx_dhcp_interface_reinitialize
 #define nx_dhcp_interface_release                       _nx_dhcp_interface_release
 #define nx_dhcp_interface_request_client_ip             _nx_dhcp_interface_request_client_ip
+#define nx_dhcp_interface_request_lease                 _nx_dhcp_interface_request_lease
 #define nx_dhcp_interface_start                         _nx_dhcp_interface_start
 #define nx_dhcp_interface_stop                          _nx_dhcp_interface_stop
 #define nx_dhcp_interface_send_request                  _nx_dhcp_interface_send_request
@@ -617,6 +620,7 @@ typedef struct NX_DHCP_STRUCT
 #define nx_dhcp_interface_reinitialize                  _nxe_dhcp_interface_reinitialize
 #define nx_dhcp_interface_release                       _nxe_dhcp_interface_release
 #define nx_dhcp_interface_request_client_ip             _nxe_dhcp_interface_request_client_ip
+#define nx_dhcp_interface_request_lease                 _nxe_dhcp_interface_request_lease
 #define nx_dhcp_interface_start                         _nxe_dhcp_interface_start
 #define nx_dhcp_interface_stop                          _nxe_dhcp_interface_stop
 #define nx_dhcp_interface_send_request                  _nxe_dhcp_interface_send_request
@@ -665,6 +669,7 @@ UINT        nx_dhcp_interface_force_renew(NX_DHCP *dhcp_ptr, UINT iface_index);
 UINT        nx_dhcp_interface_release(NX_DHCP *dhcp_ptr, UINT iface_index);
 UINT        nx_dhcp_interface_reinitialize(NX_DHCP *dhcp_ptr, UINT iface_index);
 UINT        nx_dhcp_interface_request_client_ip(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG client_ip_address, UINT skip_discover_message);
+UINT        nx_dhcp_interface_request_lease(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG lease_seconds);
 UINT        nx_dhcp_interface_start(NX_DHCP *dhcp_ptr, UINT iface_index); 
 UINT        nx_dhcp_interface_stop(NX_DHCP *dhcp_ptr, UINT iface_index);
 UINT        nx_dhcp_interface_send_request(NX_DHCP *dhcp_ptr, UINT iface_index, UINT dhcp_message_type);  
@@ -745,6 +750,8 @@ UINT        _nxe_dhcp_interface_stop(NX_DHCP *dhcp_ptr, UINT iface_index);
 UINT        _nx_dhcp_interface_stop(NX_DHCP *dhcp_ptr, UINT iface_index);           
 UINT        _nxe_dhcp_interface_request_client_ip(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG client_ip_address, UINT skip_discover_message);
 UINT        _nx_dhcp_interface_request_client_ip(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG client_ip_address, UINT skip_discover_message); 
+UINT        _nxe_dhcp_interface_request_lease(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG lease_seconds);
+UINT        _nx_dhcp_interface_request_lease(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG lease_seconds);
 UINT        _nxe_dhcp_interface_send_request(NX_DHCP *dhcp_ptr, UINT iface_index, UINT dhcp_message_type);
 UINT        _nx_dhcp_interface_send_request(NX_DHCP *dhcp_ptr, UINT iface_index, UINT dhcp_message_type);
 UINT        _nxe_dhcp_interface_server_address_get(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG *server_address);

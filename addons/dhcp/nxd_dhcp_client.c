@@ -1504,6 +1504,73 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
 }
 
 
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                                              */
+/*                                                                        */
+/*    _nxe_dhcp_interface_request_lease                                   */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Error checking for the requested-lease setter.  (AmiNetXDuo)        */
+/*                                                                        */
+/**************************************************************************/
+UINT  _nxe_dhcp_interface_request_lease(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG lease_seconds)
+{
+
+    if (dhcp_ptr == NX_NULL)
+    {
+        return NX_PTR_ERROR;
+    }
+
+    if (iface_index >= NX_MAX_PHYSICAL_INTERFACES)
+    {
+        return NX_INVALID_INTERFACE;
+    }
+
+    return(_nx_dhcp_interface_request_lease(dhcp_ptr, iface_index, lease_seconds));
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                                              */
+/*                                                                        */
+/*    _nx_dhcp_interface_request_lease                                    */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Sets the lease, in seconds, the Client asks for in the option 51 it */
+/*    already sends in DISCOVER and in REQUEST before it is bound; 0 asks */
+/*    for an infinite lease, which is what it sent before this existed.   */
+/*    The value stays with the interface record until set again or the   */
+/*    interface is enabled afresh.  (AmiNetXDuo)                          */
+/*                                                                        */
+/**************************************************************************/
+UINT  _nx_dhcp_interface_request_lease(NX_DHCP *dhcp_ptr, UINT iface_index, ULONG lease_seconds)
+{
+
+UINT    status;
+NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
+
+
+    tx_mutex_get(&(dhcp_ptr -> nx_dhcp_mutex), TX_WAIT_FOREVER);
+
+    status = _nx_dhcp_interface_record_find(dhcp_ptr, iface_index, &interface_record);
+    if (status)
+    {
+        tx_mutex_put(&(dhcp_ptr -> nx_dhcp_mutex));
+        return(status);
+    }
+
+    interface_record -> nx_dhcp_requested_lease = lease_seconds;
+
+    tx_mutex_put(&(dhcp_ptr -> nx_dhcp_mutex));
+
+    return(NX_SUCCESS);
+}
+
+
 /**************************************************************************/ 
 /*                                                                        */ 
 /*  FUNCTION                                               RELEASE        */ 
@@ -3104,6 +3171,9 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
 
     /* Set interface index. */  
     interface_record -> nx_dhcp_interface_index = iface_index;
+
+    /* No requested lease on a record just enabled: infinite, as before.  */
+    interface_record -> nx_dhcp_requested_lease = 0;
 
     /* Initialize the client DHCP IP address with the NULL IP address.  */
     interface_record -> nx_dhcp_ip_address =  NX_BOOTP_NO_ADDRESS;
@@ -6222,8 +6292,11 @@ UINT            name_length;
                                           interface_record -> nx_dhcp_ip_address, &index);
             }
 
-            /* Add an option request for an infinite lease.  */
-            _nx_dhcp_add_option_value(buffer, NX_DHCP_OPTION_DHCP_LEASE, NX_DHCP_OPTION_DHCP_LEASE_SIZE, NX_DHCP_INFINITE_LEASE, &index);
+            /* Add an option request for the lease the application asked for, or an infinite one.  */
+            _nx_dhcp_add_option_value(buffer, NX_DHCP_OPTION_DHCP_LEASE, NX_DHCP_OPTION_DHCP_LEASE_SIZE,
+                                      (interface_record -> nx_dhcp_requested_lease != 0) ?
+                                          interface_record -> nx_dhcp_requested_lease : NX_DHCP_INFINITE_LEASE,
+                                      &index);
 
             /* Add the system name */
             if (dhcp_ptr -> nx_dhcp_name)
@@ -6287,8 +6360,11 @@ UINT            name_length;
                 (interface_record -> nx_dhcp_renewal_time == 0))
             {
 
-                /* Add the infinite lease option.  */
-                _nx_dhcp_add_option_value(buffer, NX_DHCP_OPTION_DHCP_LEASE, NX_DHCP_OPTION_DHCP_LEASE_SIZE, NX_DHCP_INFINITE_LEASE, &index);
+                /* Add the lease option: the requested lease, or an infinite one.  */
+                _nx_dhcp_add_option_value(buffer, NX_DHCP_OPTION_DHCP_LEASE, NX_DHCP_OPTION_DHCP_LEASE_SIZE,
+                                          (interface_record -> nx_dhcp_requested_lease != 0) ?
+                                              interface_record -> nx_dhcp_requested_lease : NX_DHCP_INFINITE_LEASE,
+                                          &index);
             }
 
             /* Should add server ID if not renewing.  */
