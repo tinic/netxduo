@@ -218,8 +218,8 @@ USHORT supported_version = tls_session -> nx_secure_tls_protocol_version;
 
             /* RFC 7301 3.2, the server half.  The selection is made here and
                written into the ServerHello (TLS 1.2) or EncryptedExtensions
-               (TLS 1.3) later; no overlap selects nothing and the server then
-               answers with no ALPN extension at all.
+               (TLS 1.3) later; a configured server with no overlap returns
+               an error mapped to fatal no_application_protocol.
                src/tls/alpn/nx_secure_tls_alpn.c. */
             status = _nx_secure_tls_alpn_process_offer(tls_session,
                                                        &packet_buffer[offset - 2],
@@ -1596,5 +1596,4 @@ NX_SECURE_TLS_PSK_STORE *psk_store;
     return(NX_SUCCESS);
 }
 #endif
-
 

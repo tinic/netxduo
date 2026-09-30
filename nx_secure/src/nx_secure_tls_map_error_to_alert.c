@@ -217,6 +217,13 @@ VOID _nx_secure_tls_map_error_to_alert(UINT error_number, UINT *alert_number, UI
         *alert_level = NX_SECURE_TLS_ALERT_LEVEL_FATAL;
         break;
 
+    /* RFC 7301: a configured ALPN server has no protocol in common with
+       the client's offer (or a client receives an unoffered selection). */
+    case NX_SECURE_TLS_ALPN_PROTOCOL_MISMATCH:
+        *alert_number = NX_SECURE_TLS_ALERT_NO_APPLICATION_PROTOCOL;
+        *alert_level = NX_SECURE_TLS_ALERT_LEVEL_FATAL;
+        break;
+
     /* Require certificate. */
     case NX_SECURE_TLS_CERTIFICATE_REQUIRED:
         *alert_number = NX_SECURE_TLS_ALERT_CERTIFICATE_REQUIRED;
@@ -265,4 +272,3 @@ VOID _nx_secure_tls_map_error_to_alert(UINT error_number, UINT *alert_number, UI
         break;
     }
 }
-
