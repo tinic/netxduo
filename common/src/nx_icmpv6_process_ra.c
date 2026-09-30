@@ -157,6 +157,13 @@ UINT                          interface_index;
     /* Obtain the pointer to the incoming interface. */
     if_ptr = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_attached;
 
+    /* AmiNetXDuo: the flags again, now that the link they came from is known.  */
+    if (ip_ptr -> nx_icmpv6_ra_flag_interface_callback)
+    {
+        ip_ptr -> nx_icmpv6_ra_flag_interface_callback(ip_ptr, (UINT)if_ptr -> nx_interface_index,
+                                                       (UINT)ra_ptr -> nx_icmpv6_ra_flag);
+    }
+
     /* (1) Determine if this message comes from a periodic refresh
        or this is in response to a router solicitation.
        This is a periodic refresh if the destination address is an all-router multicast address.

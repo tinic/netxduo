@@ -3366,6 +3366,10 @@ typedef struct NX_IP_STRUCT
     /* Define the ICMPv6 router advertisement flag callback. */
     void        (*nx_icmpv6_ra_flag_callback)(struct NX_IP_STRUCT *, UINT);
 
+    /* AmiNetXDuo: the same flags with the index of the interface the
+       advertisement arrived on, for a caller that must tell links apart.  */
+    void        (*nx_icmpv6_ra_flag_interface_callback)(struct NX_IP_STRUCT *, UINT, UINT);
+
 #ifndef NX_DISABLE_ICMPV6_ERROR_MESSAGE
     /* Define the token bucket that limits how fast ICMPv6 error messages may
        be originated, RFC 4443 Section 2.4 (f).  The level is in tokens and the
@@ -3768,6 +3772,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nxd_icmp_ping                                   _nxd_icmp_ping
 #define nxd_icmp_source_ping                            _nxd_icmp_source_ping
 #define nxd_icmpv6_ra_flag_callback_set                 _nxd_icmpv6_ra_flag_callback_set
+#define nxd_icmpv6_ra_flag_interface_callback_set       _nxd_icmpv6_ra_flag_interface_callback_set
 
 /* APIs for MLD.  There is no error-checking wrapper: the only argument is
    the IP instance, which _nx_mld_enable() checks itself.  */
@@ -3968,6 +3973,7 @@ typedef struct NX_IP_DRIVER_STRUCT
 #define nxd_icmp_ping                                   _nxde_icmp_ping
 #define nxd_icmp_source_ping                            _nxde_icmp_source_ping
 #define nxd_icmpv6_ra_flag_callback_set                 _nxde_icmpv6_ra_flag_callback_set
+#define nxd_icmpv6_ra_flag_interface_callback_set       _nxd_icmpv6_ra_flag_interface_callback_set
 
 /* APIs for MLD.  */
 #define nx_mld_enable                                   _nx_mld_enable
@@ -4176,6 +4182,8 @@ UINT nxd_icmp_source_ping(NX_IP *ip_ptr, NXD_ADDRESS *ip_address, UINT address_i
                           ULONG data_size, NX_PACKET **response_ptr, ULONG wait_option);
 UINT nxd_icmpv6_ra_flag_callback_set(NX_IP *ip_ptr,
                                      VOID (*icmpv6_ra_flag_callback)(NX_IP *ip_ptr, UINT ra_flag));
+UINT nxd_icmpv6_ra_flag_interface_callback_set(NX_IP *ip_ptr,
+                                               VOID (*icmpv6_ra_flag_interface_callback)(NX_IP *ip_ptr, UINT interface_index, UINT ra_flag));
 
 /* APIs for MLD. */
 UINT nx_mld_enable(NX_IP *ip_ptr);

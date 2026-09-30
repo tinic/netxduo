@@ -451,6 +451,7 @@ VOID _nx_icmpv6_send_ns(NX_IP *ip_ptr, ULONG *neighbor_IP_address, INT send_slla
 
 /* Define external ICMPv6 handling functions. */
 UINT _nxd_icmpv6_ra_flag_callback_set(NX_IP *ip_ptr, VOID (*icmpv6_ra_flag_callback)(NX_IP *ip_ptr, UINT ra_flag));
+UINT _nxd_icmpv6_ra_flag_interface_callback_set(NX_IP *ip_ptr, VOID (*icmpv6_ra_flag_interface_callback)(NX_IP *ip_ptr, UINT interface_index, UINT ra_flag));
 
 /* Define error checking shells for API services.  These are only referenced by the application.  */
 UINT _nxde_icmpv6_ra_flag_callback_set(NX_IP *ip_ptr, VOID (*icmpv6_ra_flag_callback)(NX_IP *ip_ptr, UINT ra_flag));
