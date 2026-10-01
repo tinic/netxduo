@@ -30,15 +30,19 @@
 
 #ifdef NX_CRYPTO_AMIGA_C68K_LIMBS
 /* src/crypto68k/c68k_prim.S.  Declared rather than included so nx_crypto
-   keeps no include path into our tree. */
-extern HN_UBASE c68k_addmul_1(HN_UBASE *r, const HN_UBASE *b, UINT n, HN_UBASE a);
-extern HN_UBASE c68k_add(HN_UBASE *r, const HN_UBASE *b, UINT n);
-extern HN_UBASE c68k_sub(HN_UBASE *r, const HN_UBASE *b, UINT n);
+   keeps no include path into our tree.  The four primitives below are
+   hand-written assembly that reads its arguments from the stack, so they
+   carry the amigaos stack-convention pin spelled directly here (the same
+   __attribute__((__stkparm__)) that AMIGA_ASM_ARGS expands to); c68k_mod is
+   plain C on both sides (c68k_div.c) and needs no pin. */
+extern __attribute__((__stkparm__)) HN_UBASE c68k_addmul_1(HN_UBASE *r, const HN_UBASE *b, UINT n, HN_UBASE a);
+extern __attribute__((__stkparm__)) HN_UBASE c68k_add(HN_UBASE *r, const HN_UBASE *b, UINT n);
+extern __attribute__((__stkparm__)) HN_UBASE c68k_sub(HN_UBASE *r, const HN_UBASE *b, UINT n);
 extern void     c68k_mod(HN_UBASE *rem, const HN_UBASE *u, UINT u_len,
                          const HN_UBASE *m, UINT m_len, HN_UBASE *scratch);
 #define C68K_MOD_REM_CAP      136u   /* RSA-4096 is 128 limbs */
 #define C68K_MOD_SCRATCH_CAP  400u   /* u_len + m_len + 2, ~1.6 KB of stack */
-extern HN_UBASE c68k_add_carry(HN_UBASE *dst, const HN_UBASE *src, UINT n, HN_UBASE carry);
+extern __attribute__((__stkparm__)) HN_UBASE c68k_add_carry(HN_UBASE *dst, const HN_UBASE *src, UINT n, HN_UBASE carry);
 #endif
 
 /**************************************************************************/
