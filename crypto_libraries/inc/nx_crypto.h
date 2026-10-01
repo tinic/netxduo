@@ -103,12 +103,23 @@ UINT  _nx_crypto_drbg(UINT bits, UCHAR *result);
 #define NX_CRYPTO_CONST     const
 #endif
 
-#ifdef _NX_CRYPTO_INITIALIZE_
-VOID *(*volatile _nx_crypto_memset_ptr)(void *dest, int value, size_t size) = memset;
-VOID *(*volatile _nx_crypto_memcpy_ptr)(void *dest, const void *src, size_t size) = memcpy;
+/* AmiNetXDuo: the toolchain's memset/memcpy take their arguments on the
+   stack (__stdargs in its <string.h>) and the tree is built with
+   -mregparm=3, so a pointer to one has to say so or a call through it
+   passes registers.  NX_CRYPTO_MEMCPY/MEMSET resolve to
+   aminetxduo/nx_crypto_mem.h there and nothing calls through these today. */
+#if defined(__GNUC__) && defined(__stdargs)
+#define NX_CRYPTO_LIBC_STDARGS __stdargs
 #else
-extern VOID *(*volatile _nx_crypto_memset_ptr)(void *dest, int value, size_t size);
-extern VOID *(*volatile _nx_crypto_memcpy_ptr)(void *dest, const void *src, size_t size);
+#define NX_CRYPTO_LIBC_STDARGS
+#endif
+
+#ifdef _NX_CRYPTO_INITIALIZE_
+NX_CRYPTO_LIBC_STDARGS VOID *(*volatile _nx_crypto_memset_ptr)(void *dest, int value, size_t size) = memset;
+NX_CRYPTO_LIBC_STDARGS VOID *(*volatile _nx_crypto_memcpy_ptr)(void *dest, const void *src, size_t size) = memcpy;
+#else
+extern NX_CRYPTO_LIBC_STDARGS VOID *(*volatile _nx_crypto_memset_ptr)(void *dest, int value, size_t size);
+extern NX_CRYPTO_LIBC_STDARGS VOID *(*volatile _nx_crypto_memcpy_ptr)(void *dest, const void *src, size_t size);
 #endif
 
 #ifndef NX_CRYPTO_MEMCPY
