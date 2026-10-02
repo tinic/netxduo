@@ -90,7 +90,7 @@ UINT             compute_checksum = 1;
 NX_ICMPV4_ERROR *icmpv4_error;
 NX_IPV4_HEADER  *ip_header_ptr;
 UINT             ip_header_size;
-UINT             bytes_to_copy, i;
+UINT             bytes_to_copy, available, i;
 ULONG            src_ip;
 ULONG            next_hop_address = NX_NULL;
 ULONG           *src_packet, *dest_packet;
@@ -188,6 +188,17 @@ NXD_ADDRESS      dest_addr;
     /* IP Header + 64 bits (64 bits = 2 ULONGs) of Data Datagram.  */
     ip_header_size = ((ip_header_ptr -> nx_ip_header_word_0 & 0x0F000000) >> 24);
     bytes_to_copy = (UINT)((ip_header_size + 2) * sizeof(ULONG));
+
+    /* Bound the quote to the contiguous bytes the offending datagram actually
+       holds from its IP header, so a legal 20-to-27 byte datagram does not have
+       bytes past its end copied back to the sender.  Round down to whole ULONGs
+       so the copy loop below, which strides by 4, never underflows on a
+       non-word-aligned length.  */
+    available = (UINT)(offending_packet -> nx_packet_append_ptr - offending_packet -> nx_packet_ip_header) & ~((UINT)3);
+    if (bytes_to_copy > available)
+    {
+        bytes_to_copy = available;
+    }
 
     /* Set the packet length and pointers.  The length will be increased to include
        the IPv4 header in the IP send function.  The Prepend function will be similarly
