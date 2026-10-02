@@ -39,7 +39,7 @@ static UINT _nx_secure_tls_proc_clienthello_supported_versions_extension(NX_SECU
                                                                          UCHAR *packet_buffer,
                                                                          USHORT *supported_version,
                                                                          USHORT extension_length);
-static VOID _nx_secure_tls_proc_clienthello_signature_algorithms_extension(NX_SECURE_TLS_SESSION *tls_session,
+static UINT _nx_secure_tls_proc_clienthello_signature_algorithms_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                                            const UCHAR *packet_buffer,
                                                                            USHORT extension_length);
 
@@ -542,11 +542,20 @@ UCHAR expected_signature = 0;
             groups = exts[i].nx_secure_tls_extension_data;
             groups_len = exts[i].nx_secure_tls_extension_data_length;
 
+            /* The data starts with the list's own two-byte length, and the list
+               is two bytes per group: check both before reading any (N-115).
+               The walk used to start at the length word and read it as a group. */
+            if ((groups_len < 2) || (groups_len & 1) ||
+                (((UINT)(groups[0] << 8) + groups[1]) != (UINT)(groups_len - 2)))
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
             /* Set our start priority to the size of our supported curves list (lowest priority). */
             curve_priority = tls_session -> nx_secure_tls_ecc.nx_secure_tls_ecc_supported_groups_count;
 
             /* Loop through curves sent by client. */
-            for (j = 0; j < groups_len; j += 2)
+            for (j = 2; j < groups_len; j += 2)
             {
                 group = (USHORT)((groups[j] << 8) + groups[j + 1]);
 
@@ -607,9 +616,13 @@ UCHAR expected_signature = 0;
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED) && !defined(NX_SECURE_TLS_SERVER_DISABLED)
             if (tls_session -> nx_secure_tls_1_3)
             {
-                _nx_secure_tls_proc_clienthello_signature_algorithms_extension(tls_session,
-                                                                               exts[i].nx_secure_tls_extension_data,
-                                                                               exts[i].nx_secure_tls_extension_data_length);
+                status = _nx_secure_tls_proc_clienthello_signature_algorithms_extension(tls_session,
+                                                                                        exts[i].nx_secure_tls_extension_data,
+                                                                                        exts[i].nx_secure_tls_extension_data_length);
+                if (status != NX_SUCCESS)
+                {
+                    return(status);
+                }
                 signature_algorithm_exist = NX_TRUE;
             }
             else
@@ -621,7 +634,10 @@ UCHAR expected_signature = 0;
                 signature_algorithms = exts[i].nx_secure_tls_extension_data;
                 signature_algorithms_len = (USHORT)exts[i].nx_secure_tls_extension_data_length;
 
-                if (signature_algorithms_len < 2 || (((signature_algorithms[0] << 8) + signature_algorithms[1]) != (signature_algorithms_len - 2)))
+                /* Two bytes per algorithm: an odd length would have the last read
+                   land one byte past the extension (N-115). */
+                if (signature_algorithms_len < 2 || (signature_algorithms_len & 1) ||
+                    (((signature_algorithms[0] << 8) + signature_algorithms[1]) != (signature_algorithms_len - 2)))
                 {
                     return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
                 }
@@ -1063,7 +1079,7 @@ ULONG  offset;
 /*                                          Process ClientHello extensions*/
 /*                                                                        */
 /**************************************************************************/
-static VOID _nx_secure_tls_proc_clienthello_signature_algorithms_extension(NX_SECURE_TLS_SESSION *tls_session,
+static UINT _nx_secure_tls_proc_clienthello_signature_algorithms_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                                            const UCHAR *packet_buffer,
                                                                            USHORT extension_length)
 {
@@ -1085,12 +1101,13 @@ NX_SECURE_X509_CERT *local_certificate = NX_NULL;
     tls_session -> nx_secure_tls_signature_algorithm = 0;
     offset = 0;
 
-    /* Extract the extension length. */
-    if ((extension_length < 2) || (((packet_buffer[0] << 8) + packet_buffer[1]) != (extension_length - 2)))
+    /* Extract the extension length.  A malformed list is an error, not "no
+       algorithm", and an odd one would have the last read land one byte past
+       the extension (N-115). */
+    if ((extension_length < 2) || (extension_length & 1) ||
+        (((packet_buffer[0] << 8) + packet_buffer[1]) != (extension_length - 2)))
     {
-
-        /* Invalid Supported Versions Length. */
-        return;
+        return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
     }
 
     offset = 2;
@@ -1115,7 +1132,7 @@ NX_SECURE_X509_CERT *local_certificate = NX_NULL;
     {
         if (local_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_RSA)
         {
-            return;
+            return(NX_SUCCESS);
         }
 #ifdef NX_SECURE_ENABLE_ECC_CIPHERSUITE
         else if (local_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_EC)
@@ -1133,7 +1150,7 @@ NX_SECURE_X509_CERT *local_certificate = NX_NULL;
                 expected_sign_alg = NX_SECURE_TLS_SIGNATURE_ECDSA_SHA512;
                 break;
             default:
-                return;
+                return(NX_SUCCESS);
             }
         }
 #endif /* NX_SECURE_ENABLE_ECC_CIPHERSUITE */
@@ -1157,10 +1174,12 @@ NX_SECURE_X509_CERT *local_certificate = NX_NULL;
     /* Make sure we are using the right signature algorithm! */
     if (sign_alg != expected_sign_alg)
     {
-        return;
+        return(NX_SUCCESS);
     }
 
     tls_session -> nx_secure_tls_signature_algorithm = sign_alg;
+
+    return(NX_SUCCESS);
 }
 #endif /* NX_SECURE_TLS_TLS_1_3_ENABLED */
 
