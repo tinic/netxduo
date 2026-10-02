@@ -109,9 +109,18 @@ UINT  status = NX_SUCCESS;
     {
         packet_ptr -> nx_packet_address.nx_packet_interface_ptr = &(ip_ptr -> nx_ip_interface[address_index]);
 
-        /* Figure out a suitable outgoing interface. */
-        /* Since next_hop_address is validated in _nx_ip_packet_send, there is no need to check the value here. */
-        _nx_ip_route_find(ip_ptr, destination_ip -> nxd_ip_address.v4, &packet_ptr -> nx_packet_address.nx_packet_interface_ptr, &next_hop_address);
+        /* Figure out a suitable outgoing interface.  AmiNetXDuo: a
+           destination with no route is reported, not handed to
+           _nx_ip_packet_send, which would drop and release the packet
+           while this returned success.  The packet stays the caller's.
+           With forwarding on, _nx_ip_packet_send looks again, as before.  */
+        status = _nx_ip_route_find(ip_ptr, destination_ip -> nxd_ip_address.v4, &packet_ptr -> nx_packet_address.nx_packet_interface_ptr, &next_hop_address);
+        if ((status != NX_SUCCESS) && (ip_ptr -> nx_ip_forward_packet_process == NX_NULL))
+        {
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+            return(status);
+        }
+        status = NX_SUCCESS;
 
         /* If trace is enabled, insert this event into the trace buffer.  */
         NX_TRACE_IN_LINE_INSERT(NX_TRACE_IP_RAW_PACKET_SEND, ip_ptr, packet_ptr, destination_ip, 0, NX_TRACE_IP_EVENTS, 0, 0);
