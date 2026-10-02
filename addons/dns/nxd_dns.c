@@ -3784,6 +3784,10 @@ UINT        ip_question_size;
 UINT        name_size;
 UINT        resource_type;
 UINT        resource_size;
+UINT        owner_name_size;
+UINT        chain_name_size;
+UINT        owner_match;
+UCHAR       *cname_ptr;
 #ifdef NX_DNS_CACHE_ENABLE 
 ULONG       rr_ttl;
 #endif /* NX_DNS_CACHE_ENABLE  */
@@ -4027,6 +4031,16 @@ ULONG       rr_ttl;
                 data_ptr +=  name_size + 4;
             }
 
+            /* The answer records are judged against the reverse name that
+               was asked, and then against the target of each CNAME at that
+               name, in the order they appear -- the forward path's chain in
+               _nx_dns_response_process().  The CNAME is RFC 2317 classless
+               delegation, the usual shape of a reverse answer for an address
+               in a block smaller than a /24.  The walk is bounded by the
+               answer count: each record is looked at once.  */
+            memcpy(temp_chain_buffer, ip_question, ip_question_size + 1); /* Use case of memcpy is verified. */
+            chain_name_size = ip_question_size;
+
             /* Check all the response records */
             while (answerCount-- > 0)
             {
@@ -4059,8 +4073,54 @@ ULONG       rr_ttl;
                     return(NX_DNS_MALFORMED_PACKET);
                 }
 
+                /* Whose name is this record about?  The first PTR-typed
+                   record was taken whatever its owner, returned, and cached
+                   under the address asked about, so one record about any
+                   other name answered the query and held for its TTL.  */
+                owner_name_size = _nx_dns_name_string_unencode(receive_packet_ptr, data_ptr, temp_string_buffer, NX_DNS_NAME_MAX);
+                if (!owner_name_size)
+                {
+
+                    /* Release the packet. */
+                    nx_packet_release(receive_packet_ptr);
+
+                    /* NULL-terminate the host name string.  */
+                    *host_name_ptr =  NX_NULL;
+
+                    /* Return an error!  */
+                    return(NX_DNS_MALFORMED_PACKET);
+                }
+
+                owner_match = (owner_name_size == chain_name_size) &&
+                              (_nx_dns_name_match(temp_string_buffer, temp_chain_buffer, chain_name_size) == NX_DNS_SUCCESS);
+
+                if (owner_match && (resource_type == NX_DNS_RR_TYPE_CNAME))
+                {
+
+                    /* The name asked about is an alias; the records that
+                       follow are judged against its target instead.  */
+                    cname_ptr = _nx_dns_resource_data_address_get(data_ptr, receive_packet_ptr);
+                    if (cname_ptr)
+                        chain_name_size = _nx_dns_name_string_unencode(receive_packet_ptr, cname_ptr, temp_chain_buffer, NX_DNS_NAME_MAX);
+
+                    if ((!cname_ptr) || (!chain_name_size))
+                    {
+
+                        /* Release the packet. */
+                        nx_packet_release(receive_packet_ptr);
+
+                        /* NULL-terminate the host name string.  */
+                        *host_name_ptr =  NX_NULL;
+
+                        /* Return an error!  */
+                        return(NX_DNS_MALFORMED_PACKET);
+                    }
+
+                    owner_match = NX_FALSE;
+                }
+
                 /* Check that the answer has a name and there is space for it.  */
-                if (resource_type == NX_DNS_RR_TYPE_PTR)
+                if (owner_match && (resource_type == NX_DNS_RR_TYPE_PTR))
                 {
 
 #ifdef NX_DNS_CACHE_ENABLE    
@@ -4176,6 +4236,13 @@ ULONG       rr_ttl;
                 }
 
             } /* and check the next answer record */
+
+            /* Every record was looked at and none answered the question.
+               answerCount has wrapped past zero here, so the test below
+               never fired and this returned the last helper's NX_SUCCESS
+               with the name buffer unwritten.  */
+            *host_name_ptr =  NX_NULL;
+            status = NX_DNS_QUERY_FAILED;
         }
 
         /* We got a packet, but did it supply name resolution? */
