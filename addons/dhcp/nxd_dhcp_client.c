@@ -7692,8 +7692,12 @@ UINT    size;
     data = option_message;
     i = 0;
 
-    /* Search as long as there are valid options.   */
-    while (i < length - 1)
+    /* Search as long as there are valid options.  A zero- or one-byte area
+       cannot hold a complete option (code byte plus size byte), so the loop
+       needs two bytes at index i.  The old `i < length - 1` underflows to
+       UINT_MAX for length == 0 and walks an empty area; `i + 1 < length`
+       rejects it the same way it already rejected length == 1. */
+    while ((i + 1) < length)
     {
         /* Jump out when it reaches END option */
         if (*data == NX_DHCP_OPTION_END)
