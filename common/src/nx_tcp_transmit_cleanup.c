@@ -177,8 +177,14 @@ NX_IP         *ip_ptr;
             /* Thread still suspended on the TCP socket.  Setup return error status and
                resume the thread.  */
 
-            /* Determine which transmit error is present.  */
-            if (socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED)
+            /* Determine which transmit error is present.  AmiNetXDuo: the
+               send path's own gate (nx_tcp_socket_send_internal.c) accepts
+               CLOSE_WAIT, so a wait that expires there is a timeout like one
+               in ESTABLISHED, not "no longer connected".  A reset or a local
+               disconnect moves the state on before waking the sender, so
+               those still report NX_NOT_CONNECTED.  */
+            if ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) &&
+                (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT))
             {
 
                 /* This socket is no longer connected.  */
