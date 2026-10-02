@@ -331,7 +331,7 @@ UINT                                  hash_size;
     /* Generate server-side Finished Key. */
     status = _nx_secure_tls_hkdf_expand_label(tls_session, secrets->tls_server_handshake_traffic_secret, secrets->tls_server_handshake_traffic_secret_len,
                                           (UCHAR *)"finished", 8, (UCHAR *)"", 0, hash_size,
-                                          &secrets->tls_server_finished_key[0], (key_block_size - key_offset), hash_method);
+                                          &secrets->tls_server_finished_key[0], sizeof(secrets->tls_server_finished_key), hash_method);
 
     if(status != NX_SUCCESS)
     {
@@ -343,7 +343,7 @@ UINT                                  hash_size;
     /* Generate client-side Finished Key. */
     status = _nx_secure_tls_hkdf_expand_label(tls_session, secrets->tls_client_handshake_traffic_secret, secrets->tls_client_handshake_traffic_secret_len,
                                           (UCHAR *)"finished", 8, (UCHAR *)"", 0, hash_size,
-                                          &secrets->tls_client_finished_key[0], (key_block_size - key_offset), hash_method);
+                                          &secrets->tls_client_finished_key[0], sizeof(secrets->tls_client_finished_key), hash_method);
 
     secrets->tls_client_finished_key_len = hash_size;
 
@@ -1348,6 +1348,13 @@ const NX_CRYPTO_METHOD                     *session_hmac_method = NX_NULL;
         return(NX_SECURE_TLS_PACKET_BUFFER_TOO_SMALL);
     }
 
+    if (length > output_length)
+    {
+
+        /* Output buffer cannot hold the requested length. */
+        return(NX_SECURE_TLS_PACKET_BUFFER_TOO_SMALL);
+    }
+
     /* Get our HKDF method and hash routine. */
     /*session_hash_method = ciphersuite->nx_secure_tls_hash;*/
     session_hkdf_method = tls_session->nx_secure_tls_crypto_table->nx_secure_tls_hkdf_method;
@@ -1441,7 +1448,7 @@ const NX_CRYPTO_METHOD                     *session_hmac_method = NX_NULL;
                                              0,
                                              NX_NULL,
                                              (UCHAR *)output,
-                                             output_length,
+                                             length,
                                              tls_session -> nx_secure_tls_prf_metadata_area,
                                              tls_session -> nx_secure_tls_prf_metadata_size,
                                              NX_NULL, NX_NULL);
