@@ -73,7 +73,9 @@ UINT _nx_ipv6_process_hop_by_hop_option(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 INT                        header_length;
 UINT                       offset_base, offset;
 UINT                       rv;
-NX_IPV6_HOP_BY_HOP_OPTION *option;
+UCHAR                     *option_ptr;
+UCHAR                      option_type;
+UCHAR                      option_length;
 
 
     /* Add debug information. */
@@ -107,22 +109,29 @@ NX_IPV6_HOP_BY_HOP_OPTION *option;
         ((UINT)header_length + offset))
     {
 
-        /* Yes, handle the error as indicated by the option type 2 msb's. */
-        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-        option = (NX_IPV6_HOP_BY_HOP_OPTION *)(packet_ptr -> nx_packet_prepend_ptr + offset);
+        /* Yes, handle the error as indicated by the option type 2 msb's.  Read the
+           type as a byte: an option may start on an odd (byte-aligned) offset, and
+           the option struct carries a USHORT so a struct pointer here would be
+           misaligned. */
+        option_ptr  = packet_ptr -> nx_packet_prepend_ptr + offset;
+        option_type = *option_ptr;
 
-        _nx_ipv6_option_error(ip_ptr, packet_ptr, option -> nx_ipv6_hop_by_hop_option_type, offset_base + offset);
+        _nx_ipv6_option_error(ip_ptr, packet_ptr, option_type, offset_base + offset);
         return(NX_OPTION_HEADER_ERROR);
     }
 
     while (header_length > 0)
     {
 
-        /* Get a pointer to the options. */
-        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-        option = (NX_IPV6_HOP_BY_HOP_OPTION *)(packet_ptr -> nx_packet_prepend_ptr + offset);
+        /* Read the option type as a byte.  An option may start on an odd
+           (byte-aligned) offset, and the option struct carries a USHORT, so a
+           struct pointer at this offset would be misaligned.  The option length
+           is read only by the cases below that need it, so a trailing Pad1 does
+           not read past the end of the header. */
+        option_ptr  = packet_ptr -> nx_packet_prepend_ptr + offset;
+        option_type = *option_ptr;
 
-        switch (option -> nx_ipv6_hop_by_hop_option_type)
+        switch (option_type)
         {
 
         case 0:
@@ -135,9 +144,12 @@ NX_IPV6_HOP_BY_HOP_OPTION *option;
 
         case 1:
 
-            /* PadN option. Skip N+2 bytes. */
-            offset += ((UINT)(option -> nx_ipv6_hop_by_hop_length) + 2);
-            header_length -= ((INT)(option -> nx_ipv6_hop_by_hop_length) + 2);
+            /* PadN option. Skip N+2 bytes.  Read the length byte only here:
+               a PadN option is always at least two bytes, so option_ptr + 1 is
+               inside the header. */
+            option_length = *(option_ptr + 1);
+            offset += ((UINT)option_length + 2);
+            header_length -= ((INT)option_length + 2);
             break;
 
 #ifdef NX_ENABLE_THREAD
@@ -146,23 +158,28 @@ NX_IPV6_HOP_BY_HOP_OPTION *option;
             /* RFC 7731.  */
 
             /* Skip N+2 bytes.  */
-            offset += ((UINT)(option -> nx_ipv6_hop_by_hop_length) + 2);
-            header_length -= ((INT)(option -> nx_ipv6_hop_by_hop_length) + 2);
+            option_length = *(option_ptr + 1);
+            offset += ((UINT)option_length + 2);
+            header_length -= ((INT)option_length + 2);
             break;
 #endif /* NX_ENABLE_THREAD  */
 
         default:
 
             /* Unknown option.  */
-            rv = _nx_ipv6_option_error(ip_ptr, packet_ptr, option -> nx_ipv6_hop_by_hop_option_type, offset_base + offset);
+            rv = _nx_ipv6_option_error(ip_ptr, packet_ptr, option_type, offset_base + offset);
 
             /* If no errors, just skip this option and move onto the next option.*/
             if (rv == NX_SUCCESS)
             {
 
-                /* Skip this option and continue processing the rest of the header. */
-                offset += ((UINT)(option -> nx_ipv6_hop_by_hop_length) + 2);
-                header_length -= ((INT)(option -> nx_ipv6_hop_by_hop_length) + 2);
+                /* Skip this option and continue processing the rest of the header.
+                   Read the length byte only on success: an option that is kept is at
+                   least two bytes (type + length), so option_ptr + 1 is inside the
+                   header. */
+                option_length = *(option_ptr + 1);
+                offset += ((UINT)option_length + 2);
+                header_length -= ((INT)option_length + 2);
                 break;
             }
             else
