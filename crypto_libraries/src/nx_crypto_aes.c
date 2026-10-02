@@ -385,9 +385,9 @@ NX_CRYPTO_AES_TABLE UCHAR aes_rcon_array[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20
 #define LEFT_ROTATE16(val)    (((val) >> 16) | ((val) << 16))
 #define LEFT_ROTATE24(val)    (((val) << 24) | ((val) >> 8))
 
-#define SET_MSB_BYTE(val)     ((val) << 24)
-#define SET_2ND_BYTE(val)     ((val) << 16)
-#define SET_3RD_BYTE(val)     ((val) << 8)
+#define SET_MSB_BYTE(val)     ((UINT)(val) << 24)
+#define SET_2ND_BYTE(val)     ((UINT)(val) << 16)
+#define SET_3RD_BYTE(val)     ((UINT)(val) << 8)
 #define SET_LSB_BYTE(val)     ((UINT)(val))
 #define EXTRACT_MSB_BYTE(val) ((val) >> 24)
 #define EXTRACT_2ND_BYTE(val) (((val) >> 16) & 0xFF)
@@ -1118,9 +1118,9 @@ NX_CRYPTO_KEEP static UINT _nx_crypto_aes_subword(UINT word)
 UINT result;
 
     result = sub_bytes_sbox[word & 0xFF];
-    result |= (UINT)((sub_bytes_sbox[(word & 0x0000FF00) >>  8]) <<  8);
-    result |= (UINT)((sub_bytes_sbox[(word & 0x00FF0000) >> 16]) << 16);
-    result |= (UINT)((sub_bytes_sbox[(word & 0xFF000000) >> 24]) << 24);
+    result |= ((UINT)(sub_bytes_sbox[(word & 0x0000FF00) >>  8]) <<  8);
+    result |= ((UINT)(sub_bytes_sbox[(word & 0x00FF0000) >> 16]) << 16);
+    result |= ((UINT)(sub_bytes_sbox[(word & 0xFF000000) >> 24]) << 24);
     return result;
 }
 
