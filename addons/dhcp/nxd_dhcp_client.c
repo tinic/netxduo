@@ -7715,8 +7715,11 @@ UINT    size;
 
             size = *(data + 1);
 
-            /* Check if the option data is in the packet.  */
-            if ((i + size + 1) > length)
+            /* Check if the option data is in the packet.  The option's last
+               data byte is at index i + 1 + size, so it is present only when
+               i + size + 2 <= length.  Reject the option once its data would
+               extend past the end of the options area. */
+            if ((i + size + 2) > length)
                 return(NX_NULL);
 
             /* Return a pointer to the option size byte.  */
@@ -7729,9 +7732,12 @@ UINT    size;
 
             size = *(++data);
 
-            /* skip the data plus the size byte */
+            /* Skip the code byte, the size byte, and the size data bytes.  The
+               ++data above already passed the code byte, and this passes the
+               size byte plus its data, so i must advance the same full option
+               length (size + 2) to stay at the next option's code byte. */
             data += size + 1;
-            i += size + 1;
+            i += size + 2;
         }
     }
 
