@@ -445,11 +445,14 @@ UINT         queued_count;
 
 #ifndef NX_DISABLE_IP_INFO
 
-            /* Increment the IP packet sent count.  */
-            ip_ptr -> nx_ip_total_packets_sent++;
-
-            /* Increment the IP bytes sent count.  */
-            ip_ptr -> nx_ip_total_bytes_sent +=  packet_ptr -> nx_packet_length - (ULONG)sizeof(NX_IPV4_HEADER);
+            /* A local-only send has no driver arm to account for it.  When
+               the original also goes to the driver (broadcast or multicast),
+               this receive-side copy must not count as another transmission. */
+            if (driver_request.nx_ip_driver_interface == NX_NULL)
+            {
+                ip_ptr -> nx_ip_total_packets_sent++;
+                ip_ptr -> nx_ip_total_bytes_sent += packet_ptr -> nx_packet_length - (ULONG)sizeof(NX_IPV4_HEADER);
+            }
 #endif
 
 #ifdef NX_IPSEC_ENABLE
@@ -540,4 +543,3 @@ UINT         queued_count;
     }
 }
 #endif /* !NX_DISABLE_IPV4  */
-
