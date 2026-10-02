@@ -86,12 +86,22 @@ NX_IP *ip_ptr;
 #ifdef FEATURE_NX_IPV6
     if (ip_address -> nxd_ip_version == NX_IP_VERSION_V6)
     {
-        packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = &ip_ptr -> nx_ipv6_address[address_index];
-
-        if (packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID)
+        /* AmiNetXDuo (audit N-039): the index is bounded here as well as in
+           the checked wrapper, which builds without error checking skip.
+           The state test is a fast refusal only; _nxd_udp_socket_send
+           rechecks the entry under nx_ip_protection.  A refusal leaves the
+           packet as it came in.  */
+        if (address_index >= (UINT)(sizeof(ip_ptr -> nx_ipv6_address) / sizeof(ip_ptr -> nx_ipv6_address[0])))
         {
             return(NX_NO_INTERFACE_ADDRESS);
         }
+
+        if (ip_ptr -> nx_ipv6_address[address_index].nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID)
+        {
+            return(NX_NO_INTERFACE_ADDRESS);
+        }
+
+        packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = &ip_ptr -> nx_ipv6_address[address_index];
     }
 #endif /* FEATURE_NX_IPV6 */
 

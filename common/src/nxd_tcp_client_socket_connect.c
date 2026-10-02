@@ -293,6 +293,10 @@ UINT  _nxd_tcp_client_socket_connect_internal(NX_TCP_SOCKET *socket_ptr,
 UINT          ip_header_size = 0;
 NX_IP        *ip_ptr;
 NX_INTERFACE *outgoing_interface = NX_NULL;
+#ifdef FEATURE_NX_IPV6
+/* AmiNetXDuo (audit N-039): the IPv6 source as it was when chosen.  */
+ULONG          ipv6_src_snapshot[4] = {0, 0, 0, 0};
+#endif /* FEATURE_NX_IPV6 */
 
 #ifdef FEATURE_NX_IPV6
 UINT          status;
@@ -362,7 +366,14 @@ ULONG         ip_address_log = 0;
         {
 
             /* A named source is taken as given, as _nxd_udp_socket_source_send()
-               takes it, rather than selected for the destination.  */
+               takes it, rather than selected for the destination.
+               AmiNetXDuo (audit N-039): bounded first; builds without error
+               checking skip the wrapper that bounds it.  */
+            if (address_index >= (UINT)(sizeof(ip_ptr -> nx_ipv6_address) / sizeof(ip_ptr -> nx_ipv6_address[0])))
+            {
+                return(NX_NO_INTERFACE_ADDRESS);
+            }
+
             socket_ptr -> nx_tcp_socket_ipv6_addr = &(ip_ptr -> nx_ipv6_address[address_index]);
 
             if ((socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID) ||
@@ -388,6 +399,7 @@ ULONG         ip_address_log = 0;
         }
 
         outgoing_interface = socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_attached;
+        COPY_IPV6_ADDRESS(socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address, ipv6_src_snapshot);
     }
 #endif /* FEATURE_NX_IPV6 */
 
@@ -412,6 +424,25 @@ ULONG         ip_address_log = 0;
 
     /* Obtain the IP mutex so we initiate the connect.  */
     tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+#ifdef FEATURE_NX_IPV6
+    /* AmiNetXDuo (audit N-039): the source above was chosen without the
+       mutex.  If its entry was deleted (zeroed) or given another address
+       since, refuse here, before the state moves and before anything
+       suspends: a zeroed entry would leave outgoing_interface NULL for the
+       NX_ASSERT below, which sleeps forever with this mutex held.  */
+    if ((server_ip -> nxd_ip_version == NX_IP_VERSION_V6) &&
+        ((socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_valid == NX_FALSE) ||
+         (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID) ||
+         (outgoing_interface == NX_NULL) ||
+         (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_attached != outgoing_interface) ||
+         (!CHECK_IPV6_ADDRESSES_SAME(socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address, ipv6_src_snapshot))))
+    {
+        socket_ptr -> nx_tcp_socket_ipv6_addr = NX_NULL;
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+        return(NX_NO_INTERFACE_ADDRESS);
+    }
+#endif /* FEATURE_NX_IPV6 */
 
     /* Determine if the socket has already been bound to port or if a socket bind is
        already pending from another thread.  */
