@@ -88,6 +88,7 @@ static UINT        _nx_dns_cache_find_answer(NX_DNS *dns_ptr, VOID *cache_ptr, U
 static UINT        _nx_dns_cache_delete_rr(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr);   
 static UINT        _nx_dns_cache_delete_rr_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr);
 static UINT        _nx_dns_cache_add_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, VOID **insert_ptr);
+static UINT        _nx_dns_cache_add_entry(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, UINT binary_size, VOID **insert_ptr);
 static UINT        _nx_dns_cache_delete_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_len);  
 static UINT        _nx_dns_resource_time_to_live_get(UCHAR *resource, NX_PACKET *packet_ptr, ULONG *rr_ttl);
 static VOID        _nx_dns_cache_add_negative(NX_DNS *dns_ptr, UCHAR *query_name, NX_PACKET *packet_ptr);
@@ -1271,13 +1272,27 @@ UINT  _nxd_dns_server_remove(NX_DNS *dns_ptr, NXD_ADDRESS *server_address)
    its TTL, and a program that decides "online" by gethostbyname() read a
    machine with no interface as connected (AmiTCP_NG issue #4; Roadshow
    refuses the lookup).  What _nx_dns_cache_initialize() does, without its
-   mutex: every caller already holds it.  */
+   mutex: every caller already holds it.  That includes the head and tail
+   words: the memset zeroes them, and with a zero tail the string walk in
+   _nx_dns_cache_add_string() never advances, so the next insert spun
+   forever holding nx_dns_mutex.  */
 static VOID  _nx_dns_cache_drop(NX_DNS *dns_ptr)
 {
+
+ALIGN_TYPE *head;
+ALIGN_TYPE *tail;
+
 
     if (dns_ptr -> nx_dns_cache)
     {
         memset(dns_ptr -> nx_dns_cache, 0, dns_ptr -> nx_dns_cache_size);
+
+        head = (ALIGN_TYPE*)dns_ptr -> nx_dns_cache;
+        *head = (ALIGN_TYPE)((ALIGN_TYPE*)dns_ptr -> nx_dns_cache + 1);
+
+        tail = (ALIGN_TYPE*)(dns_ptr -> nx_dns_cache + dns_ptr -> nx_dns_cache_size) - 1;
+        *tail = (ALIGN_TYPE)tail;
+
         dns_ptr -> nx_dns_rr_count = 0;
         dns_ptr -> nx_dns_string_count = 0;
         dns_ptr -> nx_dns_string_bytes = 0;
@@ -3770,6 +3785,10 @@ UINT        ip_question_size;
 UINT        name_size;
 UINT        resource_type;
 UINT        resource_size;
+UINT        owner_name_size;
+UINT        chain_name_size;
+UINT        owner_match;
+UCHAR       *cname_ptr;
 #ifdef NX_DNS_CACHE_ENABLE 
 ULONG       rr_ttl;
 #endif /* NX_DNS_CACHE_ENABLE  */
@@ -4013,6 +4032,16 @@ ULONG       rr_ttl;
                 data_ptr +=  name_size + 4;
             }
 
+            /* The answer records are judged against the reverse name that
+               was asked, and then against the target of each CNAME at that
+               name, in the order they appear -- the forward path's chain in
+               _nx_dns_response_process().  The CNAME is RFC 2317 classless
+               delegation, the usual shape of a reverse answer for an address
+               in a block smaller than a /24.  The walk is bounded by the
+               answer count: each record is looked at once.  */
+            memcpy(temp_chain_buffer, ip_question, ip_question_size + 1); /* Use case of memcpy is verified. */
+            chain_name_size = ip_question_size;
+
             /* Check all the response records */
             while (answerCount-- > 0)
             {
@@ -4045,8 +4074,54 @@ ULONG       rr_ttl;
                     return(NX_DNS_MALFORMED_PACKET);
                 }
 
+                /* Whose name is this record about?  The first PTR-typed
+                   record was taken whatever its owner, returned, and cached
+                   under the address asked about, so one record about any
+                   other name answered the query and held for its TTL.  */
+                owner_name_size = _nx_dns_name_string_unencode(receive_packet_ptr, data_ptr, temp_string_buffer, NX_DNS_NAME_MAX);
+                if (!owner_name_size)
+                {
+
+                    /* Release the packet. */
+                    nx_packet_release(receive_packet_ptr);
+
+                    /* NULL-terminate the host name string.  */
+                    *host_name_ptr =  NX_NULL;
+
+                    /* Return an error!  */
+                    return(NX_DNS_MALFORMED_PACKET);
+                }
+
+                owner_match = (owner_name_size == chain_name_size) &&
+                              (_nx_dns_name_match(temp_string_buffer, temp_chain_buffer, chain_name_size) == NX_DNS_SUCCESS);
+
+                if (owner_match && (resource_type == NX_DNS_RR_TYPE_CNAME))
+                {
+
+                    /* The name asked about is an alias; the records that
+                       follow are judged against its target instead.  */
+                    cname_ptr = _nx_dns_resource_data_address_get(data_ptr, receive_packet_ptr);
+                    if (cname_ptr)
+                        chain_name_size = _nx_dns_name_string_unencode(receive_packet_ptr, cname_ptr, temp_chain_buffer, NX_DNS_NAME_MAX);
+
+                    if ((!cname_ptr) || (!chain_name_size))
+                    {
+
+                        /* Release the packet. */
+                        nx_packet_release(receive_packet_ptr);
+
+                        /* NULL-terminate the host name string.  */
+                        *host_name_ptr =  NX_NULL;
+
+                        /* Return an error!  */
+                        return(NX_DNS_MALFORMED_PACKET);
+                    }
+
+                    owner_match = NX_FALSE;
+                }
+
                 /* Check that the answer has a name and there is space for it.  */
-                if (resource_type == NX_DNS_RR_TYPE_PTR)
+                if (owner_match && (resource_type == NX_DNS_RR_TYPE_PTR))
                 {
 
 #ifdef NX_DNS_CACHE_ENABLE    
@@ -4162,6 +4237,13 @@ ULONG       rr_ttl;
                 }
 
             } /* and check the next answer record */
+
+            /* Every record was looked at and none answered the question.
+               answerCount has wrapped past zero here, so the test below
+               never fired and this returned the last helper's NX_SUCCESS
+               with the name buffer unwritten.  */
+            *host_name_ptr =  NX_NULL;
+            status = NX_DNS_QUERY_FAILED;
         }
 
         /* We got a packet, but did it supply name resolution? */
@@ -5751,7 +5833,7 @@ ULONG                   rr_ttl;
                 return (NX_SUCCESS);
                                        
             /* Add the IPv6 address string.  */
-            status = _nx_dns_cache_add_string(dns_ptr, dns_ptr -> nx_dns_cache, dns_ptr -> nx_dns_cache_size, ipv6_address_ptr, 16, (VOID **)(&(temp_rr.nx_dns_rr_rdata.nx_dns_rr_rdata_aaaa.nx_dns_rr_aaaa_address)));
+            status = _nx_dns_cache_add_entry(dns_ptr, dns_ptr -> nx_dns_cache, dns_ptr -> nx_dns_cache_size, ipv6_address_ptr, 16, 16, (VOID **)(&(temp_rr.nx_dns_rr_rdata.nx_dns_rr_rdata_aaaa.nx_dns_rr_aaaa_address)));
 
             /* Check the status.  */
             if(status)
@@ -10245,6 +10327,35 @@ UINT    size;
 static UINT _nx_dns_cache_add_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, VOID **insert_ptr)
 {
 
+    /* A domain name: shared with any stored string it matches up to case.  */
+    return(_nx_dns_cache_add_entry(dns_ptr, cache_ptr, cache_size, string_ptr, string_size, 0, insert_ptr));
+}
+
+/* What marks a slot as binary: the four bytes at LEN - 8, which in a binary
+   slot follow the data directly (binary_size is a multiple of four).  A name
+   slot of the same LEN holds its NUL and zero padding there, or name
+   characters then its NUL: never a zero second byte after a nonzero first,
+   followed by a nonzero third.  So the two kinds cannot be confused, and a
+   name never shares a binary slot or the other way about -- _nx_dns_name_match()
+   alone would match a name against an address whose bytes spell it.  */
+static const UCHAR _nx_dns_cache_binary_tag[4] = { 0xFF, 0x00, 0xB1, 0x6E };
+
+static UINT _nx_dns_cache_slot_is_binary(UCHAR *start, USHORT len)
+{
+
+    return((len >= 8) && (memcmp(start + len - 8, _nx_dns_cache_binary_tag, 4) == 0));
+}
+
+/* binary_size 0 is a domain name, deduplicated against the stored strings by
+   _nx_dns_name_match() as before.  Nonzero is binary RDATA of that many bytes
+   -- the 16-byte AAAA address -- which shares a slot only with a stored entry
+   of exactly the same bytes.  _nx_dns_name_match() folds case and stops at the
+   first zero byte of the new entry, so an address whose bytes differed from a
+   stored one only in the 0x20 bit of a letter-range byte was given the stored
+   address instead of its own.  */
+static UINT _nx_dns_cache_add_entry(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, UINT binary_size, VOID **insert_ptr)
+{
+
 ALIGN_TYPE  *tail;
 ALIGN_TYPE  *head;
 UINT        string_len;
@@ -10256,6 +10367,10 @@ UCHAR       *p, *available, *start;
     /* Check the cache.  */
     if (cache_ptr == NX_NULL)
         return(NX_DNS_CACHE_ERROR);
+
+    /* The tag needs the four bytes after the data to itself.  */
+    if (binary_size && ((binary_size != string_size) || (binary_size & 3)))
+        return(NX_DNS_PARAM_ERROR);
 
     /* Get head and tail. */
     tail = (ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1;
@@ -10282,7 +10397,9 @@ UCHAR       *p, *available, *start;
         start = p - len;
 
         if((len == string_len) &&
-           (!_nx_dns_name_match(start, string_ptr, string_size)))
+           (binary_size ?
+            (_nx_dns_cache_slot_is_binary(start, len) && (memcmp(start, string_ptr, binary_size) == 0)) :
+            ((!_nx_dns_cache_slot_is_binary(start, len)) && (!_nx_dns_name_match(start, string_ptr, string_size)))))
         {
 
             /* The same string exists in the string table. */
@@ -10353,8 +10470,12 @@ UCHAR       *p, *available, *start;
     /* Insert string to cache. */
     memcpy(available - string_len, string_ptr, string_size); /* Use case of memcpy is verified. */
 
-    /* Set end character 0. */
-    *(available - string_len + string_size) = 0;
+    /* Set end character 0, or the tag that marks a binary entry: the same
+       place, LEN - 8, when binary_size is a multiple of four.  */
+    if (binary_size)
+        memcpy(available - 8, _nx_dns_cache_binary_tag, 4); /* Use case of memcpy is verified. */
+    else
+        *(available - string_len + string_size) = 0;
 
     /* Update the string length and count .  */
     dns_ptr -> nx_dns_string_count ++;
@@ -10408,6 +10529,10 @@ static UINT _nx_dns_cache_delete_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT c
 ALIGN_TYPE  *tail;
 ALIGN_TYPE  *end;
 USHORT      cnt;
+USHORT      len;
+UCHAR       *p;
+UCHAR       *top;
+UCHAR       *new_tail;
 
 
     /* Check the cache.  */
@@ -10418,9 +10543,19 @@ USHORT      cnt;
     if (string_ptr == NX_NULL)
         return(NX_DNS_PARAM_ERROR);
 
-    /* Validate string. */
-    if (_nx_utility_string_length_check((CHAR *)string_ptr, &string_len, NX_DNS_NAME_MAX))
-        return(NX_DNS_SIZE_ERROR);
+    /* string_len is the size the entry was stored with, as
+       _nx_dns_cache_add_string() was given it, or 0 for a NUL-terminated
+       name.  It was overwritten here with the string length of the bytes,
+       which for binary RDATA -- the 16-byte AAAA address -- stops at the
+       first zero octet: the slot came out short, the count decremented was
+       a word inside the stored address, and the entry was never freed.  */
+    if (string_len == 0)
+    {
+
+        /* Validate string. */
+        if (_nx_utility_string_length_check((CHAR *)string_ptr, &string_len, NX_DNS_NAME_MAX))
+            return(NX_DNS_SIZE_ERROR);
+    }
 
     /* Add the length of CNT and LEN fields.  */
     /* Also make the total length 4 bytes align. */
@@ -10446,6 +10581,11 @@ USHORT      cnt;
         return(NX_DNS_SIZE_ERROR);
     }
 
+    /* The slot's own LEN field, which add_string wrote, has to agree before
+       anything in it is written.  */
+    if(*((USHORT*)((UCHAR*)end - 2)) != string_len)
+        return(NX_DNS_CACHE_ERROR);
+
     /* Decrease the usage counter value. */
     cnt = *((USHORT*)((UCHAR*)end - 4));
     cnt--;
@@ -10460,49 +10600,34 @@ USHORT      cnt;
         dns_ptr -> nx_dns_string_count --;
         dns_ptr -> nx_dns_string_bytes -= string_len;
                 
-        /* Update the tail pointer if the string at the tail is deleted. */
+        /* Update the tail pointer if the string at the tail is deleted.
+
+           The tail moves up to the lowest slot still in use.  The slots are
+           walked down from the top by their own LEN fields, as
+           _nx_dns_cache_add_string() walks them; walking up from the tail
+           re-derived each slot's size from its bytes, which misreads a
+           binary entry the same way as above.  A LEN that does not fit
+           leaves the tail where it was: the freed slot stays reusable.  */
         if(string_ptr == tail)
         {
-            tail = end;
-        
-            while(end < ((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1))
+            top = (UCHAR*)((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1);
+            new_tail = top;
+
+            for(p = top; p > (UCHAR*)tail; p -= len)
             {
-                
-                /* Set the string pt and string length.  */
-                string_ptr = end;
+                len = *((USHORT*)(p - 2));
 
-                /* Validate string. */
-                if (_nx_utility_string_length_check((CHAR *)string_ptr, &string_len, NX_DNS_NAME_MAX))
-                    return(NX_DNS_SIZE_ERROR);
-
-                /* Check the string length.  */
-                if(string_len == 0)
+                if((len < 8) || (len > (UINT)(p - (UCHAR*)tail)))
                 {
-                    
-                    /* This slot is cleared. */
-                    while(*((ULONG*)string_ptr) == 0)
-                        string_ptr = (UCHAR*)string_ptr + 4;
-                    
-                    end = (ALIGN_TYPE*)((UCHAR*)string_ptr + 4);
-                    cnt = *((USHORT*)string_ptr);
-                }
-                else
-                {
-                    
-                    /* Make the length 4 bytes align and add the length of CNT and LEN fields.  */
-                    string_len = ((string_len & 0xFFFFFFFC) + 8) & 0xFFFFFFFF;
-
-                    end = (ALIGN_TYPE*)((UCHAR*)string_ptr + string_len);
-                    cnt = *((USHORT*)((UCHAR*)end - 4));
-                }
-                
-                /* Check whether this slot is never referenced. */
-                if(cnt == 0)
-                    tail = end;
-                else
+                    new_tail = (UCHAR*)tail;
                     break;
+                }
+
+                if(*((USHORT*)(p - 4)) != 0)
+                    new_tail = p - len;
             }
-            *((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1) = (ALIGN_TYPE)tail;
+
+            *((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1) = (ALIGN_TYPE)new_tail;
         }
     }
 
