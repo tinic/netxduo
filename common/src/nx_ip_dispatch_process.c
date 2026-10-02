@@ -365,7 +365,8 @@ NX_ICMPV6_HEADER *icmp_header_ptr;
 
 #else /* NX_IPSEC_ENABLE */
             /* Drop this packet if IPsec module is not present. */
-            return(1);
+            drop_packet = 1;
+            break;
 #endif /* NX_IPSEC_ENABLE */
 
         default:
@@ -688,7 +689,8 @@ NX_ICMPV6_HEADER *icmp_header_ptr;
             }
 #endif /* FEATURE_NX_IPV6 */
         }
-        else
+
+        if (drop_packet)
         {
 #ifndef NX_DISABLE_IP_INFO
 
