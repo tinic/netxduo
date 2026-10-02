@@ -125,6 +125,20 @@ UINT  status = NX_SUCCESS;
 #ifdef FEATURE_NX_IPV6
     if (destination_ip -> nxd_ip_version == NX_IP_VERSION_V6)
     {
+        /* AmiNetXDuo: the caller chose address_index before taking this
+           mutex.  If the address was deleted since (nxd_ipv6_address_delete
+           zeroes the slot), the send would stamp an entry with no interface
+           and NX_ASSERT in _nx_ipv6_packet_send would sleep forever holding
+           the mutex.  Refuse a slot that is no longer a usable address; the
+           packet stays the caller's.  */
+        if ((address_index >= (UINT)(sizeof(ip_ptr -> nx_ipv6_address) / sizeof(ip_ptr -> nx_ipv6_address[0]))) ||
+            (ip_ptr -> nx_ipv6_address[address_index].nxd_ipv6_address_valid == NX_FALSE) ||
+            (ip_ptr -> nx_ipv6_address[address_index].nxd_ipv6_address_attached == NX_NULL))
+        {
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+            return(NX_NO_INTERFACE_ADDRESS);
+        }
+
         packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = &(ip_ptr -> nx_ipv6_address[address_index]);
 
         status =  _nxd_ipv6_raw_packet_send_internal(ip_ptr, packet_ptr, destination_ip, protocol, ttl, tos);

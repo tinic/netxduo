@@ -87,17 +87,29 @@ NXD_IPV6_ADDRESS *source_address;
     {
 
         /* No source was specified, so pick one for the destination the same way
-           the IPv4 path asks _nx_ip_route_find for an outgoing interface.  */
+           the IPv4 path asks _nx_ip_route_find for an outgoing interface.
+           AmiNetXDuo: under nx_ip_protection, held through the send, so the
+           address found is still the address sent from; the send takes the
+           mutex again, which ThreadX allows its owner.  */
+        tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
         status = _nxd_ipv6_interface_find(ip_ptr, destination_ip -> nxd_ip_address.v6, &source_address, NX_NULL);
 
         /* Cannot find a usable source address. */
         if (status != NX_SUCCESS)
         {
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
             return(status);
         }
 
         /*lint -e{644} suppress variable might not be initialized, since "source_address" was initialized in _nxd_ipv6_interface_find. */
         address_index = (UINT)(source_address -> nxd_ipv6_address_index);
+
+        status = _nxd_ip_raw_packet_source_send(ip_ptr, packet_ptr, destination_ip, address_index, protocol, ttl, tos);
+
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+        return(status);
     }
 #endif /* FEATURE_NX_IPV6 */
 
