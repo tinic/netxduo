@@ -225,8 +225,9 @@ NX_TCP_SOCKET *end_ptr;
         /* Disable interrupts.  */
         TX_DISABLE
 
-        /* Determine if the list is NULL.  */
-        if (search_ptr)
+        /* SO_REUSEADDR may have cleared search_ptr to mark the port free,
+           but its hash bucket can still contain bound sockets.  */
+        if (ip_ptr -> nx_ip_tcp_port_table[index])
         {
 
             /* There are already sockets on this list... just add this one
@@ -289,4 +290,3 @@ NX_TCP_SOCKET *end_ptr;
         return(NX_PORT_UNAVAILABLE);
     }
 }
-
