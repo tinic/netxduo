@@ -101,6 +101,12 @@ NX_IPV6_PREFIX_ENTRY *prev = NX_NULL; /* Pointer to the location where the
        Maintain longest-match-first.
      */
 
+    /* AmiNetXDuo: an IPv6 prefix is at most 128 bits.  */
+    if (prefix_length > 128)
+    {
+        return(NX_INVALID_PARAMETERS);
+    }
+
     /* Start with the head of the list. */
     current = ip_ptr -> nx_ipv6_prefix_list_ptr;
 
@@ -124,7 +130,11 @@ NX_IPV6_PREFIX_ENTRY *prev = NX_NULL; /* Pointer to the location where the
             /* If the prefix_length is the same, check whether these
                two prefixes are the same.  If they are the same, we
                don't need to create a new entry. */
-            if (CHECK_IPV6_ADDRESSES_SAME(prefix, current -> nx_ipv6_prefix_entry_network_address))
+            /* AmiNetXDuo: compare the prefix bits only.  The entry is stored
+               masked (below), so a full-width compare never matches a prefix
+               advertised with any of its ignored bits set.  */
+            if (CHECK_IP_ADDRESSES_BY_PREFIX(prefix, current -> nx_ipv6_prefix_entry_network_address,
+                                             prefix_length))
             {
 
                 /* We have the same entry.  Just update the

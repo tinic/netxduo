@@ -73,6 +73,13 @@ UINT          i;
 
     interface_ptr = &(ip_ptr -> nx_ip_interface[index]);
 
+    /* AmiNetXDuo: take the IP mutex as _nx_arp_interface_entries_delete does.
+       _nx_ip_interface_detach calls this with the mutex released, and the IP
+       thread's ND fast periodic update deletes from the same cache under it;
+       a packet release that switches threads mid-delete would let both
+       release one entry's waiting queue.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
     for (i = 0; i < NX_IPV6_NEIGHBOR_CACHE_SIZE; i++)
     {
         if (ip_ptr -> nx_ipv6_nd_cache[i].nx_nd_cache_interface_ptr == interface_ptr)
@@ -81,6 +88,8 @@ UINT          i;
             _nx_nd_cache_delete_internal(ip_ptr, &ip_ptr -> nx_ipv6_nd_cache[i]);
         }
     }
+
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     return(NX_SUCCESS);
 }
