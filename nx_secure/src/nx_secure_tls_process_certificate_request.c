@@ -83,12 +83,15 @@ UINT  status;
 UINT sign_algs_length;
 UINT sign_alg;
 UINT expected_sign_alg = 0;
+UINT sign_algs_end = 0;
 #endif
 
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
 UINT extension_total_length;
 UINT extension_length;
 UINT extension_type;
+UINT extensions_end;
+UINT found_sign_algs = NX_FALSE;
 #endif
 
     /* Structure:
@@ -203,15 +206,19 @@ UINT extension_type;
         extension_total_length = (UINT)((packet_buffer[length] << 8) + packet_buffer[length + 1]);
         length += 2;
 
-        /* Make sure what we extracted makes sense. */
-        if ((length + extension_total_length) > message_length)
+        /* Make sure what we extracted makes sense: the extensions are the rest
+           of the message, exactly (N-113). */
+        if ((length + extension_total_length) != message_length)
         {
             return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
         }
+        extensions_end = length + extension_total_length;
 
         /* Find SignatureAlgorithms extension.  */
         /* Note: Other extensions will be processed in the future.  */
-        while (length < message_length)
+        /* Each header's four bytes, and then its payload, must lie inside the
+           block before either is read (N-113). */
+        while (extensions_end - length >= 4)
         {
             extension_type = (UINT)((packet_buffer[length] << 8) + packet_buffer[length + 1]);
             length += 2;
@@ -219,18 +226,35 @@ UINT extension_type;
             extension_length = (UINT)((packet_buffer[length] << 8) + packet_buffer[length + 1]);
             length += 2;
 
+            if (extension_length > extensions_end - length)
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
             if (extension_type == NX_SECURE_TLS_EXTENSION_SIGNATURE_ALGORITHMS)
             {
+                found_sign_algs = NX_TRUE;
                 break;
             }
 
             length += extension_length;
         }
 
-        if (length >= message_length)
+        if (!found_sign_algs)
         {
+            /* One to three bytes left over is a truncated header. */
+            if (length != extensions_end)
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
             return(NX_SECURE_TLS_UNSUPPORTED_CERT_SIGN_ALG);
         }
+
+#if (NX_SECURE_TLS_TLS_1_2_ENABLED)
+        /* The list below must stay inside this extension. */
+        sign_algs_end = length + extension_length;
+#endif
     }
     else
 #endif
@@ -282,7 +306,14 @@ UINT extension_type;
     if (tls_session -> nx_secure_tls_protocol_version == NX_SECURE_TLS_VERSION_TLS_1_2)
 #endif /* NX_SECURE_ENABLE_DTLS */
     {
-        if (length + 2 > message_length)
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+        if (!tls_session -> nx_secure_tls_1_3)
+#endif
+        {
+            sign_algs_end = message_length;
+        }
+
+        if (length + 2 > sign_algs_end)
         {
             return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
         }
@@ -291,11 +322,21 @@ UINT extension_type;
         sign_algs_length = (UINT)((packet_buffer[length] << 8) + packet_buffer[length + 1]);
         length = length + 2;
 
-        /* Make sure what we extracted makes sense. */
-        if ((length + sign_algs_length) > message_length)
+        /* Make sure what we extracted makes sense.  Two bytes per algorithm, so
+           an odd length would have the last read land past the list (N-113). */
+        if (((length + sign_algs_length) > sign_algs_end) || (sign_algs_length & 1u))
         {
             return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
         }
+
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+        /* In TLS 1.3 the list is the whole extension; in 1.2 the certificate
+           authorities follow it. */
+        if (tls_session -> nx_secure_tls_1_3 && ((length + sign_algs_length) != sign_algs_end))
+        {
+            return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+        }
+#endif
 
         /* Extract the signature algorithms. */
         sign_alg = NX_SECURE_TLS_HASH_ALGORITHM_NONE;
