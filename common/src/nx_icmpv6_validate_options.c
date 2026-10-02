@@ -100,7 +100,14 @@ UINT option_len;
         option = (NX_ICMPV6_OPTION *)NX_UCHAR_POINTER_ADD(option, option_len);
     }
 
-    if (length < 0)
+    /* Every ND option is a whole number of 8-octet units, so the only valid
+       remainder is 0.  Anything else is either an overrun (an option whose
+       length byte claimed more than what is left) or a 1-2 byte tail that the
+       callers then re-walk on a bound of their own, striding by this option's
+       length byte -- a zero length byte there never advances the pointer and
+       the walk never ends.  Rejecting the tail here keeps those walks from
+       ever seeing a fragment. */
+    if (length != 0)
     {
 
         /* Invalid packet length. */
