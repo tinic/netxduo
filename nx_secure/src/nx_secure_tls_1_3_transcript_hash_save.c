@@ -70,7 +70,7 @@ CHAR *metadata;
 
 
     /* Don't oveflow the hash array. */
-    if(hash_index > NX_SECURE_TLS_1_3_MAX_TRANSCRIPT_HASHES)
+    if(hash_index >= NX_SECURE_TLS_1_3_MAX_TRANSCRIPT_HASHES)
     {
         return(NX_INVALID_PARAMETERS);
     }
@@ -86,6 +86,14 @@ CHAR *metadata;
     {
         /* The handshake transcript hash in TLS 1.3 uses the hash routine associated with the chosen ciphersuite. */
         method_ptr = tls_session -> nx_secure_tls_session_ciphersuite -> nx_secure_tls_hash;
+    }
+
+    /* Get hash output size and bound it to the transcript-hash row capacity. */
+    hash_size = (method_ptr ->nx_crypto_ICV_size_in_bits >> 3);
+
+    if (hash_size > NX_SECURE_TLS_MAX_HASH_SIZE)
+    {
+        return(NX_INVALID_PARAMETERS);
     }
 
     /* Generate the "transcript hash" for the point in the handshake where this message falls.
@@ -108,10 +116,6 @@ CHAR *metadata;
     {
         metadata = tls_session -> nx_secure_tls_handshake_hash.nx_secure_tls_handshake_hash_sha256_metadata;
     }
-
-    /* Get hash output size. */
-    hash_size = (method_ptr ->nx_crypto_ICV_size_in_bits >> 3);
-
 
     /* Generate a hash using our temporary copy of the hash metadata, place it into the TLS Session transcript hash array. */
     if (method_ptr  -> nx_crypto_operation != NX_NULL)
