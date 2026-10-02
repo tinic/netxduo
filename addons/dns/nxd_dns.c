@@ -1271,13 +1271,27 @@ UINT  _nxd_dns_server_remove(NX_DNS *dns_ptr, NXD_ADDRESS *server_address)
    its TTL, and a program that decides "online" by gethostbyname() read a
    machine with no interface as connected (AmiTCP_NG issue #4; Roadshow
    refuses the lookup).  What _nx_dns_cache_initialize() does, without its
-   mutex: every caller already holds it.  */
+   mutex: every caller already holds it.  That includes the head and tail
+   words: the memset zeroes them, and with a zero tail the string walk in
+   _nx_dns_cache_add_string() never advances, so the next insert spun
+   forever holding nx_dns_mutex.  */
 static VOID  _nx_dns_cache_drop(NX_DNS *dns_ptr)
 {
+
+ALIGN_TYPE *head;
+ALIGN_TYPE *tail;
+
 
     if (dns_ptr -> nx_dns_cache)
     {
         memset(dns_ptr -> nx_dns_cache, 0, dns_ptr -> nx_dns_cache_size);
+
+        head = (ALIGN_TYPE*)dns_ptr -> nx_dns_cache;
+        *head = (ALIGN_TYPE)((ALIGN_TYPE*)dns_ptr -> nx_dns_cache + 1);
+
+        tail = (ALIGN_TYPE*)(dns_ptr -> nx_dns_cache + dns_ptr -> nx_dns_cache_size) - 1;
+        *tail = (ALIGN_TYPE)tail;
+
         dns_ptr -> nx_dns_rr_count = 0;
         dns_ptr -> nx_dns_string_count = 0;
         dns_ptr -> nx_dns_string_bytes = 0;
