@@ -10489,6 +10489,10 @@ static UINT _nx_dns_cache_delete_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT c
 ALIGN_TYPE  *tail;
 ALIGN_TYPE  *end;
 USHORT      cnt;
+USHORT      len;
+UCHAR       *p;
+UCHAR       *top;
+UCHAR       *new_tail;
 
 
     /* Check the cache.  */
@@ -10499,9 +10503,19 @@ USHORT      cnt;
     if (string_ptr == NX_NULL)
         return(NX_DNS_PARAM_ERROR);
 
-    /* Validate string. */
-    if (_nx_utility_string_length_check((CHAR *)string_ptr, &string_len, NX_DNS_NAME_MAX))
-        return(NX_DNS_SIZE_ERROR);
+    /* string_len is the size the entry was stored with, as
+       _nx_dns_cache_add_string() was given it, or 0 for a NUL-terminated
+       name.  It was overwritten here with the string length of the bytes,
+       which for binary RDATA -- the 16-byte AAAA address -- stops at the
+       first zero octet: the slot came out short, the count decremented was
+       a word inside the stored address, and the entry was never freed.  */
+    if (string_len == 0)
+    {
+
+        /* Validate string. */
+        if (_nx_utility_string_length_check((CHAR *)string_ptr, &string_len, NX_DNS_NAME_MAX))
+            return(NX_DNS_SIZE_ERROR);
+    }
 
     /* Add the length of CNT and LEN fields.  */
     /* Also make the total length 4 bytes align. */
@@ -10527,6 +10541,11 @@ USHORT      cnt;
         return(NX_DNS_SIZE_ERROR);
     }
 
+    /* The slot's own LEN field, which add_string wrote, has to agree before
+       anything in it is written.  */
+    if(*((USHORT*)((UCHAR*)end - 2)) != string_len)
+        return(NX_DNS_CACHE_ERROR);
+
     /* Decrease the usage counter value. */
     cnt = *((USHORT*)((UCHAR*)end - 4));
     cnt--;
@@ -10541,49 +10560,34 @@ USHORT      cnt;
         dns_ptr -> nx_dns_string_count --;
         dns_ptr -> nx_dns_string_bytes -= string_len;
                 
-        /* Update the tail pointer if the string at the tail is deleted. */
+        /* Update the tail pointer if the string at the tail is deleted.
+
+           The tail moves up to the lowest slot still in use.  The slots are
+           walked down from the top by their own LEN fields, as
+           _nx_dns_cache_add_string() walks them; walking up from the tail
+           re-derived each slot's size from its bytes, which misreads a
+           binary entry the same way as above.  A LEN that does not fit
+           leaves the tail where it was: the freed slot stays reusable.  */
         if(string_ptr == tail)
         {
-            tail = end;
-        
-            while(end < ((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1))
+            top = (UCHAR*)((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1);
+            new_tail = top;
+
+            for(p = top; p > (UCHAR*)tail; p -= len)
             {
-                
-                /* Set the string pt and string length.  */
-                string_ptr = end;
+                len = *((USHORT*)(p - 2));
 
-                /* Validate string. */
-                if (_nx_utility_string_length_check((CHAR *)string_ptr, &string_len, NX_DNS_NAME_MAX))
-                    return(NX_DNS_SIZE_ERROR);
-
-                /* Check the string length.  */
-                if(string_len == 0)
+                if((len < 8) || (len > (UINT)(p - (UCHAR*)tail)))
                 {
-                    
-                    /* This slot is cleared. */
-                    while(*((ULONG*)string_ptr) == 0)
-                        string_ptr = (UCHAR*)string_ptr + 4;
-                    
-                    end = (ALIGN_TYPE*)((UCHAR*)string_ptr + 4);
-                    cnt = *((USHORT*)string_ptr);
-                }
-                else
-                {
-                    
-                    /* Make the length 4 bytes align and add the length of CNT and LEN fields.  */
-                    string_len = ((string_len & 0xFFFFFFFC) + 8) & 0xFFFFFFFF;
-
-                    end = (ALIGN_TYPE*)((UCHAR*)string_ptr + string_len);
-                    cnt = *((USHORT*)((UCHAR*)end - 4));
-                }
-                
-                /* Check whether this slot is never referenced. */
-                if(cnt == 0)
-                    tail = end;
-                else
+                    new_tail = (UCHAR*)tail;
                     break;
+                }
+
+                if(*((USHORT*)(p - 4)) != 0)
+                    new_tail = p - len;
             }
-            *((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1) = (ALIGN_TYPE)tail;
+
+            *((ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1) = (ALIGN_TYPE)new_tail;
         }
     }
 
