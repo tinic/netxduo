@@ -71,19 +71,27 @@ TX_INTERRUPT_SAVE_AREA
 
 ULONG      i;
 NX_ARP    *arp_entry;
+NX_ARP    *first_entry;
+NX_ARP    *next_entry;
 NX_PACKET *packet_ptr;
 NX_PACKET *next_packet_ptr;
 
 
     /* Pickup pointer to ARP dynamic list.  */
     arp_entry =  ip_ptr -> nx_ip_arp_dynamic_list;
+    first_entry =  arp_entry;
 
-    /* Loop through the active ARP entries to see if they need updating.  */
-    for (i = 0; i < ip_ptr -> nx_ip_arp_dynamic_active_count; i++)
+    /* AmiNetXDuo: walk the whole pool circle once and act on active entries
+       only.  An expiry re-links its entry at the pool tail, so the next
+       pointer is taken first; a deleted entry keeps its pool place, so the
+       first active_count entries are not the active set.  */
+    while (arp_entry)
     {
 
+        next_entry =  arp_entry -> nx_arp_pool_next;
+
         /* Check this ARP entry to see if it need updating.  */
-        if (arp_entry -> nx_arp_entry_next_update)
+        if ((arp_entry -> nx_arp_active_list_head) && (arp_entry -> nx_arp_entry_next_update))
         {
 
             /* Decrement the next update field.  */
@@ -222,8 +230,12 @@ NX_PACKET *next_packet_ptr;
             }
         }
 
-        /* Move to the next ARP entry.  */
-        arp_entry =  arp_entry -> nx_arp_pool_next;
+        /* Move to the next ARP entry, stopping once the circle is done.  */
+        if (next_entry == first_entry)
+        {
+            break;
+        }
+        arp_entry =  next_entry;
     }
 
 
