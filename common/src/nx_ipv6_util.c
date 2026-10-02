@@ -62,6 +62,13 @@ ULONG low_prefix;  /* Remaining bits in prefix after high prefix. */
 ULONG mask;
 
 
+    /* AmiNetXDuo: an IPv6 prefix is at most 128 bits.  A longer one matches
+       nothing rather than comparing the memory after either address.  */
+    if (prefix_len > 128)
+    {
+        return(0);
+    }
+
     /* Get number of ULONGs that can fit in the specified prefix length. */
     high_prefix  = prefix_len >> 5;
 

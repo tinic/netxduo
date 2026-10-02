@@ -101,6 +101,12 @@ NX_IPV6_PREFIX_ENTRY *prev = NX_NULL; /* Pointer to the location where the
        Maintain longest-match-first.
      */
 
+    /* AmiNetXDuo: an IPv6 prefix is at most 128 bits.  */
+    if (prefix_length > 128)
+    {
+        return(NX_INVALID_PARAMETERS);
+    }
+
     /* Start with the head of the list. */
     current = ip_ptr -> nx_ipv6_prefix_list_ptr;
 
