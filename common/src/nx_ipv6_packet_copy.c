@@ -171,6 +171,10 @@ UINT       flag;
             /*lint -e{825} suppress fallthrough, since it is necessary.  */ /* fallthrough */
             case 1:
                 *dest_ptr++ = *source_ptr++;
+                /* fallthrough */
+            case 0:
+                /* A byte-only tail must not enter the eight-word default. */
+                break;
             }
             if (bytes_to_copy >= 32)
             {
@@ -232,4 +236,3 @@ UINT       flag;
 
 
 #endif /* FEATURE_NX_IPV6 && NX_DISABLE_FRAGMENTATION*/
-
