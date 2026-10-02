@@ -295,7 +295,7 @@ NX_IP        *ip_ptr;
 NX_INTERFACE *outgoing_interface = NX_NULL;
 #ifdef FEATURE_NX_IPV6
 /* AmiNetXDuo (audit N-039): the IPv6 source as it was when chosen.  */
-ULONG          ipv6_src_snapshot[4];
+ULONG          ipv6_src_snapshot[4] = {0, 0, 0, 0};
 #endif /* FEATURE_NX_IPV6 */
 
 #ifdef FEATURE_NX_IPV6
