@@ -4828,11 +4828,13 @@ UINT                      conflict_flag;
 
             /* Atomically claim every pending conflict bit: read and clear the flag
                under TX_DISABLE, matching the writer's TX_DISABLE-guarded set in
-               _nx_dhcp_ip_conflict.  The writer runs on the SANA2 RX thread at a
-               higher priority than this DHCP thread, so an unguarded read-then-clear
-               here could be preempted between the load and the store and lose a bit
-               it had just claimed.  Declining sends a DHCPDECLINE and must run after
-               the bits are consumed, outside the critical section. */
+               _nx_dhcp_ip_conflict.  Declining sends a DHCPDECLINE and can yield;
+               clearing a bit after that call could erase a new conflict posted
+               during the decline.  Consume the pending batch first so later
+               conflicts remain pending.  The native port defers preemption until
+               a ThreadX service call; TX_DISABLE also preserves the shared flag's
+               atomic contract on ports that preempt between ordinary instructions.
+               All declines run outside the critical section. */
             TX_DISABLE
             conflict_flag = dhcp_ptr -> nx_dhcp_interface_conflict_flag;
             dhcp_ptr -> nx_dhcp_interface_conflict_flag = 0;
