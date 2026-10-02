@@ -10331,6 +10331,21 @@ static UINT _nx_dns_cache_add_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cach
     return(_nx_dns_cache_add_entry(dns_ptr, cache_ptr, cache_size, string_ptr, string_size, 0, insert_ptr));
 }
 
+/* What marks a slot as binary: the four bytes at LEN - 8, which in a binary
+   slot follow the data directly (binary_size is a multiple of four).  A name
+   slot of the same LEN holds its NUL and zero padding there, or name
+   characters then its NUL: never a zero second byte after a nonzero first,
+   followed by a nonzero third.  So the two kinds cannot be confused, and a
+   name never shares a binary slot or the other way about -- _nx_dns_name_match()
+   alone would match a name against an address whose bytes spell it.  */
+static const UCHAR _nx_dns_cache_binary_tag[4] = { 0xFF, 0x00, 0xB1, 0x6E };
+
+static UINT _nx_dns_cache_slot_is_binary(UCHAR *start, USHORT len)
+{
+
+    return((len >= 8) && (memcmp(start + len - 8, _nx_dns_cache_binary_tag, 4) == 0));
+}
+
 /* binary_size 0 is a domain name, deduplicated against the stored strings by
    _nx_dns_name_match() as before.  Nonzero is binary RDATA of that many bytes
    -- the 16-byte AAAA address -- which shares a slot only with a stored entry
@@ -10352,6 +10367,10 @@ UCHAR       *p, *available, *start;
     /* Check the cache.  */
     if (cache_ptr == NX_NULL)
         return(NX_DNS_CACHE_ERROR);
+
+    /* The tag needs the four bytes after the data to itself.  */
+    if (binary_size && ((binary_size != string_size) || (binary_size & 3)))
+        return(NX_DNS_PARAM_ERROR);
 
     /* Get head and tail. */
     tail = (ALIGN_TYPE*)((UCHAR*)cache_ptr + cache_size) - 1;
@@ -10379,8 +10398,8 @@ UCHAR       *p, *available, *start;
 
         if((len == string_len) &&
            (binary_size ?
-            ((memcmp(start, string_ptr, binary_size) == 0) && (start[binary_size] == 0)) :
-            (!_nx_dns_name_match(start, string_ptr, string_size))))
+            (_nx_dns_cache_slot_is_binary(start, len) && (memcmp(start, string_ptr, binary_size) == 0)) :
+            ((!_nx_dns_cache_slot_is_binary(start, len)) && (!_nx_dns_name_match(start, string_ptr, string_size)))))
         {
 
             /* The same string exists in the string table. */
@@ -10451,8 +10470,12 @@ UCHAR       *p, *available, *start;
     /* Insert string to cache. */
     memcpy(available - string_len, string_ptr, string_size); /* Use case of memcpy is verified. */
 
-    /* Set end character 0. */
-    *(available - string_len + string_size) = 0;
+    /* Set end character 0, or the tag that marks a binary entry: the same
+       place, LEN - 8, when binary_size is a multiple of four.  */
+    if (binary_size)
+        memcpy(available - 8, _nx_dns_cache_binary_tag, 4); /* Use case of memcpy is verified. */
+    else
+        *(available - string_len + string_size) = 0;
 
     /* Update the string length and count .  */
     dns_ptr -> nx_dns_string_count ++;
