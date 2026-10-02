@@ -88,6 +88,7 @@ static UINT        _nx_dns_cache_find_answer(NX_DNS *dns_ptr, VOID *cache_ptr, U
 static UINT        _nx_dns_cache_delete_rr(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr);   
 static UINT        _nx_dns_cache_delete_rr_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, NX_DNS_RR *record_ptr);
 static UINT        _nx_dns_cache_add_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, VOID **insert_ptr);
+static UINT        _nx_dns_cache_add_entry(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, UINT binary_size, VOID **insert_ptr);
 static UINT        _nx_dns_cache_delete_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_len);  
 static UINT        _nx_dns_resource_time_to_live_get(UCHAR *resource, NX_PACKET *packet_ptr, ULONG *rr_ttl);
 static VOID        _nx_dns_cache_add_negative(NX_DNS *dns_ptr, UCHAR *query_name, NX_PACKET *packet_ptr);
@@ -5832,7 +5833,7 @@ ULONG                   rr_ttl;
                 return (NX_SUCCESS);
                                        
             /* Add the IPv6 address string.  */
-            status = _nx_dns_cache_add_string(dns_ptr, dns_ptr -> nx_dns_cache, dns_ptr -> nx_dns_cache_size, ipv6_address_ptr, 16, (VOID **)(&(temp_rr.nx_dns_rr_rdata.nx_dns_rr_rdata_aaaa.nx_dns_rr_aaaa_address)));
+            status = _nx_dns_cache_add_entry(dns_ptr, dns_ptr -> nx_dns_cache, dns_ptr -> nx_dns_cache_size, ipv6_address_ptr, 16, 16, (VOID **)(&(temp_rr.nx_dns_rr_rdata.nx_dns_rr_rdata_aaaa.nx_dns_rr_aaaa_address)));
 
             /* Check the status.  */
             if(status)
@@ -10326,6 +10327,20 @@ UINT    size;
 static UINT _nx_dns_cache_add_string(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, VOID **insert_ptr)
 {
 
+    /* A domain name: shared with any stored string it matches up to case.  */
+    return(_nx_dns_cache_add_entry(dns_ptr, cache_ptr, cache_size, string_ptr, string_size, 0, insert_ptr));
+}
+
+/* binary_size 0 is a domain name, deduplicated against the stored strings by
+   _nx_dns_name_match() as before.  Nonzero is binary RDATA of that many bytes
+   -- the 16-byte AAAA address -- which shares a slot only with a stored entry
+   of exactly the same bytes.  _nx_dns_name_match() folds case and stops at the
+   first zero byte of the new entry, so an address whose bytes differed from a
+   stored one only in the 0x20 bit of a letter-range byte was given the stored
+   address instead of its own.  */
+static UINT _nx_dns_cache_add_entry(NX_DNS *dns_ptr, VOID *cache_ptr, UINT cache_size, VOID *string_ptr, UINT string_size, UINT binary_size, VOID **insert_ptr)
+{
+
 ALIGN_TYPE  *tail;
 ALIGN_TYPE  *head;
 UINT        string_len;
@@ -10363,7 +10378,9 @@ UCHAR       *p, *available, *start;
         start = p - len;
 
         if((len == string_len) &&
-           (!_nx_dns_name_match(start, string_ptr, string_size)))
+           (binary_size ?
+            ((memcmp(start, string_ptr, binary_size) == 0) && (start[binary_size] == 0)) :
+            (!_nx_dns_name_match(start, string_ptr, string_size))))
         {
 
             /* The same string exists in the string table. */
