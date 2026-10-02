@@ -86,8 +86,10 @@ UCHAR               *endpoint_raw_ptr;
 UINT                 endpoint_length;
 UINT                 bytes_processed;
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
-UINT                 extensions_length;
+UINT                 extensions_length = 0;
+UINT                 context_length;
 #endif
+UINT                 entry_length;
 UCHAR               *cert_buffer;
 ULONG                cert_buf_size;
 
@@ -139,19 +141,37 @@ ULONG                cert_buf_size;
            the beginning of the handshake record. If the first byte is non-zero
            it means the following bytes (length given as the value of that byte)
            should be the context. */
-        packet_buffer++;
-        message_length--;
-      
+        /* The length byte and the context it announces must both be in the
+           message before either is skipped: a zero-length body used to make
+           message_length wrap (N-116). */
+        if (message_length < 1)
+        {
+            return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+        }
+
+        context_length = packet_buffer[0];
+        if (context_length >= message_length)
+        {
+            return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+        }
+
+        packet_buffer += 1 + context_length;
+        message_length -= 1 + context_length;
     }
 #endif
-      
-     
+
+    if (message_length < 3)
+    {
+        return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+    }
+
     /* Extract the certificate(s) from the incoming data, starting with. */
     total_length = (UINT)((packet_buffer[0] << 16) + (packet_buffer[1] << 8) + packet_buffer[2]);
     length = length + 3;
 
-    /* Make sure what we extracted makes sense. */
-    if (total_length > message_length)
+    /* Make sure what we extracted makes sense: the list is the rest of the
+       message, exactly (N-116). */
+    if (total_length != message_length - 3)
     {
         return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
     }
@@ -166,15 +186,43 @@ ULONG                cert_buf_size;
     /* Keep subtracting from the total length until no more certificates left. */
     while (total_length > 0)
     {
+        /* The whole entry is accounted for against what is left of the list
+           before any of it is read, copied or parsed (N-116): the length
+           field, the certificate, and in TLS 1.3 its extensions block. */
+        if (total_length < 3)
+        {
+            return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+        }
+
         /* Extract the next certificate's length. */
         cert_length = (UINT)((packet_buffer[length] << 16) + (packet_buffer[length + 1] << 8) + packet_buffer[length + 2]);
         length = length + 3;
 
         /* Make sure the individual cert length makes sense. */
-        if ((cert_length + 3) > total_length)
+        if (cert_length > total_length - 3)
         {
             return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
         }
+        entry_length = 3 + cert_length;
+
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+        if (tls_session -> nx_secure_tls_1_3)
+        {
+            if (total_length - entry_length < 2)
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+
+            extensions_length = (UINT)((packet_buffer[length + cert_length] << 8) +
+                                       packet_buffer[length + cert_length + 1]);
+
+            if (extensions_length > total_length - entry_length - 2)
+            {
+                return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
+            }
+            entry_length += 2 + extensions_length;
+        }
+#endif
 
         /* Get a reference to the remote endpoint certificate that was allocated earlier. */
         status = _nx_secure_x509_free_certificate_get(&tls_session -> nx_secure_tls_credentials.nx_secure_tls_certificate_store,
@@ -241,24 +289,15 @@ ULONG                cert_buf_size;
         }
 
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
-        /* Check for TLS 1.3 extensions following each certificate. */
+        /* Skip the TLS 1.3 extensions following each certificate, bounded above. */
         if(tls_session->nx_secure_tls_1_3)
         {
-            extensions_length = (UINT)((packet_buffer[length] << 8) + packet_buffer[length + 1]);
-
-            /* Add extensions length bytes. */
-            length += 2;
-            
-            /* Add extensions length to offset. */
-            length += extensions_length;
-            
-            /* Adjust the total length with our extension data. */
-            total_length -= (2 + extensions_length);
+            length += 2 + extensions_length;
         }
 #endif
 
-        /* Advance the variable of total_length. */
-        total_length -= (3 + cert_length);
+        /* Advance the variable of total_length by the entry checked above. */
+        total_length -= entry_length;
         
         /* Assign the TLS Session metadata areas to the certificate for later use. */
         certificate -> nx_secure_x509_public_cipher_metadata_area = tls_session -> nx_secure_public_cipher_metadata_area;
