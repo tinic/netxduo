@@ -407,7 +407,11 @@ NX_SECURE_TLS_SERVER_STATE            old_server_state;
 
                 /* Populate our packet with the desired message (CertificateRequest). */
                 status = _nx_secure_tls_send_certificate_request(tls_session, send_packet);
-                NX_ASSERT(status == NX_SUCCESS);
+                if (status != NX_SUCCESS)
+                {
+                    nx_secure_tls_packet_release(send_packet);
+                    break;
+                }
 
                 status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CERTIFICATE_REQUEST, wait_option);
                 if (status != NX_SUCCESS)
@@ -436,7 +440,13 @@ NX_SECURE_TLS_SERVER_STATE            old_server_state;
                     break;
                 }
 
-                _nx_secure_tls_send_certificate(tls_session, send_packet, wait_option);
+                status = _nx_secure_tls_send_certificate(tls_session, send_packet, wait_option);
+                if (status != NX_SUCCESS)
+                {
+                    nx_secure_tls_packet_release(send_packet);
+                    break;
+                }
+
                 status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CERTIFICATE_MSG, wait_option);
                 if (status != NX_SUCCESS)
                 {
@@ -458,8 +468,12 @@ NX_SECURE_TLS_SERVER_STATE            old_server_state;
                     break;
                 }
 
-                _nx_secure_tls_send_certificate_verify(tls_session, send_packet);
-
+                status = _nx_secure_tls_send_certificate_verify(tls_session, send_packet);
+                if (status != NX_SUCCESS)
+                {
+                    nx_secure_tls_packet_release(send_packet);
+                    break;
+                }
 
                 status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CERTIFICATE_VERIFY, wait_option);
                 if (status != NX_SUCCESS)
@@ -487,7 +501,13 @@ NX_SECURE_TLS_SERVER_STATE            old_server_state;
             }
 
             /* Populate the packet with our Finished Message. */
-            _nx_secure_tls_send_finished(tls_session, send_packet);
+            status = _nx_secure_tls_send_finished(tls_session, send_packet);
+            if(status != NX_SUCCESS)
+            {
+                nx_secure_tls_packet_release(send_packet);
+                break;
+            }
+
             status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_FINISHED, wait_option);
             if(status != NX_SUCCESS)
             {

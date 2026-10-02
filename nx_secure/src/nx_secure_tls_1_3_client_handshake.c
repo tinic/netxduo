@@ -515,6 +515,7 @@ const UCHAR    *server_random;
 
                 if (status != NX_SUCCESS)
                 {
+                    nx_secure_tls_packet_release(send_packet);
                     break;
                 }
 
@@ -553,6 +554,7 @@ const UCHAR    *server_random;
 
                 if (status != NX_SUCCESS)
                 {
+                    nx_secure_tls_packet_release(send_packet);
                     break;
                 }
 
@@ -602,6 +604,7 @@ const UCHAR    *server_random;
             status = _nx_secure_tls_send_finished(tls_session, send_packet);
             if(status != NX_SUCCESS)
             {
+                nx_secure_tls_packet_release(send_packet);
                 break;
             }
 
