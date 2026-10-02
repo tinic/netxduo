@@ -279,7 +279,17 @@ NX_INTERFACE  *interface_ptr = NX_NULL;
 #endif /* !NX_DISABLE_IPV4 || (FEATURE_NX_IPV6 && NX_ENABLE_INTERFACE_CAPABILITY) */
 #ifdef FEATURE_NX_IPV6
 UINT           status;
+/* AmiNetXDuo (audit N-039): the IPv6 source as it was under the mutex.  */
+NXD_IPV6_ADDRESS *ipv6_source = NX_NULL;
+NX_INTERFACE  *ipv6_attached = NX_NULL;
+ULONG          ipv6_src_snapshot[4];
+UINT           ipv6_stamped_here = NX_FALSE;
+UCHAR         *entry_prepend_ptr;
+ULONG          entry_length;
 #endif /* FEATURE_NX_IPV6 */
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+ULONG          capability_flag = 0;
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
 
 #ifdef NX_ENABLE_TCPIP_OFFLOAD
 NXD_ADDRESS    ip_src_address;
@@ -371,6 +381,9 @@ UINT           compute_checksum = 1;
         }
 
         interface_ptr = packet_ptr -> nx_packet_address.nx_packet_interface_ptr;
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+        capability_flag = interface_ptr -> nx_interface_capability_flag;
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
 
         /* Fill in the IP src/dest address */
         ip_dest_addr = &ip_address -> nxd_ip_address.v4;
@@ -387,6 +400,14 @@ UINT           compute_checksum = 1;
     if (ip_address -> nxd_ip_version == NX_IP_VERSION_V6)
     {
 
+        /* AmiNetXDuo (audit N-039): choose and read the source under
+           nx_ip_protection, which _nxd_ipv6_address_delete holds while it
+           zeroes an entry.  A short hold: the address words, the interface
+           and its capability flags are copied out, and the checksum below
+           runs without the mutex on the copies.  The send rechecks the entry
+           against them once the mutex is taken again.  */
+        tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
         if (packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr == NX_NULL)
         {
 
@@ -398,17 +419,41 @@ UINT           compute_checksum = 1;
             /* If not, return the error status. */
             if (status != NX_SUCCESS)
             {
+                tx_mutex_put(&(ip_ptr -> nx_ip_protection));
                 return(status);
             }
+
+            ipv6_stamped_here = NX_TRUE;
         }
+
+        ipv6_source = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr;
+        if ((ipv6_source -> nxd_ipv6_address_valid == NX_FALSE) ||
+            (ipv6_source -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID) ||
+            (ipv6_source -> nxd_ipv6_address_attached == NX_NULL))
+        {
+            if (ipv6_stamped_here)
+            {
+                packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = NX_NULL;
+            }
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+            return(NX_NO_INTERFACE_ADDRESS);
+        }
+
+        COPY_IPV6_ADDRESS(ipv6_source -> nxd_ipv6_address, ipv6_src_snapshot);
+        ipv6_attached = ipv6_source -> nxd_ipv6_address_attached;
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+        capability_flag = ipv6_attached -> nx_interface_capability_flag;
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
+
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
         /* Fill in the IP src/dest address */
         ip_dest_addr = &ip_address -> nxd_ip_address.v6[0];
-        ip_src_addr = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address;
+        ip_src_addr = ipv6_src_snapshot;
 
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
         /* Get the packet interface information. */
-        interface_ptr = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_attached;
+        interface_ptr = ipv6_attached;
 #endif /* NX_ENABLE_INTERFACE_CAPABILITY  */
 
 #ifdef NX_ENABLE_TCPIP_OFFLOAD
@@ -435,7 +480,7 @@ UINT           compute_checksum = 1;
 
         /* Handle for IPv6 packets. */
         src_addr.nxd_ip_version = NX_IP_VERSION_V6;
-        COPY_IPV6_ADDRESS(packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address, src_addr.nxd_ip_address.v6);
+        COPY_IPV6_ADDRESS(ipv6_src_snapshot, src_addr.nxd_ip_address.v6);
     }
 #endif /* FEATURE_NX_IPV6 */
 
@@ -468,6 +513,12 @@ UINT           compute_checksum = 1;
     }
 #endif /* NX_IPSEC_ENABLE */
         
+#ifdef FEATURE_NX_IPV6
+    /* What the recheck below restores if it refuses.  */
+    entry_prepend_ptr = packet_ptr -> nx_packet_prepend_ptr;
+    entry_length      = packet_ptr -> nx_packet_length;
+#endif /* FEATURE_NX_IPV6 */
+
     /* Prepend the UDP header to the packet.  First, make room for the UDP header.  */
     packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr - sizeof(NX_UDP_HEADER);
 
@@ -521,7 +572,7 @@ UINT           compute_checksum = 1;
         (ip_address -> nxd_ip_version == NX_IP_VERSION_V6))
     {
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
-        if (interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_UDP_TX_CHECKSUM)
+        if (capability_flag & NX_INTERFACE_CAPABILITY_UDP_TX_CHECKSUM)
         {
             compute_checksum = 0;
         }
@@ -577,6 +628,37 @@ UINT           compute_checksum = 1;
 
     /* Get mutex protection.  */
     tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+#ifdef FEATURE_NX_IPV6
+    /* AmiNetXDuo (audit N-039): the entry must still be the source the
+       snapshot above was taken from, before anything below uses it.  */
+    if ((ip_address -> nxd_ip_version == NX_IP_VERSION_V6) &&
+        ((ipv6_source -> nxd_ipv6_address_valid == NX_FALSE) ||
+         (ipv6_source -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID) ||
+         (ipv6_source -> nxd_ipv6_address_attached != ipv6_attached) ||
+         (!CHECK_IPV6_ADDRESSES_SAME(ipv6_source -> nxd_ipv6_address, ipv6_src_snapshot))))
+    {
+
+        /* Give the packet back as it came in.  */
+        packet_ptr -> nx_packet_prepend_ptr = entry_prepend_ptr;
+        packet_ptr -> nx_packet_length      = entry_length;
+        if (ipv6_stamped_here)
+        {
+            packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = NX_NULL;
+        }
+
+#ifndef NX_DISABLE_UDP_INFO
+        /* And the counters the header build above advanced.  */
+        ip_ptr -> nx_ip_udp_packets_sent--;
+        ip_ptr -> nx_ip_udp_bytes_sent -= entry_length;
+        socket_ptr -> nx_udp_socket_packets_sent--;
+        socket_ptr -> nx_udp_socket_bytes_sent -= entry_length;
+#endif /* NX_DISABLE_UDP_INFO */
+
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+        return(NX_NO_INTERFACE_ADDRESS);
+    }
+#endif /* FEATURE_NX_IPV6 */
 
 #ifdef NX_ENABLE_TCPIP_OFFLOAD
     if ((interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCPIP_OFFLOAD) &&
