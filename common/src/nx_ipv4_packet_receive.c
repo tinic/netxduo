@@ -745,15 +745,17 @@ UINT            packet_consumed;
                     return;
                 }
             }
-        }
 
 #ifndef NX_DISABLE_IP_INFO
 
-        /* Decrement the number of packets delivered.  */
-        ip_ptr -> nx_ip_total_packets_delivered--;
+            /* UDP that reached here was counted above but not dispatched to the
+               DHCP handler; undo the increment so it does not count as delivered.  */
+            ip_ptr -> nx_ip_total_packets_delivered--;
+            ip_ptr -> nx_ip_total_bytes_received -=  packet_ptr -> nx_packet_length;
+#endif
+        }
 
-        /* Decrement the IP packet bytes received (not including the header).  */
-        ip_ptr -> nx_ip_total_bytes_received -=  packet_ptr -> nx_packet_length;
+#ifndef NX_DISABLE_IP_INFO
 
         /* Increment the IP invalid address error.  */
         ip_ptr -> nx_ip_invalid_receive_address++;
