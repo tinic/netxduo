@@ -122,8 +122,11 @@ NX_INTERFACE *nx_ip_interface = NX_NULL;
             ip_ptr -> nx_ip_routing_table[i].nx_ip_routing_net_mask == net_mask)
         {
 
-            /* Found the same entry: only need to update the next hop field */
+            /* Found the same entry: update the next hop and the interface it
+               resolves to, so a route re-added with a gateway on another
+               interface does not keep a stale interface pointer. */
             ip_ptr -> nx_ip_routing_table[i].nx_ip_routing_next_hop_address = next_hop;
+            ip_ptr -> nx_ip_routing_table[i].nx_ip_routing_entry_ip_interface = nx_ip_interface;
 
             /* All done.  Unlock the mutex, and return */
             tx_mutex_put(&(ip_ptr -> nx_ip_protection));
