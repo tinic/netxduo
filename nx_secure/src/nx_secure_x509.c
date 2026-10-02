@@ -403,6 +403,13 @@ NX_SECURE_EC_PUBLIC_KEY *ec_pubkey;
     {
         /*  EC public key. */
 
+        /*  The padding byte and at least one key byte must be there before
+            either is read or the length is taken (N-129). */
+        if (tlv_length < 2)
+        {
+            return(NX_SECURE_X509_ASN1_LENGTH_TOO_LONG);
+        }
+
         /*  Parse the EC bitstring - it is preceeded by a byte indicating the number of padding bytes
          *  added. Should always be 0. */
         if (tlv_data[0] != 0)
@@ -630,8 +637,8 @@ UINT         status;
         return(status);
     }
 
-    *bytes_processed += bytes;
-
+    /* Counted once, below, with the advance (N-130): adding it here as well
+       moved the outer parser's signature-algorithm offset by the IDs' size. */
 
     /* Parse extensions. */
     tlv_data = &tlv_data[bytes];
@@ -654,6 +661,14 @@ UINT         status;
     }
 
     *bytes_processed += bytes;
+
+    /* The count is where the outer parser reads the signature algorithm, so
+       it must be the whole certificate data block: every byte of it parsed,
+       none left over and none counted twice (N-130). */
+    if (bytes != cur_length)
+    {
+        return(NX_SECURE_X509_INVALID_CERTIFICATE_DATA);
+    }
 
     /* Parsed X509 certificate data successfully. */
     return(NX_SECURE_X509_SUCCESS);
@@ -723,6 +738,12 @@ UINT         status;
      * (determined higher up the call stack). */
     if (tlv_type == NX_SECURE_ASN_TAG_BER && tlv_type_class == NX_SECURE_ASN_TAG_CLASS_CONTEXT)
     {
+        /* There must be a payload byte to read (E-234). */
+        if (tlv_length < 1)
+        {
+            return(NX_SECURE_X509_INVALID_VERSION);
+        }
+
         /* Version is the payload byte. */
         cert -> nx_secure_x509_version = (USHORT)tlv_data[0];
 
@@ -1971,6 +1992,11 @@ UINT         status;
      *              }
      */
 
+    /* Nothing consumed until an extensions block is found: the "not an
+       extensions block" return below used to leave the caller's count as it
+       was, so the unique IDs' size was added again (N-130). */
+    *bytes_processed = 0;
+
     /*  First, parse the context-specific tag (if it exists). */
     status = _nx_secure_x509_asn1_tlv_block_parse(buffer, &length, &tlv_type, &tlv_type_class, &tlv_length, &tlv_data, &header_length);
 
@@ -2097,7 +2123,13 @@ UINT         status;
     /* Signature has a 0 byte at the front we need to skip.
      * This is due to the data being encoded as an ASN.1 bit string, which may
      * require padding bits to get to a multiple of 8 for byte alignment. The byte
-     * represents the number of padding bits, but in X509 it should always be 0. */
+     * represents the number of padding bits, but in X509 it should always be 0.
+     * There must be that byte and a signature after it (N-128): a zero-length
+     * bit string made the length 0xFFFFFFFF. */
+    if (tlv_length < 2)
+    {
+        return(NX_SECURE_X509_ASN1_LENGTH_TOO_LONG);
+    }
     cert -> nx_secure_x509_signature_data = tlv_data + 1;
     cert -> nx_secure_x509_signature_data_length = tlv_length - 1;
 
