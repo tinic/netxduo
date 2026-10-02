@@ -584,8 +584,20 @@ UINT           dupack_threshold;
             if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE)
             {
 
-                /* Process cwnd in fast recovery procedure. */
-                socket_ptr -> nx_tcp_socket_tx_window_congestion -= acked_bytes;
+                /* Process cwnd in fast recovery procedure.  AmiNetXDuo: the
+                   deflation stops at zero.  A partial acknowledgment that
+                   fills one hole and runs up to a second can cover more than
+                   the recovery window, and the unsigned subtraction wrapped
+                   it to ~2^32 for the rest of the episode; the add-back
+                   below then leaves one segment, RFC 6582 3.2 step 5.  */
+                if (acked_bytes < socket_ptr -> nx_tcp_socket_tx_window_congestion)
+                {
+                    socket_ptr -> nx_tcp_socket_tx_window_congestion -= acked_bytes;
+                }
+                else
+                {
+                    socket_ptr -> nx_tcp_socket_tx_window_congestion = 0;
+                }
                 if (acked_bytes > socket_ptr -> nx_tcp_socket_connect_mss)
                 {
                     socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
