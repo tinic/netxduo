@@ -4746,6 +4746,8 @@ UINT                      source_port;
 ULONG                     source_ip_address;
 UINT                      protocol;
 NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
+TX_INTERRUPT_SAVE_AREA
+UINT                      conflict_flag;
 
     /* Setup the DHCP pointer.  */
     NX_THREAD_EXTENSION_PTR_GET(dhcp_ptr, NX_DHCP, dhcp_instance)
@@ -4824,26 +4826,24 @@ NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
         if (events & NX_DHCP_CLIENT_CONFLICT_EVENT)
         {
 
-            /* Loop to check the interface.  */
+            /* Atomically claim every pending conflict bit: read and clear the flag
+               under TX_DISABLE, matching the writer's TX_DISABLE-guarded set in
+               _nx_dhcp_ip_conflict.  The writer runs on the SANA2 RX thread at a
+               higher priority than this DHCP thread, so an unguarded read-then-clear
+               here could be preempted between the load and the store and lose a bit
+               it had just claimed.  Declining sends a DHCPDECLINE and must run after
+               the bits are consumed, outside the critical section. */
+            TX_DISABLE
+            conflict_flag = dhcp_ptr -> nx_dhcp_interface_conflict_flag;
+            dhcp_ptr -> nx_dhcp_interface_conflict_flag = 0;
+            TX_RESTORE
+
+            /* Decline each interface whose conflict was claimed above.  */
             for (iface_index = 0; iface_index < NX_MAX_PHYSICAL_INTERFACES; iface_index++)
             {
-
-                /* Check the flag.  */
-                if (dhcp_ptr -> nx_dhcp_interface_conflict_flag == 0)
+                if (conflict_flag & ((UINT)(1 << iface_index)))
                 {
-                    break;
-                }
-
-                /* Check if IP address conflict for this interface.  */
-                if (dhcp_ptr -> nx_dhcp_interface_conflict_flag & ((UINT)(1 << iface_index)))
-                {
-
-                    /* Handle notice of address conflict event. Let the server know we
-                       did not get assigned a unique IP address. */
                     _nx_dhcp_interface_decline(dhcp_ptr, iface_index);
-
-                    /* Clear the flag.  */
-                    dhcp_ptr -> nx_dhcp_interface_conflict_flag &= (UINT)(~(1 << iface_index));
                 }
             }
         }
