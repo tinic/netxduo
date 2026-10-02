@@ -275,6 +275,21 @@ NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
     }
 #endif
 
+#ifdef NX_ENABLE_MLD
+    /* AmiNetXDuo: drop this interface's MLD listener entries, with no Done:
+       the link is going, as with nx_ipv6_multicast_entry above.  The table is
+       keyed on the interface pointer, which a re-attach into this slot gets
+       back, so a stale entry would turn its first join into a silent
+       duplicate and an entry never re-joined would hold its slot forever.  */
+    for (i = 0; i < NX_MLD_MAX_GROUPS; i++)
+    {
+        if (ip_ptr -> nx_ip_mld_groups[i].nx_mld_group_interface == interface_ptr)
+        {
+            memset(&(ip_ptr -> nx_ip_mld_groups[i]), 0, sizeof(NX_MLD_GROUP));
+        }
+    }
+#endif /* NX_ENABLE_MLD */
+
     /* Detach the interface. */
     /* First detach the interface from the device. */
     driver_request.nx_ip_driver_ptr         = ip_ptr;
