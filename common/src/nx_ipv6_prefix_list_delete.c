@@ -89,8 +89,11 @@ NX_IPV6_PREFIX_ENTRY *current;
     {
 
         /* If prefix length matches, and the prefix addresses also match...*/
+        /* AmiNetXDuo: prefix bits only, as the add path's dedupe compares;
+           the stored entry is masked.  Entry lengths are at most 128.  */
         if ((current -> nx_ipv6_prefix_entry_prefix_length == (ULONG)prefix_length) &&
-            CHECK_IPV6_ADDRESSES_SAME(prefix, current -> nx_ipv6_prefix_entry_network_address))
+            CHECK_IP_ADDRESSES_BY_PREFIX(prefix, current -> nx_ipv6_prefix_entry_network_address,
+                                         (ULONG)prefix_length))
         {
 
             /* Delete this entry. */
