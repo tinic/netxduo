@@ -150,8 +150,8 @@ ULONG             obsoleted_address[4];
             _nx_tcp_syncache_interface_flush(ip_ptr, NX_NULL, ipv6_address);
 
             /* AmiNetXDuo: and reset every connection using it, as
-               _nx_ip_interface_detach does for an interface.  A socket keeps
-               the address as a pointer (nx_tcp_socket_ipv6_addr), and its
+               _nx_ip_interface_detach does for an interface.  An IPv6 socket
+               keeps the address as a pointer (nx_tcp_socket_ipv6_addr), and its
                next ACK, FIN, RST or retransmission would reach the memset
                entry below: no interface, and NX_ASSERT in
                _nx_ipv6_packet_send sleeps forever holding this mutex.  The
@@ -172,7 +172,10 @@ ULONG             obsoleted_address[4];
             {
                 next_socket_ptr = socket_ptr -> nx_tcp_socket_created_next;
 
-                if ((socket_ptr -> nx_tcp_socket_ipv6_addr == ipv6_address) &&
+                /* The pointer is not cleared when a connection ends, so a
+                   socket now connected over IPv4 can still hold it.  */
+                if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
+                    (socket_ptr -> nx_tcp_socket_ipv6_addr == ipv6_address) &&
                     (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSED) &&
                     (socket_ptr -> nx_tcp_socket_state != NX_TCP_LISTEN_STATE))
                 {
