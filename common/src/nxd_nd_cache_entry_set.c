@@ -76,16 +76,61 @@ UINT _nxd_nd_cache_entry_set(NX_IP *ip_ptr, ULONG *dest_ip, UINT interface_index
 {
 #ifdef FEATURE_NX_IPV6
 
-ND_CACHE_ENTRY *nd_cache_entry;
-UINT            status;
+ND_CACHE_ENTRY   *nd_cache_entry;
+NX_INTERFACE     *interface_ptr;
+NXD_IPV6_ADDRESS *iface_address;
+UINT              status;
+UINT              i;
 
 
     /* If trace is enabled, insert this event into the trace buffer. */
     NX_TRACE_IN_LINE_INSERT(NXD_TRACE_ND_CACHE_ENTRY_SET, dest_ip[3], ((mac[0] << 16) | mac[1]), ((mac[2] << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5]),
                             0, NX_TRACE_ARP_EVENTS, 0, 0);
 
+    /* Obtain the protection. */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+    /* Validate the interface index before indexing the interface table. */
+    if (interface_index >= NX_MAX_IP_INTERFACES)
+    {
+
+        /* Release the protection, and return the error status. */
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+        return(NX_INVALID_INTERFACE);
+    }
+
+    interface_ptr = &(ip_ptr -> nx_ip_interface[interface_index]);
+
+    /* Locate an IPv6 address attached to the requested interface to use as the
+       entry's outgoing source address. */
+    iface_address = NX_NULL;
+    for (i = 0; i < (UINT)(NX_MAX_IPV6_ADDRESSES + NX_LOOPBACK_IPV6_ENABLED); i++)
+    {
+
+        if (ip_ptr -> nx_ipv6_address[i].nxd_ipv6_address_attached == interface_ptr)
+        {
+            iface_address = &(ip_ptr -> nx_ipv6_address[i]);
+            break;
+        }
+    }
+
+    /* Refuse when the interface has no configured IPv6 address: the ND entry
+       cannot carry a valid interface/source address without one. */
+    if (iface_address == NX_NULL)
+    {
+
+        /* Release the protection, and return the error status. */
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+        return(NX_NO_INTERFACE_ADDRESS);
+    }
+
     /* Call the actual cache entry add service. */
-    status = _nx_nd_cache_add(ip_ptr, dest_ip, ip_ptr -> nx_ipv6_address[interface_index].nxd_ipv6_address_attached, mac, 1, ND_CACHE_STATE_REACHABLE, &(ip_ptr -> nx_ipv6_address[interface_index]), &nd_cache_entry);
+    status = _nx_nd_cache_add(ip_ptr, dest_ip, interface_ptr, mac, 1, ND_CACHE_STATE_REACHABLE, iface_address, &nd_cache_entry);
+
+    /* Release the protection. */
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     return(status);
 
