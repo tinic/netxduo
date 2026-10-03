@@ -13,10 +13,14 @@
 The root's original private key is not in the tree, so the root is reissued on
 the key in certificates/nx_secure_test_ca.key (created if absent) with the same
 subject and serial, and every certificate it issued is re-signed by it with the
-same subject, serial, public key and extensions, except:
+same subject, serial, public key, extensions and notBefore, except:
   - the authority key identifier, recomputed for the new root key;
   - an issuer among them (it issues other certificates in the tree) gets
-    basicConstraints critical CA:TRUE, as RFC 5280 6.1.4 (k) requires.
+    basicConstraints critical CA:TRUE, as RFC 5280 6.1.4 (k) requires;
+  - notAfter, twenty years after notBefore.
+notBefore is kept because tests pin the clock (2017, 2018) and verify these
+certificates against it.  Run it on the tree before the renewal; with the
+committed root key the output is the same on every run.
 Every C byte array in the test tree whose bytes equal an old certificate is
 rewritten with the new one, with its _len.  Certificates further down (issued
 by such an intermediate) are unchanged: the intermediate keeps its key.
@@ -123,11 +127,11 @@ def main():
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         open(KEY_FILE, 'wb').write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                                      serialization.NoEncryption()))
-    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
     ski_new = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
     root_builder = (x509.CertificateBuilder().subject_name(old_root.subject).issuer_name(old_root.subject)
                     .public_key(key.public_key()).serial_number(old_root.serial_number)
-                    .not_valid_before(now).not_valid_after(now + VALIDITY))
+                    .not_valid_before(old_root.not_valid_before_utc)
+                    .not_valid_after(old_root.not_valid_before_utc + VALIDITY))
     # The old root's own extensions, in its order, with the new key's identifiers.
     for e in old_root.extensions:
         if e.oid == ExtensionOID.SUBJECT_KEY_IDENTIFIER:
@@ -143,7 +147,7 @@ def main():
         is_issuer = any(o[0][2].issuer == c.subject for o in found.values() if o[0][2].subject != c.subject)
         b = (x509.CertificateBuilder().subject_name(c.subject).issuer_name(root.subject)
              .public_key(c.public_key()).serial_number(c.serial_number)
-             .not_valid_before(now).not_valid_after(now + VALIDITY))
+             .not_valid_before(c.not_valid_before_utc).not_valid_after(c.not_valid_before_utc + VALIDITY))
         for e in c.extensions:
             if e.oid == ExtensionOID.AUTHORITY_KEY_IDENTIFIER:
                 b = b.add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ski_new), critical=False)
