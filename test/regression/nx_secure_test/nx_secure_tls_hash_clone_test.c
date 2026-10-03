@@ -67,7 +67,10 @@ static UCHAR client_recv_buffer[LARGE_SEND_SIZE];
 
 /* Test PKI (3-level). */
 #include "test_ca_cert.c"
-#include "tls_two_test_certs.c"
+/* tls_two_test_certs.c and test_ca.crl.der.c reissued for this test: the
+   server presents certificate_with_policies, which a TLS client accepts only
+   with serverAuth (RFC 5280 4.2.1.12).  See make_hash_clone_test_certs.py.  */
+#include "nx_secure_tls_hash_clone_test_certs.c"
 #define ca_cert_der test_ca_cert_der
 #define ca_cert_der_len test_ca_cert_der_len
 
@@ -412,8 +415,6 @@ UINT       status;
 }
 
 /*  Define callbacks used by TLS.  */
-/* Include CRL associated with Verisign root CA (for AWS) for demo purposes. */
-#include "test_ca.crl.der.c"
 
 
 /* Timestamp function - should return Unix time formatted 32-bit integer. */
