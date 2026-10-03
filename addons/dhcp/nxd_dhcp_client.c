@@ -4746,8 +4746,10 @@ UINT                      source_port;
 ULONG                     source_ip_address;
 UINT                      protocol;
 NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
+#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
 TX_INTERRUPT_SAVE_AREA
 UINT                      conflict_flag;
+#endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE  */
 
     /* Setup the DHCP pointer.  */
     NX_THREAD_EXTENSION_PTR_GET(dhcp_ptr, NX_DHCP, dhcp_instance)
