@@ -235,17 +235,18 @@ VOID                 *handler = NX_CRYPTO_NULL;
     status = _nx_crypto_ecdsa_verify((NX_CRYPTO_EC *)&_nx_crypto_ec_secp521r1, NX_CRYPTO_NULL, 0, NX_CRYPTO_NULL, 0, signature, 0, NX_CRYPTO_NULL);
     EXPECT_EQ(NX_CRYPTO_AUTHENTICATION_FAILED, status);
 
-    /* signature[1] == 0x80 && signature_length < signature[2] + 3. */
+    /* Long-form length (0x81) && signature_length < signature[2] + 3.  The
+       length is 3 so the two-byte minimum ahead of the SEQUENCE check passes. */
     signature[0] = 0x30;
-    signature[1] = 0x80;
-    signature[2] = 0;
-    status = _nx_crypto_ecdsa_verify((NX_CRYPTO_EC *)&_nx_crypto_ec_secp521r1, NX_CRYPTO_NULL, 0, NX_CRYPTO_NULL, 0, signature, 0, NX_CRYPTO_NULL);
+    signature[1] = 0x81;
+    signature[2] = 0x80;
+    status = _nx_crypto_ecdsa_verify((NX_CRYPTO_EC *)&_nx_crypto_ec_secp521r1, NX_CRYPTO_NULL, 0, NX_CRYPTO_NULL, 0, signature, 3, NX_CRYPTO_NULL);
     EXPECT_EQ(NX_CRYPTO_SIZE_ERROR, status);
 
-    /* signature[1] != 0x80 && signature_length < signature[1] + 2. */
+    /* Short-form length && signature_length < signature[1] + 2. */
     signature[0] = 0x30;
-    signature[1] = 0;
-    status = _nx_crypto_ecdsa_verify((NX_CRYPTO_EC *)&_nx_crypto_ec_secp521r1, NX_CRYPTO_NULL, 0, NX_CRYPTO_NULL, 0, signature, 0, NX_CRYPTO_NULL);
+    signature[1] = 1;
+    status = _nx_crypto_ecdsa_verify((NX_CRYPTO_EC *)&_nx_crypto_ec_secp521r1, NX_CRYPTO_NULL, 0, NX_CRYPTO_NULL, 0, signature, 2, NX_CRYPTO_NULL);
     EXPECT_EQ(NX_CRYPTO_SIZE_ERROR, status);
 
 /* For NX_CRYPTO_STATE_CHECK. */
