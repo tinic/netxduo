@@ -95,6 +95,32 @@ renew_signed_certificate()
     write_certificate "$TEMPORARY_DIRECTORY/$certificate_name.crt" "$certificate"
 }
 
+renew_intermediate_ca_certificate()
+{
+    local certificate=$1
+    local private_key=$2
+    local issuer_certificate=$3
+    local issuer_private_key=$4
+    local certificate_name
+    local serial
+
+    certificate_name=$(basename "$certificate" .crt)
+    serial=$(certificate_serial "$certificate")
+    "$OPENSSL_COMMAND" x509 -x509toreq -in "$certificate" \
+        -signkey "$private_key" -out "$TEMPORARY_DIRECTORY/$certificate_name.csr"
+    printf '%s\n' 'basicConstraints=critical,CA:TRUE' \
+        'keyUsage=critical,digitalSignature,keyCertSign,cRLSign' \
+        'subjectKeyIdentifier=hash' 'authorityKeyIdentifier=keyid,issuer' \
+        > "$TEMPORARY_DIRECTORY/$certificate_name.ext"
+    "$OPENSSL_COMMAND" x509 -req \
+        -in "$TEMPORARY_DIRECTORY/$certificate_name.csr" \
+        -CA "$issuer_certificate" -CAkey "$issuer_private_key" \
+        -set_serial "0x$serial" -days "$VALIDITY_DAYS" \
+        -extfile "$TEMPORARY_DIRECTORY/$certificate_name.ext" -sha256 \
+        -out "$TEMPORARY_DIRECTORY/$certificate_name.crt"
+    write_certificate "$TEMPORARY_DIRECTORY/$certificate_name.crt" "$certificate"
+}
+
 create_ca_certificate()
 {
     local old_certificate=$1
@@ -239,14 +265,8 @@ certificate_to_der()
 }
 
 ECC_DIRECTORY="$SCRIPT_DIR/ecc_certificates"
-if certificate_key_matches "$ECC_DIRECTORY/ECCA.crt" "$ECC_DIRECTORY/ECCA.key"; then
-    renew_self_signed_certificate "$ECC_DIRECTORY/ECCA.crt" "$ECC_DIRECTORY/ECCA.key"
-else
-    create_version_one_ca_certificate "$ECC_DIRECTORY/ECCA.crt" \
-        "$ECC_DIRECTORY/ECCA.key"
-fi
-for ca_name in ECCA2 ECCA3 ECCA4; do
-    renew_self_signed_certificate "$ECC_DIRECTORY/$ca_name.crt" \
+for ca_name in ECCA ECCA2 ECCA3 ECCA4; do
+    create_ca_certificate "$ECC_DIRECTORY/$ca_name.crt" \
         "$ECC_DIRECTORY/$ca_name.key"
 done
 
@@ -256,8 +276,10 @@ renew_signed_certificate "$ECC_DIRECTORY/ECTestServer2.crt" "$ECC_DIRECTORY/ECTe
     "$ECC_DIRECTORY/ECCA2.crt" "$ECC_DIRECTORY/ECCA2.key"
 renew_signed_certificate "$ECC_DIRECTORY/ECTestServer3.crt" "$ECC_DIRECTORY/ECTestServer3.key" \
     "$ECC_DIRECTORY/ECCA3.crt" "$ECC_DIRECTORY/ECCA3.key"
+renew_intermediate_ca_certificate "$ECC_DIRECTORY/ECIntm.crt" "$ECC_DIRECTORY/ECIntm.key" \
+    "$ECC_DIRECTORY/ECCA4.crt" "$ECC_DIRECTORY/ECCA4.key"
 for certificate_name in ECTestServer4 ECTestServer6 ECTestServer7_256 \
-    ECRevoked ECIntm ECTestClient1; do
+    ECRevoked ECTestClient1; do
     renew_signed_certificate "$ECC_DIRECTORY/$certificate_name.crt" \
         "$ECC_DIRECTORY/$certificate_name.key" "$ECC_DIRECTORY/ECCA4.crt" \
         "$ECC_DIRECTORY/ECCA4.key"
@@ -294,6 +316,7 @@ for certificate_name in broker.server ew2017.client; do
 done
 
 EMBEDDED_ECC="$SCRIPT_DIR/../nx_secure_test/ecc_certs.c"
+EMBEDDED_WEB_ECC="$SCRIPT_DIR/../web_test/ecc_certs.c"
 for mapping in \
     ECCA:ECCA_der ECCA:ECCArsa_der ECCA2:ECCA2_der ECCA3:ECCA3_der \
     ECCA4:ECCA4_der ECTest:ECTest_der ECTest:ecdhcert_der \
@@ -310,8 +333,11 @@ for mapping in \
         "$TEMPORARY_DIRECTORY/$variable.der"
     replace_c_array "$TEMPORARY_DIRECTORY/$variable.der" "$variable" \
         "$EMBEDDED_ECC" static 12
+    replace_c_array "$TEMPORARY_DIRECTORY/$variable.der" "$variable" \
+        "$EMBEDDED_WEB_ECC" static 12
 done
 replace_c_array "$ECC_DIRECTORY/ECIntm.crl" ECIntm_crl "$EMBEDDED_ECC" static 12
+replace_c_array "$ECC_DIRECTORY/ECIntm.crl" ECIntm_crl "$EMBEDDED_WEB_ECC" static 12
 
 certificate_to_der "$SCRIPT_DIR/nx_secure_test/cert.pem" \
     "$TEMPORARY_DIRECTORY/cert_der.der"
