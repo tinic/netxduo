@@ -48,9 +48,58 @@ extern TAHI_TEST_SEQ tahi_04_010[];
 extern int tahi_04_010_size;
 
 static TAHI_TEST_SUITE test_suite[1];
+
+/* The sequence as RFC 8201 Section 4 has it (2fffd6f4).  The capture's
+   Packet Too Big reports an MTU of 1279, below the IPv6 minimum link MTU, and
+   expects the next Echo Reply in two fragments sized for 1280 (RFC 2460
+   Section 5).  RFC 8201 has that report discarded and the path MTU left
+   alone, so the reply to the second Echo Request (the same bytes as the
+   first) is the first's reply, unfragmented.  The CHECKs for the fragments
+   (next header 44) become one CHECK for that reply; every other step is the
+   capture's.  A capture of any other shape is run as it is.  */
+static TAHI_TEST_SEQ tahi_rfc8201_seq[32];
+
 static void build_test_suite(void)
 {
+int i;
+int count = 0;
+int reply = -1;
+int replaced = 0;
+
     test_suite[0].test_case = &tahi_04_010[0];test_suite[0].test_case_size = tahi_04_010_size;
+
+    if (tahi_04_010_size > (int)(sizeof(tahi_rfc8201_seq) / sizeof(TAHI_TEST_SEQ)))
+    {
+        return;
+    }
+
+    for (i = 0; i < tahi_04_010_size; i++)
+    {
+        if ((tahi_04_010[i].command == CHECK) && (tahi_04_010[i].pkt_size > 20) &&
+            ((unsigned char)tahi_04_010[i].pkt_data[20] == 44))
+        {
+            if (reply < 0)
+            {
+                return;
+            }
+            if (replaced == 0)
+            {
+                tahi_rfc8201_seq[count++] = tahi_04_010[reply];
+            }
+            replaced++;
+            continue;
+        }
+        if ((tahi_04_010[i].command == CHECK) && (replaced == 0))
+        {
+            reply = i;
+        }
+        tahi_rfc8201_seq[count++] = tahi_04_010[i];
+    }
+
+    if (replaced == 2)
+    {
+        test_suite[0].test_case = &tahi_rfc8201_seq[0];test_suite[0].test_case_size = count;
+    }
 }
 
 
