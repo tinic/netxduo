@@ -9123,6 +9123,7 @@ NXD_ADDRESS         src_address;
         status = nx_udp_socket_source_send(&mdns_ptr -> nx_mdns_socket, response_ptr,
                                            ipv4_header -> nx_ip_header_source_ip, src_port, interface_index);
 #else
+        NX_PARAMETER_NOT_USED(src_port);
         status = NX_MDNS_ERROR;
 #endif /* NX_DISABLE_IPV4  */
     }
