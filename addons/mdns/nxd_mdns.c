@@ -98,9 +98,7 @@ static VOID         _nx_mdns_long_to_network_convert(UCHAR *ptr, ULONG value);
 #ifndef NX_MDNS_DISABLE_SERVER
 static VOID         _nx_mdns_address_change_process(NX_MDNS *mdns_ptr);
 static UINT         _nx_mdns_host_name_register(NX_MDNS *mdns_ptr, UCHAR type, UINT interface_index);
-#ifdef NX_MDNS_ENABLE_IPV6
 static VOID         _nx_mdns_host_address_records_delete(NX_MDNS *mdns_ptr, UINT interface_index);
-#endif /* NX_MDNS_ENABLE_IPV6  */
 static UINT         _nx_mdns_service_interface_delete(NX_MDNS *mdns_ptr, UCHAR *name, UCHAR *type, UCHAR *sub_type, UINT interface_index);
 #if !defined NX_DISABLE_IPV4 || defined NX_MDNS_ENABLE_IPV6
 static UINT         _nx_mdns_rr_a_aaaa_add(NX_MDNS *mdns_ptr, UCHAR *name, ULONG *address, UINT addr_length, UCHAR type, UINT interface_index);
@@ -433,29 +431,6 @@ UINT    host_name_size;
     /* Set the mDNS announcing max time.  */
     mdns_ptr -> nx_mdns_announcing_max_time = (UCHAR)NX_MDNS_ANNOUNCING_MAX_TIME;
 
-    /* Protect callback registration and instance publication from delete.  */
-    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
-
-#ifndef NX_MDNS_DISABLE_SERVER
-
-#ifndef NX_DISABLE_IPV4
-    /* Setup the IP address change callback function. */
-    ip_ptr -> nx_ip_address_change_notify_internal = _nx_mdns_ip_address_change_notify;
-#endif /* NX_DISABLE_IPV4 */
-
-#ifdef NX_MDNS_ENABLE_IPV6
-
-    /* Setup the IPv6 address change callback function. */
-    ip_ptr -> nx_ipv6_address_change_notify_internal =  _nx_mdns_ipv6_address_change_notify;
-#endif /* NX_MDNS_ENABLE_IPV6  */
-#endif /* NX_MDNS_DISABLE_SERVER */
-
-    /* Set the pointer of global variable mDNS.  */
-    _nx_mdns_created_ptr = mdns_ptr;
-
-    /* Release the IP protection.  */
-    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-
     /* Create the Socket and check the status */
     status = nx_udp_socket_create(mdns_ptr -> nx_mdns_ip_ptr, &(mdns_ptr -> nx_mdns_socket), "Multicast DNS",
                                   NX_MDNS_UDP_TYPE_OF_SERVICE, NX_MDNS_UDP_FRAGMENT_OPTION, 
@@ -622,6 +597,9 @@ UINT    host_name_size;
     /* The random delay of first probing for RR. */
     mdns_ptr -> nx_mdns_first_probing_delay = (ULONG)(1 + (((ULONG)NX_RAND()) % NX_MDNS_PROBING_TIMER_COUNT));
 
+    /* Protect callback registration and instance publication from delete.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
 #ifndef NX_MDNS_DISABLE_SERVER
 
 #ifndef NX_DISABLE_IPV4
@@ -638,6 +616,9 @@ UINT    host_name_size;
 
     /* Publish the instance only after every resource is ready.  */
     _nx_mdns_created_ptr = mdns_ptr;
+
+    /* Release the IP protection.  */
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
@@ -1394,7 +1375,6 @@ UINT _nx_mdns_service_notify_clear(NX_MDNS *mdns_ptr)
 
 
 #ifndef NX_MDNS_DISABLE_SERVER
-#ifdef NX_MDNS_ENABLE_IPV6
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -1458,7 +1438,6 @@ NX_MDNS_RR  *p;
         }
     }
 }
-#endif /* NX_MDNS_ENABLE_IPV6  */
 
 
 /**************************************************************************/ 
@@ -1787,20 +1766,10 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     if (status)
     {
 
-#ifndef NX_MDNS_DISABLE_SERVER
-        /* Host registration can add an A record before a later address
-           exhausts the local cache.  Remove those partial records so an
-           already-running interface cannot advertise them.  */
-        _nx_mdns_host_address_records_delete(mdns_ptr, interface_index);
-#endif /* NX_MDNS_DISABLE_SERVER  */
-
-#ifdef NX_MDNS_ENABLE_IPV6
-        /* Undo the IPv6 group membership acquired above.  */
-        nxd_ipv6_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, &NX_MDNS_IPV6_MULTICAST_ADDRESS, interface_index);
-#endif /* NX_MDNS_ENABLE_IPV6  */
-
+#ifndef NX_DISABLE_IPV4
         /* Undo the IPv4 group membership acquired above.  */
         nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_DISABLE_IPV4  */
 
         /* Release the mDNS mutex.  */
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
@@ -1822,6 +1791,21 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     /* Check status.  */
     if (status)
     {
+
+        /* Host registration can add an A record before a later address
+           exhausts the local cache.  Remove those partial records so an
+           already-running interface cannot advertise them.  */
+        _nx_mdns_host_address_records_delete(mdns_ptr, interface_index);
+
+#ifdef NX_MDNS_ENABLE_IPV6
+        /* Undo the IPv6 group membership acquired above.  */
+        nxd_ipv6_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, &NX_MDNS_IPV6_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_MDNS_ENABLE_IPV6  */
+
+#ifndef NX_DISABLE_IPV4
+        /* Undo the IPv4 group membership acquired above.  */
+        nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_DISABLE_IPV4  */
 
         /* Release the mDNS mutex.  */
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
