@@ -311,6 +311,13 @@ UINT       status;
             memcpy(response_data + i, type, 5);
     }
 
+    /* The rewrite above is not covered by the captured UDP checksum, and the
+       receive path verifies it.  Zero means none was computed (RFC 768;
+       this capture is IPv4, header length 20), so the edited answer is
+       delivered instead of dropped as a checksum error.  */
+    response_data[14 + 20 + 6] = 0;
+    response_data[14 + 20 + 7] = 0;
+
     status = nx_packet_allocate(&pool_0, &packet, 16, 100);
     if(status == NX_SUCCESS)
         status = nx_packet_data_append(packet, response_data + 14,
@@ -364,15 +371,18 @@ UINT       status;
     {
         UINT query = 0;
 
+        /* Both questions go in one query packet (RFC 6762 5.3 lets a
+           querier ask several at once, and this one does), so every type
+           present counts.  */
         if(packet_has_type(packet_ptr, "_smtp"))
-            query = 1;
-        else if(packet_has_type(packet_ptr, "_xmpp"))
-            query = 2;
+            query |= 1;
+        if(packet_has_type(packet_ptr, "_xmpp"))
+            query |= 2;
 
         if(query != 0)
         {
             if(concurrent_query_first == 0)
-                concurrent_query_first = query;
+                concurrent_query_first = (query & 1) ? 1 : 2;
             concurrent_query_seen |= query;
 
             if((concurrent_query_seen == 3) && !concurrent_query_replied)
