@@ -596,11 +596,15 @@ UINT                   bucket;
     }
 
     bucket = _nx_tcp_syncache_bucket(entry -> nx_tcp_syncache_peer_ip.nxd_ip_version,
-#ifdef FEATURE_NX_IPV6
+#if defined(FEATURE_NX_IPV6) && !defined(NX_DISABLE_IPV4)
                                      (entry -> nx_tcp_syncache_peer_ip.nxd_ip_version == NX_IP_VERSION_V6) ?
                                      &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v6[0]) :
-#endif /* FEATURE_NX_IPV6 */
                                      &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v4),
+#elif defined(FEATURE_NX_IPV6)
+                                     &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v6[0]),
+#else
+                                     &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v4),
+#endif /* FEATURE_NX_IPV6 && !NX_DISABLE_IPV4 */
                                      entry -> nx_tcp_syncache_local_port,
                                      entry -> nx_tcp_syncache_peer_port);
 
