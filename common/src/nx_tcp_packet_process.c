@@ -498,6 +498,12 @@ ULONG                        timestamp_echo = 0;
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
                     }
 
+                    /* A connection waiting for accept keeps what arrives until then.  */
+                    if (_nx_tcp_syncache_hold(socket_ptr, packet_ptr) == NX_TRUE)
+                    {
+                        return;
+                    }
+
                     /* Process the packet within an existing TCP connection.  */
                     _nx_tcp_socket_packet_process(socket_ptr, packet_ptr);
 

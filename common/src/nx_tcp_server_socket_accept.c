@@ -95,6 +95,18 @@ NX_IP *ip_ptr;
         return(NX_SUCCESS);
     }
 
+    /* A connection the SYN cache finished for this socket before this call
+       is completed here rather than answered with a SYN-ACK below.  */
+    if (_nx_tcp_syncache_accept(socket_ptr) == NX_TRUE)
+    {
+
+        /* Release the IP protection.  */
+        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+        /* What the peer sent while it waited can have ended it.  */
+        return((socket_ptr -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED) ? NX_SUCCESS : NX_NOT_CONNECTED);
+    }
+
     /* Determine if the socket is still in the listen state or has sent a SYN packet out already
        from a previous accept() call on this socket.  */
     if ((socket_ptr -> nx_tcp_socket_state != NX_TCP_LISTEN_STATE) && (socket_ptr -> nx_tcp_socket_state != NX_TCP_SYN_RECEIVED))

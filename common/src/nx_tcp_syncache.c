@@ -1869,8 +1869,36 @@ static UINT  _nx_tcp_syncache_socket_ready(NX_TCP_SOCKET *socket_ptr)
 }
 
 
-/* Hand a finished handshake to the socket a listen request is holding, and
-   drive it to ESTABLISHED with the ACK that finished it.  */
+/* Drive a handed-over socket to ESTABLISHED with the ACK that finished its
+   handshake, rebuilt from the socket: what the state machine reads out of it
+   is the acknowledgment number, which the cache has checked, and the window,
+   which hand_over keeps raw in nx_tcp_socket_tx_window_advertised.  */
+static VOID  _nx_tcp_syncache_establish(NX_TCP_SOCKET *socket_ptr)
+{
+
+NX_TCP_HEADER synthetic;
+
+
+    memset((VOID *)&synthetic, 0, sizeof(NX_TCP_HEADER));
+    synthetic.nx_tcp_header_word_3 =
+        NX_TCP_ACK_BIT | (socket_ptr -> nx_tcp_socket_tx_window_advertised & NX_LOWER_16_MASK);
+    synthetic.nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_tx_sequence;
+    synthetic.nx_tcp_sequence_number = socket_ptr -> nx_tcp_socket_rx_sequence;
+
+    _nx_tcp_socket_state_syn_received(socket_ptr, &synthetic);
+}
+
+
+/* Hand a finished handshake to the socket a listen request is holding.
+
+   A socket accept has already been called on (SYN_RECEIVED) is driven to
+   ESTABLISHED with the ACK that finished the handshake, which wakes the
+   accept.  One it has not is left where an upstream passive open leaves a
+   socket a SYN arrived for before accept: bound, in LISTEN, with the peer's
+   address and port.  Servers that find a new connection by that state (FTP,
+   Telnet, RTSP) depend on it.  What the peer sends meanwhile is held on the
+   socket (_nx_tcp_syncache_hold), and nx_tcp_server_socket_accept() connects
+   it (_nx_tcp_syncache_accept).  */
 static VOID  _nx_tcp_syncache_hand_over(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                                         NX_TCP_SOCKET *socket_ptr,
                                         NX_TCP_SYNCACHE_ENTRY *entry,
@@ -1878,7 +1906,7 @@ static VOID  _nx_tcp_syncache_hand_over(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr
 {
 
 VOID (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT port);
-NX_TCP_HEADER synthetic;
+UINT  accept_called;
 
 
     /* The application has to call relisten with a new socket for the next
@@ -1888,25 +1916,31 @@ NX_TCP_HEADER synthetic;
         listen_ptr -> nx_tcp_listen_socket_ptr = NX_NULL;
     }
 
+    accept_called = (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_RECEIVED) ? NX_TRUE : NX_FALSE;
+
     _nx_tcp_syncache_setup_socket(ip_ptr, socket_ptr, entry);
 
-    if (tcp_header_ptr == NX_NULL)
-    {
-
-        /* Handed over by relisten rather than by the ACK's arrival, so the
-           ACK is long gone.  What the state machine reads out of it is the
-           acknowledgment number and the window, and both are recorded.  */
-        memset((VOID *)&synthetic, 0, sizeof(NX_TCP_HEADER));
-        synthetic.nx_tcp_header_word_3 =
-            NX_TCP_ACK_BIT | (entry -> nx_tcp_syncache_peer_window & NX_LOWER_16_MASK);
-        synthetic.nx_tcp_acknowledgment_number = entry -> nx_tcp_syncache_iss + 1;
-        synthetic.nx_tcp_sequence_number = entry -> nx_tcp_syncache_irs + 1;
-        tcp_header_ptr = &synthetic;
-    }
+    /* The window of the last segment from the peer, as it was on the wire;
+       the state machine scales it.  */
+    socket_ptr -> nx_tcp_socket_tx_window_advertised = entry -> nx_tcp_syncache_peer_window & NX_LOWER_16_MASK;
 
     listen_callback = listen_ptr -> nx_tcp_listen_callback;
 
-    _nx_tcp_socket_state_syn_received(socket_ptr, tcp_header_ptr);
+    if (accept_called == NX_TRUE)
+    {
+        if (tcp_header_ptr)
+        {
+            _nx_tcp_socket_state_syn_received(socket_ptr, tcp_header_ptr);
+        }
+        else
+        {
+            _nx_tcp_syncache_establish(socket_ptr);
+        }
+    }
+    else
+    {
+        socket_ptr -> nx_tcp_socket_state = NX_TCP_LISTEN_STATE;
+    }
 
     ip_ptr -> nx_ip_tcp_syncache.nx_tcp_syncache_completed++;
 
@@ -1922,6 +1956,211 @@ NX_TCP_HEADER synthetic;
     {
         (listen_callback)(socket_ptr, listen_ptr -> nx_tcp_listen_port);
     }
+}
+
+
+/* A socket hand_over left waiting for accept: a server socket, bound, in
+   LISTEN, with a peer.  Nothing else leaves one so -- a reset clears the
+   peer (_nx_tcp_socket_block_cleanup) -- so the state is its own record.  */
+static UINT  _nx_tcp_syncache_awaiting_accept(NX_TCP_SOCKET *socket_ptr)
+{
+
+    return(((socket_ptr -> nx_tcp_socket_state == NX_TCP_LISTEN_STATE) &&
+            (socket_ptr -> nx_tcp_socket_client_type == NX_FALSE) &&
+            (socket_ptr -> nx_tcp_socket_bound_next != NX_NULL) &&
+            (socket_ptr -> nx_tcp_socket_connect_port != 0)) ? NX_TRUE : NX_FALSE);
+}
+
+
+/* How many segments a connection waiting for accept may have kept.  Nothing
+   is acknowledged while it waits, so a sender keeping to its congestion
+   control cannot have sent more than its initial window, which RFC 6928 caps
+   at ten segments.  */
+#define NX_TCP_SYNCACHE_HOLD_SEGMENTS           10
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_syncache_hold                               PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    A segment for a connection waiting for accept.  What the peer sends */
+/*    in order is kept on the socket's receive queue, unacknowledged, and */
+/*    processed when accept is called: data and a FIN that acknowledge    */
+/*    the SYN-ACK and start where what is kept ends, and a RST on the     */
+/*    sequence number expected next.  Nothing is answered, so the peer    */
+/*    sees a slow receiver and not a window that shrank.  What is kept is */
+/*    bounded twice, by the window the SYN-ACK offered and by             */
+/*    NX_TCP_SYNCACHE_HOLD_SEGMENTS.  Everything else is dropped: a bare  */
+/*    acknowledgment needs nothing, a retransmission is already kept, and */
+/*    the rest the state machine would have refused.  Caller holds the IP */
+/*    mutex.                                                              */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    NX_TRUE   the packet was taken                                      */
+/*    NX_FALSE  the socket is not waiting for accept                      */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_packet_process                                              */
+/*                                                                        */
+/**************************************************************************/
+UINT  _nx_tcp_syncache_hold(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr)
+{
+
+NX_TCP_HEADER *tcp_header_ptr;
+NX_TCP_HEADER *queued_header_ptr;
+NX_PACKET     *queued_ptr;
+ULONG          header_length;
+ULONG          data_length;
+ULONG          held;
+ULONG          count;
+UINT           valid;
+
+
+    if (_nx_tcp_syncache_awaiting_accept(socket_ptr) != NX_TRUE)
+    {
+        return(NX_FALSE);
+    }
+
+    /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+    tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+    header_length = (tcp_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+    data_length = (packet_ptr -> nx_packet_length > header_length) ? (packet_ptr -> nx_packet_length - header_length) : 0;
+
+    /* What is kept already: its data, and whether it ends in a FIN or a RST,
+       after which nothing more is.  */
+    held = 0;
+    valid = NX_TRUE;
+    queued_ptr = socket_ptr -> nx_tcp_socket_receive_queue_head;
+    for (count = socket_ptr -> nx_tcp_socket_receive_queue_count; count; count--)
+    {
+        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+        queued_header_ptr = (NX_TCP_HEADER *)queued_ptr -> nx_packet_prepend_ptr;
+        header_length = (queued_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+        if (queued_ptr -> nx_packet_length > header_length)
+        {
+            held += queued_ptr -> nx_packet_length - header_length;
+        }
+        if (queued_header_ptr -> nx_tcp_header_word_3 & (NX_TCP_FIN_BIT | NX_TCP_RST_BIT))
+        {
+            valid = NX_FALSE;
+        }
+        queued_ptr = queued_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+    }
+
+    if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)
+    {
+
+        /* RFC 5961 section 3: only RCV.NXT, which nothing kept has moved.  */
+        if (tcp_header_ptr -> nx_tcp_sequence_number != socket_ptr -> nx_tcp_socket_rx_sequence)
+        {
+            valid = NX_FALSE;
+        }
+    }
+    else if (((tcp_header_ptr -> nx_tcp_header_word_3 & (NX_TCP_ACK_BIT | NX_TCP_SYN_BIT)) != NX_TCP_ACK_BIT) ||
+             (tcp_header_ptr -> nx_tcp_acknowledgment_number != socket_ptr -> nx_tcp_socket_tx_sequence) ||
+             (tcp_header_ptr -> nx_tcp_sequence_number != NX_TCP_SYNCACHE_U32(socket_ptr -> nx_tcp_socket_rx_sequence + held)) ||
+             ((data_length == 0) && ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT) == 0)) ||
+             ((held + data_length) > socket_ptr -> nx_tcp_socket_rx_window_current))
+    {
+        valid = NX_FALSE;
+    }
+
+    if ((valid != NX_TRUE) ||
+        (socket_ptr -> nx_tcp_socket_receive_queue_count >= NX_TCP_SYNCACHE_HOLD_SEGMENTS))
+    {
+        _nx_packet_release(packet_ptr);
+        return(NX_TRUE);
+    }
+
+    if (socket_ptr -> nx_tcp_socket_receive_queue_count)
+    {
+        (socket_ptr -> nx_tcp_socket_receive_queue_tail) -> nx_packet_union_next.nx_packet_tcp_queue_next = packet_ptr;
+    }
+    else
+    {
+        socket_ptr -> nx_tcp_socket_receive_queue_head = packet_ptr;
+    }
+    socket_ptr -> nx_tcp_socket_receive_queue_tail = packet_ptr;
+    socket_ptr -> nx_tcp_socket_receive_queue_count++;
+
+    /*lint -e{923} suppress cast of ULONG to pointer.  */
+    packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next = (NX_PACKET *)NX_PACKET_ENQUEUED;
+
+    return(NX_TRUE);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_syncache_accept                             PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    accept() on a socket waiting for it: the SYN-ACK that upstream's    */
+/*    accept sends here went out from the cache already, so the           */
+/*    connection is completed instead, the window the peer may have been  */
+/*    held at is opened, and what the peer sent while it waited is        */
+/*    processed.  Caller holds the IP mutex.                              */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    NX_TRUE   the socket was waiting for accept; its state says how     */
+/*              the connection went                                       */
+/*    NX_FALSE  it was not, nothing changed                               */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_server_socket_accept                                        */
+/*                                                                        */
+/**************************************************************************/
+UINT  _nx_tcp_syncache_accept(NX_TCP_SOCKET *socket_ptr)
+{
+
+NX_PACKET *packet_ptr;
+NX_PACKET *next_ptr;
+ULONG      count;
+
+
+    if (_nx_tcp_syncache_awaiting_accept(socket_ptr) != NX_TRUE)
+    {
+        return(NX_FALSE);
+    }
+
+    packet_ptr = socket_ptr -> nx_tcp_socket_receive_queue_head;
+    count = socket_ptr -> nx_tcp_socket_receive_queue_count;
+    socket_ptr -> nx_tcp_socket_receive_queue_head = NX_NULL;
+    socket_ptr -> nx_tcp_socket_receive_queue_tail = NX_NULL;
+    socket_ptr -> nx_tcp_socket_receive_queue_count = 0;
+
+    socket_ptr -> nx_tcp_socket_state = NX_TCP_SYN_RECEIVED;
+    _nx_tcp_syncache_establish(socket_ptr);
+
+    /* The peer may have been told a window of zero before a socket took the
+       connection (_nx_tcp_syncache_send_window_zero).  Open it.  If this
+       update is lost the peer's next persist probe reaches the socket, which
+       answers it with the same window.  */
+    _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+
+    while (count--)
+    {
+        next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+
+        /*lint -e{923} suppress cast of ULONG to pointer.  */
+        packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next = (NX_PACKET *)NX_PACKET_ALLOCATED;
+
+        _nx_tcp_socket_packet_process(socket_ptr, packet_ptr);
+        packet_ptr = next_ptr;
+    }
+
+    return(NX_TRUE);
 }
 
 
@@ -2249,7 +2488,8 @@ UINT                   answered;
 /*    Give the oldest finished handshake for this port to a socket the     */
 /*    application has just supplied.  This is what makes a connection that */
 /*    completed while the listen request had no socket reach the           */
-/*    application at all.                                                 */
+/*    application at all.  The socket waits for accept, as a socket an    */
+/*    upstream relisten gives a queued SYN does.                          */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -2290,20 +2530,15 @@ NX_TCP_SYNCACHE_ENTRY  taken;
         return(NX_FALSE);
     }
 
-    /* The socket has to be on the port before the state machine runs, and
-       putting it there frees the entry, so take a copy first.  */
+    /* Putting the socket on the port frees the entry, so take a copy first.  */
     taken = *entry;
     _nx_tcp_syncache_release(ip_ptr, entry);
 
-    /* The listen request's own slot is what hand_over clears; relisten has
-       not filled it in with this socket yet.  */
+    /* relisten takes a socket in CLOSED, so it waits for accept, as an
+       upstream relisten leaves a socket it gives a queued SYN.  The listen
+       request's own slot is what hand_over clears; relisten has not filled it
+       in with this socket yet.  */
     _nx_tcp_syncache_hand_over(ip_ptr, listen_ptr, socket_ptr, &taken, NX_NULL);
-
-    /* The peer may have been told a window of zero while it waited
-       (_nx_tcp_syncache_send_window_zero).  Open it.  If this update is lost
-       the peer's next persist probe reaches the socket, which answers it with
-       the same window.  */
-    _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
 
     return(NX_TRUE);
 }

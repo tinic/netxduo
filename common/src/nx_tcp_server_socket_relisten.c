@@ -189,7 +189,7 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
                     /* Connection pending, which is also a success: the socket
-                       is connected and the next accept returns at once.  */
+                       has the connection, and the next accept connects it.  */
                     return(NX_CONNECTION_PENDING);
                 }
 

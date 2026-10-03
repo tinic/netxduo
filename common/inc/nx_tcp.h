@@ -542,6 +542,8 @@ VOID _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, NX_TCP_HEADER *tcp_header_pt
                                      UINT local_port, UINT source_port);
 UINT _nx_tcp_syncache_deliver(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                               NX_TCP_SOCKET *socket_ptr);
+UINT _nx_tcp_syncache_hold(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr);
+UINT _nx_tcp_syncache_accept(NX_TCP_SOCKET *socket_ptr);
 VOID _nx_tcp_syncache_flush(NX_IP *ip_ptr, UINT port);
 VOID _nx_tcp_syncache_interface_flush(NX_IP *ip_ptr, NX_INTERFACE *interface_ptr,
                                       NXD_IPV6_ADDRESS *ipv6_address);
