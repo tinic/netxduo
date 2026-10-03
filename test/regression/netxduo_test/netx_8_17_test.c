@@ -260,6 +260,17 @@ NX_TCP_HEADER   tcp_header_ptr;
     tcp_header_ptr.nx_tcp_acknowledgment_number = client_socket.nx_tcp_socket_rx_sequence;
     tcp_header_ptr.nx_tcp_sequence_number       = client_socket.nx_tcp_socket_tx_sequence + 30;
 
+    /* The RST is built on the server socket, which upstream bound to the
+       connection when the SYN arrived.  Since 6b586f93 the SYN cache answers
+       the SYN and no socket takes the connection until the handshake
+       finishes, which it never does here, so the socket has no addresses:
+       give it the connection's.  */
+    server_socket.nx_tcp_socket_connect_ip.nxd_ip_version = NX_IP_VERSION_V4;
+    server_socket.nx_tcp_socket_connect_ip.nxd_ip_address.v4 = IP_ADDRESS(1, 2, 3, 4);
+    server_socket.nx_tcp_socket_connect_port = client_socket.nx_tcp_socket_port;
+    server_socket.nx_tcp_socket_connect_interface = &ip_1.nx_ip_interface[0];
+    server_socket.nx_tcp_socket_next_hop_address = IP_ADDRESS(1, 2, 3, 4);
+
     /* Send RST.  */
     _nx_tcp_packet_send_rst(&server_socket, &tcp_header_ptr);
 
