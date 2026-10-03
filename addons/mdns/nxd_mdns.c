@@ -5729,17 +5729,27 @@ NX_MDNS_RR  *p;
     /* _services._dns-sd._udp is shared by every local service of one type.
        A caller deleting one reference must not withdraw the record while
        another service still owns it.  Keep this rule in the common deletion
-       path so service-add rollback cannot bypass the reference count. */
+       path so service-add rollback cannot bypass the reference count.
+       The last owner deletes it directly, as the service delete did before
+       this path owned it: a DNS-SD PTR sends no Goodbye, and disable
+       suspends it, so a pending Goodbye would be undone by the next
+       enable and the record would come back. */
     if ((drop_all_owners == NX_FALSE) &&
         !(record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER) &&
         (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
-        (record_rr -> nx_mdns_rr_count != 0) &&
         (!_nx_utility_string_length_check((CHAR *)(record_rr -> nx_mdns_rr_name),
                                           &rr_name_length, NX_MDNS_NAME_MAX)) &&
         (!_nx_mdns_name_match(record_rr -> nx_mdns_rr_name,
                               (UCHAR *)_nx_mdns_dns_sd, rr_name_length)))
     {
-        record_rr -> nx_mdns_rr_count --;
+        if (record_rr -> nx_mdns_rr_count != 0)
+        {
+            record_rr -> nx_mdns_rr_count --;
+        }
+        else
+        {
+            _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, record_rr);
+        }
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
         return(NX_MDNS_SUCCESS);
     }
