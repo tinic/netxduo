@@ -24,10 +24,12 @@
 #include "nx_secure_tls_api.h"
 #include "tls_test_utility.h"
 
+#if !defined(NX_SECURE_DISABLE_X509) && defined(NX_SECURE_ENABLE_ECC_CIPHERSUITE) && !defined(NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK)
 static TX_THREAD thread_0;
 static void    thread_0_entry(ULONG thread_input);
 #define DEMO_STACK_SIZE 4096
 static CHAR thread_stack[DEMO_STACK_SIZE];
+#endif
 
 #ifdef CTEST
 void test_application_define(void *first_unused_memory);
@@ -36,9 +38,16 @@ void test_application_define(void *first_unused_memory)
 void nx_secure_x509_basic_constraints_test_application_define(void *first_unused_memory)
 #endif
 {
+#if !defined(NX_SECURE_DISABLE_X509) && defined(NX_SECURE_ENABLE_ECC_CIPHERSUITE) && !defined(NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK)
     tx_thread_create(&thread_0, "thread 0", thread_0_entry, 0,
                      thread_stack, DEMO_STACK_SIZE,
                      4, 4, TX_NO_TIME_SLICE, TX_AUTO_START);
+#else
+    /* N/A is reported here, not from a thread: the test control takes
+       status 3 as returned by this call and does not wait for it.  */
+    printf("NetX Secure Test:   X509 Basic Constraints Test.......................N/A\n");
+    test_control_return(3);
+#endif
 }
 
 #if !defined(NX_SECURE_DISABLE_X509) && defined(NX_SECURE_ENABLE_ECC_CIPHERSUITE) && !defined(NX_SECURE_X509_DISABLE_BASIC_CONSTRAINTS_CHECK)
@@ -235,13 +244,4 @@ static void    thread_0_entry(ULONG thread_input)
     test_control_return(0);
 }
 
-#else
-
-static void    thread_0_entry(ULONG thread_input)
-{
-
-    NX_PARAMETER_NOT_USED(thread_input);
-    printf("NetX Secure Test:   X509 Basic Constraints Test.......................N/A\n");
-    test_control_return(3);
-}
 #endif
