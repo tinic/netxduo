@@ -47,6 +47,28 @@ static ULONG                   ack_counter;
 static ULONG                   seg_counter;
 static ULONG                   expected_ack;
 static ULONG                   expected_seq;
+
+/* Since 6b586f93 the server's half of a handshake in SYN-RECEIVED is an
+   entry in the SYN cache, not the socket accept was called on: the socket
+   stays armed (SYN_RECEIVED, unbound) and takes the connection only when
+   the handshake finishes, which here it never does.  RCV.NXT, RCV.WND and
+   SND.NXT are the entry's.  */
+static NX_TCP_SYNCACHE_ENTRY  *handshake(void)
+{
+
+UINT i;
+
+
+    for (i = 0; i < NX_TCP_SYNCACHE_SIZE; i++)
+    {
+        if ((ip_0.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i].nx_tcp_syncache_state == NX_TCP_SYNCACHE_SYN_RECEIVED) &&
+            (ip_0.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i].nx_tcp_syncache_local_port == 12))
+        {
+            return(&ip_0.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i]);
+        }
+    }
+    return(NX_NULL);
+}
 /* Define thread prototypes.  */
 
 static void    ntest_0_entry(ULONG thread_input);
@@ -188,7 +210,7 @@ ULONG          actual_status;
     tx_thread_suspend(&ntest_0);
 
     /* Check the server socket state.  */
-    if((seg_counter != 1) || (server_socket.nx_tcp_socket_state != NX_TCP_SYN_RECEIVED))
+    if((seg_counter != 1) || (server_socket.nx_tcp_socket_state != NX_TCP_SYN_RECEIVED) || (handshake() == NX_NULL))
         error_counter++;
 
     /* Disconnect the server socket.  */
@@ -339,13 +361,14 @@ NX_TCP_HEADER    *tcp_header_ptr;
         /* Check the FIN packet with OTW sequence.  */
         if((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT) && (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT) && !(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT))
         {
-            if((tcp_header_ptr -> nx_tcp_sequence_number < server_socket.nx_tcp_socket_rx_sequence) || 
-               (tcp_header_ptr -> nx_tcp_sequence_number >= server_socket.nx_tcp_socket_rx_sequence + server_socket.nx_tcp_socket_rx_window_current))
+            if((handshake() != NX_NULL) &&
+               ((tcp_header_ptr -> nx_tcp_sequence_number < handshake() -> nx_tcp_syncache_irs + 1) || 
+                (tcp_header_ptr -> nx_tcp_sequence_number >= handshake() -> nx_tcp_syncache_irs + 1 + handshake() -> nx_tcp_syncache_rx_window)))
             {
                 seg_counter++;
 
                 /* Record expected sequence of the server socket.  */
-                expected_seq = server_socket.nx_tcp_socket_tx_sequence;
+                expected_seq = handshake() -> nx_tcp_syncache_iss + 1;
 
                 ip_ptr -> nx_ip_tcp_packet_receive = _nx_tcp_packet_receive;
             }

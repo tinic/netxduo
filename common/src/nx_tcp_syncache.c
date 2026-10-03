@@ -1123,7 +1123,8 @@ NX_TCP_SOCKET *socket_ptr = _nx_tcp_syncache_scratch_setup(ip_ptr, entry);
 
 /* Reset a peer that believes it is established when this end has decided it
    is not.  */
-static VOID  _nx_tcp_syncache_send_rst(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
+static VOID  _nx_tcp_syncache_send_rst(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry,
+                                       NX_TCP_HEADER *tcp_header_ptr)
 {
 
 NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
@@ -1161,6 +1162,14 @@ NX_TCP_HEADER  header;
     header.nx_tcp_acknowledgment_number = entry -> nx_tcp_syncache_iss + 1;
     header.nx_tcp_sequence_number = entry -> nx_tcp_syncache_irs + 1;
 
+    /* Or, answering a segment, the acknowledgment that segment carried
+       (RFC 9293 3.10.7.4: <SEQ=SEG.ACK><CTL=RST>).  */
+    if (tcp_header_ptr)
+    {
+        header.nx_tcp_acknowledgment_number = tcp_header_ptr -> nx_tcp_acknowledgment_number;
+        header.nx_tcp_sequence_number = tcp_header_ptr -> nx_tcp_sequence_number;
+    }
+
     _nx_tcp_packet_send_rst(socket_ptr, &header);
 }
 
@@ -1182,15 +1191,15 @@ NX_TCP_HEADER  header;
    for, a resource this end does not have -- here, a socket -- confined to a
    handshake that finished with no socket to take it.  Senders MUST be robust
    against a shrinking window (MUST-34).  */
-static VOID  _nx_tcp_syncache_send_window_zero(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
+static VOID  _nx_tcp_syncache_send_ack(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry, ULONG window)
 {
 
 NX_TCP_SOCKET *socket_ptr = _nx_tcp_syncache_scratch_setup(ip_ptr, entry);
 
 
     socket_ptr -> nx_tcp_socket_state = NX_TCP_ESTABLISHED;
-    socket_ptr -> nx_tcp_socket_rx_window_current = 0;
-    socket_ptr -> nx_tcp_socket_rx_window_last_sent = 0;
+    socket_ptr -> nx_tcp_socket_rx_window_current = window;
+    socket_ptr -> nx_tcp_socket_rx_window_last_sent = window;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
     socket_ptr -> nx_tcp_rcv_win_scale_value = entry -> nx_tcp_syncache_rcv_win_scale;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
@@ -1234,7 +1243,7 @@ ULONG limit;
     if ((packet_ptr -> nx_packet_length > header_length) ||
         (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT))
     {
-        _nx_tcp_syncache_send_window_zero(ip_ptr, entry);
+        _nx_tcp_syncache_send_ack(ip_ptr, entry, 0);
     }
 }
 
@@ -2162,7 +2171,7 @@ ULONG      count;
     _nx_tcp_syncache_establish(socket_ptr);
 
     /* The peer may have been told a window of zero before a socket took the
-       connection (_nx_tcp_syncache_send_window_zero).  Open it.  If this
+       connection (_nx_tcp_syncache_send_ack).  Open it.  If this
        update is lost the peer's next persist probe reaches the socket, which
        answers it with the same window.  */
     _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
@@ -2179,6 +2188,69 @@ ULONG      count;
     }
 
     return(NX_TRUE);
+}
+
+
+/* RFC 9293 3.10.7.4, first check, for a segment to a handshake in
+   SYN-RECEIVED: RCV.NXT is irs + 1 and RCV.WND the window the SYN-ACK
+   offered.  The four cases of its table, on the segment's length with a FIN
+   counted, in sequence space modulo 2^32.  */
+static UINT  _nx_tcp_syncache_acceptable(NX_TCP_SYNCACHE_ENTRY *entry, NX_PACKET *packet_ptr,
+                                         NX_TCP_HEADER *tcp_header_ptr)
+{
+
+ULONG header_length;
+ULONG length;
+ULONG window = entry -> nx_tcp_syncache_rx_window;
+ULONG start;
+
+
+    header_length = (tcp_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+    length = (packet_ptr -> nx_packet_length > header_length) ? (packet_ptr -> nx_packet_length - header_length) : 0;
+    if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT)
+    {
+        length++;
+    }
+
+    start = NX_TCP_SYNCACHE_U32(tcp_header_ptr -> nx_tcp_sequence_number - (entry -> nx_tcp_syncache_irs + 1));
+
+    if (length == 0)
+    {
+        return(((window == 0) ? (start == 0) : (start < window)) ? NX_TRUE : NX_FALSE);
+    }
+
+    if (window == 0)
+    {
+        return(NX_FALSE);
+    }
+
+    return(((start < window) || (NX_TCP_SYNCACHE_U32(start + length - 1) < window)) ? NX_TRUE : NX_FALSE);
+}
+
+
+/* A segment to a handshake in SYN-RECEIVED that does not finish it.  The
+   entry is left as it is: time, retries and window.  */
+static VOID  _nx_tcp_syncache_unacceptable(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry,
+                                           NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr)
+{
+
+    if (_nx_tcp_syncache_acceptable(entry, packet_ptr, tcp_header_ptr) != NX_TRUE)
+    {
+
+        /* <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>.  */
+        _nx_tcp_syncache_send_ack(ip_ptr, entry, entry -> nx_tcp_syncache_rx_window);
+    }
+    else if (tcp_header_ptr -> nx_tcp_acknowledgment_number != (entry -> nx_tcp_syncache_iss + 1))
+    {
+
+        /* SND.UNA is iss and SND.NXT iss + 1, so iss + 1 is the one
+           acceptable acknowledgment.  <SEQ=SEG.ACK><CTL=RST>.  */
+        _nx_tcp_syncache_send_rst(ip_ptr, entry, tcp_header_ptr);
+    }
+
+    /* An acceptable segment that acknowledges the SYN-ACK but does not start
+       at irs + 1 is left unanswered, as before: the cache completes a
+       handshake only on its first segment.  */
 }
 
 
@@ -2265,8 +2337,15 @@ UINT                   bucket;
         {
 
             /* Wrong numbers for the handshake this entry is holding.  Not a
-               reason to drop the entry: an off-path segment must not be able
-               to cancel a connection somebody else is making.  */
+               reason to change the entry: an off-path segment must not be
+               able to cancel or complete a connection somebody else is
+               making.  It is answered as RFC 9293 3.10.7.4 answers it in
+               SYN-RECEIVED, sequence number first: outside the window the
+               SYN-ACK offered, an ACK of what this end expects; inside it,
+               an acknowledgment of something other than the SYN-ACK, a
+               reset from that acknowledgment.  A RST never reaches here
+               (_nx_tcp_syncache_reset_received).  */
+            _nx_tcp_syncache_unacceptable(ip_ptr, entry, packet_ptr, tcp_header_ptr);
             return(NX_TRUE);
         }
 
@@ -2381,7 +2460,7 @@ UINT                   bucket;
         /* Past the backlog the application asked for.  Reset it: the peer
            believes it is established, and silence would leave it
            retransmitting into a connection that will never be accepted.  */
-        _nx_tcp_syncache_send_rst(ip_ptr, &final);
+        _nx_tcp_syncache_send_rst(ip_ptr, &final, NX_NULL);
         return(NX_TRUE);
     }
 
@@ -2648,7 +2727,7 @@ NX_TCP_SYNCACHE_ENTRY *next;
         next = entry -> nx_tcp_syncache_age_next;
         if (entry -> nx_tcp_syncache_local_port == port)
         {
-            _nx_tcp_syncache_send_rst(ip_ptr, entry);
+            _nx_tcp_syncache_send_rst(ip_ptr, entry, NX_NULL);
             _nx_tcp_syncache_release(ip_ptr, entry);
         }
         entry = next;
@@ -2811,7 +2890,7 @@ UINT                   answered;
         if ((now - entry -> nx_tcp_syncache_time) >= (ULONG)NX_TCP_SYNCACHE_ACCEPT_TIMEOUT)
         {
             cache -> nx_tcp_syncache_expired++;
-            _nx_tcp_syncache_send_rst(ip_ptr, entry);
+            _nx_tcp_syncache_send_rst(ip_ptr, entry, NX_NULL);
             _nx_tcp_syncache_release(ip_ptr, entry);
         }
 
