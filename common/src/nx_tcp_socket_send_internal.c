@@ -706,7 +706,11 @@ UINT            compute_checksum = 1;
            _nx_tcp_socket_state_transmit_check applies the same test before it
            wakes anybody, so the wait ends when a segment can actually go
            rather than on every acknowledgment in between.  */
-        if (_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE)
+        /* Rule (2) as RFC 1122 4.2.3.4 has it with Nagle off, as it is
+           here: data that is pushed and fits whole (D <= U) goes now.  Every
+           write is pushed, so the rest of this one is never held back.  */
+        if ((_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE) &&
+            (packet_ptr -> nx_packet_length > tx_window_current))
         {
             tx_window_current = 0;
         }
