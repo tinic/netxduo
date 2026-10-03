@@ -721,6 +721,10 @@ CHAR    *pointer;
     nx_secure_tls_initialize();
 }
 
+#ifdef NX_SECURE_TLS_ALPN_PROTOCOL_MAX
+static const UCHAR client_alpn[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+#endif /* NX_SECURE_TLS_ALPN_PROTOCOL_MAX */
+
 static VOID client_tls_setup(NX_SECURE_TLS_SESSION *tls_session_ptr)
 {
 UINT status;
@@ -749,6 +753,17 @@ UINT status;
         ERROR_COUNTER();
     }
 
+#ifdef NX_SECURE_TLS_ALPN_PROTOCOL_MAX
+    /* The captured ServerHello (frame1) carries an ALPN extension selecting
+       "http/1.1".  The client here implements RFC 7301 (cf3e7642): a selection
+       it did not offer is refused (3.1/3.2), where upstream ignored the
+       extension.  Offer what the capture answers.  */
+    status = _nx_secure_tls_alpn_protocol_set(tls_session_ptr, client_alpn, sizeof(client_alpn));
+    if (status)
+    {
+        ERROR_COUNTER();
+    }
+#endif /* NX_SECURE_TLS_ALPN_PROTOCOL_MAX */
 }
 
 
