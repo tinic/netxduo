@@ -197,6 +197,7 @@ NX_CRYPTO_KEEP static VOID _nx_crypto_ccm_authentication_init(VOID *crypto_metad
 UCHAR Flags = 0;
 UCHAR B[NX_CRYPTO_CCM_BLOCK_SIZE];
 UCHAR temp_len = 0;
+UINT  len_size = 0;
 
     NX_CRYPTO_MEMSET(B, 0, NX_CRYPTO_CCM_BLOCK_SIZE);
     NX_CRYPTO_MEMSET(X, 0, NX_CRYPTO_CCM_BLOCK_SIZE);
@@ -230,21 +231,41 @@ UCHAR temp_len = 0;
     /* Get the CBC-MAC value X(1).  */
     _nx_crypto_ccm_cbc_pad(crypto_metadata, crypto_function, B, X, block_size, X, block_size);
 
-    /* B(1) = 2 bytes l(a) + leftmost 14 bytes of string a.  */
-    B[0] = (UCHAR)(a_len >> 8);
-    B[1] = (UCHAR)(a_len);
-
-    /* If the length of string a is less than 14, pad B(1) with 0.  */
-    temp_len = (UCHAR)((a_len > (block_size - 2)) ? (block_size - 2) : a_len);
-    NX_CRYPTO_MEMCPY(B + 2, a_data, (UINT)temp_len); /* Use case of memcpy is verified. */
-
-    /* Get the CBC-MAC value X(2).  */
-    _nx_crypto_ccm_cbc_pad(crypto_metadata, crypto_function, B, X, (UINT)(temp_len + 2), X, block_size);
-
-    /* Get the CBC-MAC value X(i), for i = 3,...,t + 1.  */
-    if (a_len > (block_size - 2))
+    /* No AddAuthData blocks at all when l(a) = 0 (RFC 3610 2.2).  */
+    if (a_len > 0)
     {
-        _nx_crypto_ccm_cbc_pad(crypto_metadata, crypto_function, a_data + block_size - 2, X, a_len - (block_size - 2), X, block_size);
+
+        /* B(1) = l(a) + leftmost bytes of string a: l(a) is 2 bytes below 0xFF00,
+           else 0xFF 0xFE and 4 bytes.  */
+        if (a_len < 0xFF00)
+        {
+            B[0] = (UCHAR)(a_len >> 8);
+            B[1] = (UCHAR)(a_len);
+            len_size = 2;
+        }
+        else
+        {
+            B[0] = 0xFF;
+            B[1] = 0xFE;
+            B[2] = (UCHAR)(a_len >> 24);
+            B[3] = (UCHAR)(a_len >> 16);
+            B[4] = (UCHAR)(a_len >> 8);
+            B[5] = (UCHAR)(a_len);
+            len_size = 6;
+        }
+
+        /* If the length of string a is less than the rest of B(1), pad B(1) with 0.  */
+        temp_len = (UCHAR)((a_len > (block_size - len_size)) ? (block_size - len_size) : a_len);
+        NX_CRYPTO_MEMCPY(B + len_size, a_data, (UINT)temp_len); /* Use case of memcpy is verified. */
+
+        /* Get the CBC-MAC value X(2).  */
+        _nx_crypto_ccm_cbc_pad(crypto_metadata, crypto_function, B, X, (UINT)(temp_len + len_size), X, block_size);
+
+        /* Get the CBC-MAC value X(i), for i = 3,...,t + 1.  */
+        if (a_len > temp_len)
+        {
+            _nx_crypto_ccm_cbc_pad(crypto_metadata, crypto_function, a_data + temp_len, X, a_len - temp_len, X, block_size);
+        }
     }
 
 #ifdef NX_SECURE_KEY_CLEAR
