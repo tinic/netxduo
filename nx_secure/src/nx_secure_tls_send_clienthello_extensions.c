@@ -27,6 +27,8 @@
 #ifndef NX_SECURE_TLS_CLIENT_DISABLED
 
 #ifndef NX_SECURE_DISABLE_X509
+#define NX_SECURE_TLS_SIGNATURE_ALGORITHMS_LIST_MAX_LENGTH (0xFFFFu - 6u)
+
 UINT _nx_secure_tls_send_clienthello_sig_extension(NX_SECURE_TLS_SESSION *tls_session,
                                                           UCHAR *packet_buffer, ULONG *packet_offset,
                                                           USHORT *extension_length,
@@ -413,6 +415,7 @@ UINT i;
 USHORT signature_algorithm;
 USHORT legacy_algorithm;
 USHORT pss_algorithm;
+ULONG signature_algorithms_length;
 NX_SECURE_X509_CRYPTO *cipher_table;
 
     /* Signature Extensions structure:
@@ -421,13 +424,35 @@ NX_SECURE_X509_CRYPTO *cipher_table;
      *
      * Each algorithm pair has a hash ID and a public key operation ID represented
      * by a single octet. Therefore each entry in the list is 2 bytes long.
-     *
-     * An RSA row can put rsa_pss_rsae, rsa_pss_pss and its TLS 1.2 legacy
-     * pair on the wire, so reserve six bytes per row.
      */
 
-    if (available_size < (*packet_offset + 6u +
-                          (ULONG)(tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size * 6u)))
+    cipher_table = tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table;
+    signature_algorithms_length = 0;
+
+    /* Calculate the exact list length before writing. An RSA row can put
+       rsa_pss_rsae, rsa_pss_pss and its TLS 1.2 legacy pair on the wire. */
+    for (i = 0; i < tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size; i++)
+    {
+        _nx_secure_tls_get_signature_algorithm(tls_session, &cipher_table[i],
+                                               &signature_algorithm, &pss_algorithm,
+                                               &legacy_algorithm);
+        if (signature_algorithm != 0u)
+        {
+            signature_algorithms_length += 2u;
+            if (pss_algorithm != 0u)
+            {
+                signature_algorithms_length += 2u;
+            }
+            if (legacy_algorithm != 0u)
+            {
+                signature_algorithms_length += 2u;
+            }
+        }
+    }
+
+    if ((signature_algorithms_length > NX_SECURE_TLS_SIGNATURE_ALGORITHMS_LIST_MAX_LENGTH) ||
+        (*packet_offset > available_size) ||
+        ((available_size - *packet_offset) < (6u + signature_algorithms_length)))
     {
 
         /* Packet buffer too small. */
@@ -441,8 +466,6 @@ NX_SECURE_X509_CRYPTO *cipher_table;
     offset += 6;
 
     ext_len = sighash_len = 0;
-
-    cipher_table = tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table;
 
     /* Loop the x509 cipher table to add signature algorithms. */
     for (i = 0; i < tls_session -> nx_secure_tls_crypto_table -> nx_secure_tls_x509_cipher_table_size; i++)
