@@ -34,6 +34,8 @@ extern void    test_control_return(UINT status);
 static TX_THREAD               ntest_0;   
 static TX_THREAD               ntest_1;
 
+/* 28 payload bytes: 26 letters and two NULs, so the echo compare stays in bounds.  */
+static CHAR                    ping_data[28] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 static NX_PACKET_POOL          pool_0;
 static NX_IP                   ip_0;
 static NX_IP                   ip_1;
@@ -156,11 +158,11 @@ NX_PACKET   *my_packet;
     advanced_packet_process_callback = packet_process;
 
     /* Ping an IP address.  */
-    status = nx_icmp_ping(&ip_0, IP_ADDRESS(1, 2, 3, 5), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 28, &my_packet, 3 * NX_IP_PERIODIC_RATE);
+    status = nx_icmp_ping(&ip_0, IP_ADDRESS(1, 2, 3, 5), ping_data, sizeof(ping_data), &my_packet, 3 * NX_IP_PERIODIC_RATE);
 
     /* Determine if the timeout error occurred.  */
     if ((status) || (my_packet -> nx_packet_length != 28) ||
-        (memcmp(my_packet -> nx_packet_prepend_ptr, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 28)))
+        (memcmp(my_packet -> nx_packet_prepend_ptr, ping_data, sizeof(ping_data))))
     {
 
         printf("ERROR!\n");

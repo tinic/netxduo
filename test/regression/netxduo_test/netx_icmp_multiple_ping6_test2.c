@@ -33,6 +33,9 @@ extern void    test_control_return(UINT status);
 static TX_THREAD               ntest_0;  
 static TX_THREAD               ntest_1;
 
+/* 28 payload bytes: 26 letters and two NULs, so the echo compare stays in bounds.  */
+static CHAR                    ping_data[28] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+static CHAR                    ping_data_1[28] = "PjCZEZGZIZKZMZOZQZSZUZWZYZ";
 static NX_PACKET_POOL          pool_0;
 static NX_IP                   ip_0;
 static NX_IP                   ip_1;
@@ -187,11 +190,11 @@ NX_PACKET   *my_packet;
 
     /* Now ping an IP address that does exist.  */
     /* The reply packet contains checksum 0. */
-    status =  nxd_icmp_ping(&ip_0, &global_address_1, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 28, &my_packet, 3 * NX_IP_PERIODIC_RATE);
+    status =  nxd_icmp_ping(&ip_0, &global_address_1, ping_data, sizeof(ping_data), &my_packet, 3 * NX_IP_PERIODIC_RATE);
 
     /* Determine if the timeout error occurred.  */
     if ((status) || (my_packet -> nx_packet_length != 28) ||
-        (memcmp(my_packet -> nx_packet_prepend_ptr, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 28)))
+        (memcmp(my_packet -> nx_packet_prepend_ptr, ping_data, sizeof(ping_data))))
     {
 
         printf("ERROR!\n");
@@ -226,11 +229,11 @@ NX_PACKET   *my_packet;
 
 
     /* Ping an exist IP address.  */
-    status =  nxd_icmp_ping(&ip_0, &global_address_1, "PjCZEZGZIZKZMZOZQZSZUZWZYZ", 28, &my_packet, 2 * NX_IP_PERIODIC_RATE);
+    status =  nxd_icmp_ping(&ip_0, &global_address_1, ping_data_1, sizeof(ping_data_1), &my_packet, 2 * NX_IP_PERIODIC_RATE);
 
     /* Determine if the timeout error occurred.  */
     if ((status) || (my_packet -> nx_packet_length != 28) ||
-        (memcmp(my_packet -> nx_packet_prepend_ptr, "PjCZEZGZIZKZMZOZQZSZUZWZYZ", 28)))
+        (memcmp(my_packet -> nx_packet_prepend_ptr, ping_data_1, sizeof(ping_data_1))))
     {
 
         printf("ERROR!\n");
