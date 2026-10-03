@@ -18,8 +18,9 @@
      B  a resend answering a duplicate SYN (client's SYN duplicated, first
         SYN-ACK dropped, answered before the first timer step)
      C  a stateless cookie SYN-ACK, and the connection the ACK rebuilds
-     D  no socket parked on the listen request: the terms recorded by the
-        listen, and the connection a later relisten takes
+     D  no socket parked and the cache full: the cookie SYN-ACK is built
+        from the terms the listen recorded, and a relisten takes the
+        handshake its ACK finishes
 
    and the established sockets on both ends carry the agreed MSS.  */
 
@@ -72,6 +73,8 @@ static UINT                    drop_first_synack;
 static UINT                    drop_client_syn_retries;
 static UINT                    duplicate_client_syn;
 static UINT                    parked_open;
+static NX_TCP_SYNCACHE_ENTRY  *saved_free;
+static UINT                    restore_free_on_synack;
 
 static void    thread_0_entry(ULONG thread_input);
 static void    thread_1_entry(ULONG thread_input);
@@ -266,8 +269,10 @@ ULONG                  cookies_valid;
     }
 
     /* D: no socket parked.  The first connection takes the only socket on
-       the listen request; the second SYN finds none parked and is answered
-       with the terms the listen recorded.  */
+       the listen request.  The second SYN finds none parked and the cache
+       made to look full, so it is answered with a cookie built from the
+       terms the listen recorded; the hook gives the cache its room back
+       once that answer is out, so the ACK can be held for the relisten.  */
     hook_reset(PORT_PARKED);
     status = client_connect(&client_parked_first, "Client Parked 1", 0x8F, PORT_PARKED);
     if (status)
@@ -283,8 +288,13 @@ ULONG                  cookies_valid;
     }
 
     hook_reset(PORT_PARKED);
+    tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
+    saved_free = ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_free;
+    ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_free = NX_NULL;
+    restore_free_on_synack = NX_TRUE;
+    tx_mutex_put(&(ip_1.nx_ip_protection));
     status = client_connect(&client_parked, "Client Parked 2", 0x90, PORT_PARKED);
-    if ((status) || (synack_count == 0) || (synack_bad) ||
+    if ((status) || (synack_count == 0) || (synack_bad) || (restore_free_on_synack != NX_FALSE) ||
         (client_parked.nx_tcp_socket_connect_mss != SERVER_MSS))
     {
         printf("ERROR!\n");
@@ -392,7 +402,7 @@ NX_PACKET *packet_ptr;
     }
 
     status = nx_tcp_server_socket_relisten(&ip_1, PORT_PARKED, &server_parked);
-    if ((status != NX_SUCCESS) && (status != NX_CONNECTION_PENDING))
+    if (status != NX_CONNECTION_PENDING)
         error_counter++;
 
     status = nx_tcp_server_socket_accept(&server_parked, 5 * NX_IP_PERIODIC_RATE);
@@ -528,6 +538,14 @@ NX_TCP_SYNCACHE_ENTRY *entry;
         if ((mss != SERVER_MSS) || (server_terms_ok(packet_ptr, ip_header) != NX_TRUE))
         {
             synack_bad++;
+        }
+
+        if (restore_free_on_synack == NX_TRUE)
+        {
+
+            /* The cookie answer is out.  The IP thread holds the mutex.  */
+            ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_free = saved_free;
+            restore_free_on_synack = NX_FALSE;
         }
 
         /* Which path sent it: the timer counts a retry on the entry, a resend
