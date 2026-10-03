@@ -88,9 +88,37 @@ NX_CRYPTO_KEEP UINT  _nx_crypto_rsa_operation(const UCHAR *exponent, UINT expone
 {
 HN_UBASE             *scratch;
 UINT                  mod_length;
+UINT                  status;
+ULONG                 scratch_needed;
 NX_CRYPTO_HUGE_NUMBER modulus_hn, exponent_hn, input_hn, output_hn, p_hn, q_hn;
 
-    NX_CRYPTO_PARAMETER_NOT_USED(scratch_buf_length);
+    /* Everything below is carved out of the caller's scratch by modulus
+       length, and the output is written modulus_length bytes long.  Check the
+       scratch against what the carve needs before any of it is touched
+       (N-146).  scratch_buf_length is in USHORTs, the type of
+       scratch_buf_ptr; the requirement is the header's, nx_crypto_rsa.h, in
+       bytes.  The exponent, input and primes are bounded by
+       _nx_crypto_huge_number_setup() against the numbers carved for them,
+       after it strips DER's leading zero bytes, and its status is now
+       returned rather than dropped. */
+    if (modulus_length == 0)
+    {
+        return(NX_CRYPTO_SIZE_ERROR);
+    }
+
+    if (p && q)
+    {
+        scratch_needed = (10UL * modulus_length) + 24UL;
+    }
+    else
+    {
+        scratch_needed = (7UL * modulus_length) + 8UL;
+    }
+
+    if (((ULONG)scratch_buf_length * sizeof(USHORT)) < scratch_needed)
+    {
+        return(NX_CRYPTO_SIZE_ERROR);
+    }
 
     /* The RSA operation is reversible so both encryption and decryption can be done with the same operation. */
     /* Local pointer for pointer arithmetic. */
@@ -109,13 +137,25 @@ NX_CRYPTO_HUGE_NUMBER modulus_hn, exponent_hn, input_hn, output_hn, p_hn, q_hn;
     NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&output_hn, scratch, modulus_length << 1);
 
     /* Copy the exponent from the caller's buffer. */
-    _nx_crypto_huge_number_setup(&exponent_hn, exponent, exponent_length);
+    status = _nx_crypto_huge_number_setup(&exponent_hn, exponent, exponent_length);
+    if (status != NX_CRYPTO_SUCCESS)
+    {
+        return(status);
+    }
 
     /* Copy the input from the caller's buffer. */
-    _nx_crypto_huge_number_setup(&input_hn, input, input_length);
+    status = _nx_crypto_huge_number_setup(&input_hn, input, input_length);
+    if (status != NX_CRYPTO_SUCCESS)
+    {
+        return(status);
+    }
 
     /* Copy the modulus from the caller's buffer. */
-    _nx_crypto_huge_number_setup(&modulus_hn, modulus, modulus_length);
+    status = _nx_crypto_huge_number_setup(&modulus_hn, modulus, modulus_length);
+    if (status != NX_CRYPTO_SUCCESS)
+    {
+        return(status);
+    }
 
     if (p && q)
     {
@@ -125,8 +165,16 @@ NX_CRYPTO_HUGE_NUMBER modulus_hn, exponent_hn, input_hn, output_hn, p_hn, q_hn;
         NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&q_hn, scratch, modulus_length >> 1);
 
         /* Copy the prime p and q from the caller's buffer. */
-        _nx_crypto_huge_number_setup(&p_hn, p, p_length);
-        _nx_crypto_huge_number_setup(&q_hn, q, q_length);
+        status = _nx_crypto_huge_number_setup(&p_hn, p, p_length);
+        if (status != NX_CRYPTO_SUCCESS)
+        {
+            return(status);
+        }
+        status = _nx_crypto_huge_number_setup(&q_hn, q, q_length);
+        if (status != NX_CRYPTO_SUCCESS)
+        {
+            return(status);
+        }
 
         /* Finally, generate shared secret from the remote public key, our generated private key, and the modulus, modulus.
            The actual calculation is "shared_secret = (public_key**private_key) % modulus"
@@ -145,8 +193,14 @@ NX_CRYPTO_HUGE_NUMBER modulus_hn, exponent_hn, input_hn, output_hn, p_hn, q_hn;
                                                   &output_hn, scratch);
     }
 
-    /* Copy the shared secret into the return buffer. */
-    _nx_crypto_huge_number_extract(&output_hn, output, modulus_length, &mod_length);
+    /* Copy the shared secret into the return buffer.  The callers check the
+       buffer holds modulus_length bytes; a result that does not fit that is
+       an error, not a truncation (N-146). */
+    status = _nx_crypto_huge_number_extract(&output_hn, output, modulus_length, &mod_length);
+    if (status != NX_CRYPTO_SUCCESS)
+    {
+        return(status);
+    }
 
     return(NX_CRYPTO_SUCCESS);
 }
@@ -213,6 +267,15 @@ NX_CRYPTO_RSA *ctx;
     if(crypto_metadata_size < sizeof(NX_CRYPTO_RSA))
     {
         return(NX_CRYPTO_PTR_ERROR);
+    }
+
+    /* The scratch and every caller's output buffer are sized for
+       NX_CRYPTO_MAX_RSA_MODULUS_SIZE; a larger modulus, or none, is refused
+       before the context is touched (N-146). */
+    if ((key_size_in_bits == 0) || ((key_size_in_bits & 7) != 0) ||
+        (key_size_in_bits > NX_CRYPTO_MAX_RSA_MODULUS_SIZE))
+    {
+        return(NX_CRYPTO_UNSUPPORTED_KEY_SIZE);
     }
 
     ctx = (NX_CRYPTO_RSA *)crypto_metadata;
@@ -384,7 +447,11 @@ UINT           return_value = NX_CRYPTO_SUCCESS;
             return(NX_CRYPTO_PTR_ERROR);
         }
 
-        if(output_length_in_byte < (key_size_in_bits >> 3))
+        /* The result is modulus_length bytes long, whatever the exponent's
+           length (key_size_in_bits here is the exponent's): the output is
+           checked against the modulus (N-146). */
+        if ((ctx -> nx_crypto_rsa_modulus_length == 0) ||
+            (output_length_in_byte < ctx -> nx_crypto_rsa_modulus_length))
             return(NX_CRYPTO_INVALID_BUFFER_SIZE);
 
         if (input_length_in_byte > (ctx -> nx_crypto_rsa_modulus_length))
