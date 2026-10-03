@@ -19,6 +19,7 @@
 #include    "nx_icmpv6.h"
 #include    "nx_udp.h"
 #include    "nxd_dhcpv6_client.h"
+#include    "nxd_dns.h"
 #ifdef NX_IPSEC_ENABLE
 #include    "nx_ipsec.h"
 #endif
@@ -62,12 +63,58 @@ static void (*tahi_dhcpv6_reboot)();
 static void (*tahi_dhcpv6_info_request)();
 static void (*tahi_dhcpv6_dns)();
 
+/* What this stack sends where the captures differ by an intentional fork
+   change.  A copy of the capture is adjusted; the capture is not touched.  */
+static UCHAR        expected_data[MAX_PACKET_SIZE];
+
+/* The captures were taken when an IPv6 UDP send carried the IP instance's
+   hop limit, 255.  39781928 sends with the socket's own time to live: the
+   DHCPv6 client's socket is created with NX_DHCPV6_TIME_TO_LIVE and the DNS
+   client's with NX_DNS_TIME_TO_LIVE.  So the DHCPv6 client's messages (UDP
+   546 to 547) and its DNS queries (to UDP 53) are expected with those hop
+   limits.  The UDP checksum does not cover the hop limit.  */
+static void expect_socket_hop_limit(UCHAR *pkt)
+{
+UINT dst_port = ((UINT)pkt[14 + 42] << 8) | pkt[14 + 43];
+UINT src_port = ((UINT)pkt[14 + 40] << 8) | pkt[14 + 41];
+
+    if (pkt[14 + 7] != 0xFF)
+    {
+        return;
+    }
+    if ((src_port == 546) && (dst_port == 547))
+    {
+        pkt[14 + 7] = (UCHAR)NX_DHCPV6_TIME_TO_LIVE;
+    }
+    else if (dst_port == 53)
+    {
+        pkt[14 + 7] = (UCHAR)NX_DNS_TIME_TO_LIVE;
+    }
+}
+
+static char *expected_packet(char *pkt_data, int pkt_size)
+{
+UCHAR *pkt = (UCHAR *)pkt_data;
+
+    if ((pkt_size < (14 + 40 + 8)) || (pkt_size > MAX_PACKET_SIZE) ||
+        (pkt[12] != 0x86) || (pkt[13] != 0xdd) || (pkt[14 + 6] != NX_PROTOCOL_UDP))
+    {
+        return(pkt_data);
+    }
+
+    memcpy(expected_data, pkt_data, (size_t)pkt_size);
+    expect_socket_hop_limit(expected_data);
+    return((char *)expected_data);
+}
+
 static void perform_check(char *pkt_data, int pkt_size, int timeout)
 {
 UINT       status;
 NX_PACKET *current_pkt;
 ULONG      start_time, current_time, time_remaining;
 ULONG      bytes_copied;
+
+    pkt_data = expected_packet(pkt_data, pkt_size);
     
     /* Compute the amount of time to wait for. */
     start_time = current_time = tx_time_get();
