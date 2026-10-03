@@ -2552,6 +2552,11 @@ typedef struct NX_TCP_LISTEN_STRUCT
 #define NX_TCP_SYNCACHE_SYN_RECEIVED            1
 #define NX_TCP_SYNCACHE_ESTABLISHED             2
 
+/* A SYN that arrived while its listen request had no socket parked: recorded
+   but not answered until one is, as the listen queue this cache replaced
+   held such a SYN unanswered until relisten.  */
+#define NX_TCP_SYNCACHE_DEFERRED                3
+
 /* What the peer's SYN offered, held as bits so a cookie can carry them.  */
 #define NX_TCP_SYNCACHE_OPT_SACK                0x01u
 #define NX_TCP_SYNCACHE_OPT_TIMESTAMP           0x02u

@@ -525,6 +525,7 @@ VOID _nx_tcp_queue_process(NX_IP *ip_ptr);
    NX_TCP_SYNCACHE is declared in nx_api.h.  */
 VOID _nx_tcp_syncache_initialize(NX_IP *ip_ptr);
 VOID _nx_tcp_syncache_listen_record(NX_TCP_LISTEN *listen_ptr, NX_TCP_SOCKET *socket_ptr);
+VOID _nx_tcp_syncache_answer_deferred(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr);
 VOID _nx_tcp_syncache_syn_received(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                                    NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr,
                                    ULONG *source_ip, ULONG *dest_ip, UINT source_port,

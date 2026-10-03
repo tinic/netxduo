@@ -218,6 +218,10 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                     /* Remember what port is associated for this socket.  */
                     socket_ptr -> nx_tcp_socket_port =  port;
 
+                    /* A SYN that arrived while the request had no socket has
+                       been waiting unanswered for this one.  */
+                    _nx_tcp_syncache_answer_deferred(ip_ptr, listen_ptr);
+
                     /* Release the protection.  */
                     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
