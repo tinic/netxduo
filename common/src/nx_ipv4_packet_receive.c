@@ -444,8 +444,8 @@ UINT            packet_consumed;
 #endif
 
                 /* Yes, the incoming IP header is fragmented.  Check to see if IP fragmenting
-                   has been enabled.  */
-                if (ip_ptr -> nx_ip_fragment_assembly)
+                   has been enabled, and that reassembly may take from the pool.  */
+                if ((ip_ptr -> nx_ip_fragment_assembly) && NX_IP_FRAGMENT_ADMIT(packet_ptr))
                 {
 
                     /* Yes, fragmenting is available.  Place the packet on the incoming
@@ -572,9 +572,10 @@ UINT            packet_consumed;
 #ifdef NX_ENABLE_LOW_WATERMARK
             if (ip_ptr -> nx_ip_fragment_assembly &&
                 (packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_available >=
-                 packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_low_watermark))
+                 packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_low_watermark) &&
+                NX_IP_FRAGMENT_ADMIT(packet_ptr))
 #else
-            if (ip_ptr -> nx_ip_fragment_assembly)
+            if (ip_ptr -> nx_ip_fragment_assembly && NX_IP_FRAGMENT_ADMIT(packet_ptr))
 #endif
             {
 

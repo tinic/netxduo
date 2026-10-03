@@ -114,6 +114,19 @@
 #define NX_IP_FRAGMENT_POOL_RESERVE(pool_ptr) ((pool_ptr) -> nx_packet_pool_total >> 1)
 #endif /* NX_IP_FRAGMENT_POOL_RESERVE */
 
+/* Admission of a fragment at enqueue.  _nx_ip_fragment_assembly() bounds what
+   one IP instance's assembly list holds of each pool; it cannot see another
+   instance's list, and a pool's owners are not known (a driver may hand up a
+   pool of its own, or one an instance used before).  So while any other IP
+   instance exists, the receive path also keeps 016daf76's pool-wide gate: a
+   fragment is admitted only while the pool's free count is above the reserve.
+   _nx_ip_created_count is one word, changed under TX_DISABLE by create and
+   delete.  */
+#define NX_IP_FRAGMENT_ADMIT(packet_ptr)                                        \
+    ((_nx_ip_created_count <= 1) ||                                             \
+     ((packet_ptr) -> nx_packet_pool_owner -> nx_packet_pool_available >        \
+      NX_IP_FRAGMENT_POOL_RESERVE((packet_ptr) -> nx_packet_pool_owner)))
+
 #include "nx_ipv4.h"
 
 

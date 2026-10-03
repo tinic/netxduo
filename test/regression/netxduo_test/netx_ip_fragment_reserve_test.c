@@ -23,7 +23,13 @@
  * 5. A burst queued while the IP thread cannot run is admitted fragment by
  *    fragment as the thread drains it: the cap holds, the rest is released.
  * 6. The budget is per pool: with pool_0's full, a datagram from pool_1 is
- *    reassembled. */
+ *    reassembled, after an auxiliary pool change.
+ * 7. A fragment's whole chain is charged, per owner: one whose first buffer
+ *    is pool_1's and second pool_0's is refused while pool_0's budget is full,
+ *    and both buffers are released.
+ * 8. With a second IP instance on pool_0, the pool-wide gate applies at
+ *    enqueue: fragments for ip_1, whose own list holds nothing, are refused
+ *    while pool_0 is at its reserve.  Deleted again, ip_0 is alone. */
 
 #include   "nx_api.h"
 #include   "nx_ip.h"
@@ -39,6 +45,8 @@ static TX_THREAD               thread_0;
 static NX_PACKET_POOL          pool_0;
 static NX_PACKET_POOL          pool_1;
 static NX_IP                   ip_0;
+static NX_IP                   ip_1;
+static UCHAR                   ip_1_stack[2048];
 static NX_UDP_SOCKET           socket_0;
 
 static ULONG                   error_counter;
@@ -135,6 +143,36 @@ UINT        i;
     packet_ptr -> nx_packet_address.nx_packet_interface_ptr = &ip_0.nx_ip_interface[0];
 
     return(packet_ptr);
+}
+
+/* A first fragment of datagram id whose IP header buffer is head_pool's and
+   whose payload is a second buffer, tail_pool's.  */
+static UINT    fragment_send_chained(NX_IP *ip_ptr, NX_PACKET_POOL *head_pool, NX_PACKET_POOL *tail_pool, USHORT id)
+{
+
+NX_PACKET  *packet_ptr = fragment_build(head_pool, id, 0, NX_TRUE);
+NX_PACKET  *tail_ptr;
+
+
+    if (packet_ptr == NX_NULL)
+    {
+        return(NX_NO_PACKET);
+    }
+    if (nx_packet_allocate(tail_pool, &tail_ptr, NX_PHYSICAL_HEADER, NX_NO_WAIT))
+    {
+        nx_packet_release(packet_ptr);
+        return(NX_NO_PACKET);
+    }
+
+    /* The eight bytes after the IP header move into the tail buffer.  */
+    memcpy(tail_ptr -> nx_packet_prepend_ptr, packet_ptr -> nx_packet_prepend_ptr + 20, 8);
+    tail_ptr -> nx_packet_append_ptr = tail_ptr -> nx_packet_prepend_ptr + 8;
+    packet_ptr -> nx_packet_append_ptr = packet_ptr -> nx_packet_prepend_ptr + 20;
+    packet_ptr -> nx_packet_next = tail_ptr;
+    packet_ptr -> nx_packet_last = tail_ptr;
+
+    _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
+    return(NX_SUCCESS);
 }
 
 static UINT    fragment_send_from(NX_PACKET_POOL *pool_ptr, USHORT id, ULONG offset, UINT more)
@@ -277,6 +315,9 @@ UINT        old_priority;
     }
     nx_packet_release(packet_ptr);
 
+    /* An auxiliary pool changes nothing about whose list holds what.  */
+    nx_ip_auxiliary_packet_pool_set(&ip_0, &pool_1);
+
     /* A burst: this thread outranks the IP thread while it queues twice the
        cap of first fragments, so the IP thread drains them as one batch.  */
     tx_thread_priority_change(&thread_0, 0, &old_priority);
@@ -305,6 +346,48 @@ UINT        old_priority;
     }
     nx_packet_release(packet_ptr);
     if (total - pool_0.nx_packet_pool_available != cap)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+
+    /* A chain whose second buffer is pool_0's is charged to pool_0 as well,
+       and refused: neither pool keeps a buffer of it.  */
+    fragment_send_chained(&ip_0, &pool_1, &pool_0, 400);
+    tx_thread_sleep(2);
+    if ((total - pool_0.nx_packet_pool_available != cap) ||
+        (pool_1.nx_packet_pool_available != pool_1.nx_packet_pool_total))
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+
+    /* A second instance on pool_0.  Its own assembly list is empty, but the
+       pool is at its reserve, so its fragments are refused at enqueue.  */
+    if (nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL, &pool_0,
+                     _nx_ram_network_driver_256, ip_1_stack, sizeof(ip_1_stack), 1) ||
+        nx_ip_fragment_enable(&ip_1))
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+    for (id = 500; id < 504; id++)
+    {
+        packet_ptr = fragment_build(&pool_0, id, 0, NX_TRUE);
+        if (packet_ptr == NX_NULL)
+        {
+            break;
+        }
+        packet_ptr -> nx_packet_address.nx_packet_interface_ptr = &ip_1.nx_ip_interface[0];
+        _nx_ip_packet_deferred_receive(&ip_1, packet_ptr);
+        tx_thread_sleep(1);
+    }
+    if (total - pool_0.nx_packet_pool_available != cap)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+    if (nx_ip_delete(&ip_1))
     {
         printf("ERROR!\n");
         test_control_return(1);

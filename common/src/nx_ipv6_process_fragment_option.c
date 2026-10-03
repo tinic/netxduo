@@ -97,6 +97,12 @@ NX_IPV6_HEADER_FRAGMENT_OPTION *fragment_option;
         return(NX_OPTION_HEADER_ERROR);
     }
 
+    /* Reassembly may not take a shared pool past its reserve (nx_ip.h). */
+    if (!NX_IP_FRAGMENT_ADMIT(packet_ptr))
+    {
+        return(NX_POOL_ERROR);
+    }
+
     /* Check packet length is at least sizeof(NX_IPV6_HEADER_FRAGMENT_OPTION). */
     if (packet_ptr -> nx_packet_length < sizeof(NX_IPV6_HEADER_FRAGMENT_OPTION))
     {

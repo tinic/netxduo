@@ -87,8 +87,12 @@ UINT    status;
     nx_system_initialize();
 
     /* Create a packet pool.  */
-    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 500, pointer, 4096);
-    pointer = pointer + 4096;
+    /* Two IP instances share this pool, so reassembly may take it only while
+       more than NX_IP_FRAGMENT_POOL_RESERVE (half) is free (016daf76,
+       NX_IP_FRAGMENT_ADMIT).  This is the least that passes; the refusal on
+       the smaller pool is netx_ip_fragment_reserve_test.  */
+    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 500, pointer, 4608);
+    pointer = pointer + 4608;
 
     /* Check for pool creation error.  */
     if (status)

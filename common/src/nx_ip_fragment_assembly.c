@@ -108,6 +108,66 @@ ULONG      held = 0;
     return(held);
 }
 
+/* AmiNetXDuo: whether the datagrams being reassembled can take fragment_ptr,
+   every buffer of it charged to the pool that owns it: for each pool in the
+   chain, what is held of it plus what the chain brings of it stays within the
+   pool less its reserve.  */
+static UINT  _nx_ip_fragment_assembly_fits(NX_IP *ip_ptr, NX_PACKET *fragment_ptr)
+{
+
+#ifndef NX_DISABLE_PACKET_CHAIN
+NX_PACKET      *buffer_ptr;
+NX_PACKET      *search_ptr;
+ULONG           charge;
+#endif /* NX_DISABLE_PACKET_CHAIN */
+NX_PACKET_POOL *pool_ptr;
+
+
+#ifndef NX_DISABLE_PACKET_CHAIN
+    for (buffer_ptr = fragment_ptr; buffer_ptr; buffer_ptr = buffer_ptr -> nx_packet_next)
+    {
+        pool_ptr = buffer_ptr -> nx_packet_pool_owner;
+
+        /* Each pool once, at its first buffer in the chain.  */
+        for (search_ptr = fragment_ptr; search_ptr != buffer_ptr; search_ptr = search_ptr -> nx_packet_next)
+        {
+            if (search_ptr -> nx_packet_pool_owner == pool_ptr)
+            {
+                break;
+            }
+        }
+        if (search_ptr != buffer_ptr)
+        {
+            continue;
+        }
+
+        charge = 0;
+        for (search_ptr = buffer_ptr; search_ptr; search_ptr = search_ptr -> nx_packet_next)
+        {
+            if (search_ptr -> nx_packet_pool_owner == pool_ptr)
+            {
+                charge++;
+            }
+        }
+
+        if (_nx_ip_fragment_assembly_held(ip_ptr, pool_ptr) + charge >
+            (pool_ptr -> nx_packet_pool_total - NX_IP_FRAGMENT_POOL_RESERVE(pool_ptr)))
+        {
+            return(NX_FALSE);
+        }
+    }
+#else
+    pool_ptr = fragment_ptr -> nx_packet_pool_owner;
+    if (_nx_ip_fragment_assembly_held(ip_ptr, pool_ptr) + 1 >
+        (pool_ptr -> nx_packet_pool_total - NX_IP_FRAGMENT_POOL_RESERVE(pool_ptr)))
+    {
+        return(NX_FALSE);
+    }
+#endif /* NX_DISABLE_PACKET_CHAIN */
+
+    return(NX_TRUE);
+}
+
 VOID  _nx_ip_fragment_assembly(NX_IP *ip_ptr)
 {
 TX_INTERRUPT_SAVE_AREA
@@ -215,13 +275,13 @@ UINT                            packet_consumed;
         }
 #endif
 
-        /* AmiNetXDuo: reassembly may not hold the pool's reserve
-           (NX_IP_FRAGMENT_POOL_RESERVE, nx_ip.h).  What the datagrams being
-           assembled hold is counted, buffer by buffer; the list is this
-           thread's alone.  */
-        if (_nx_ip_fragment_assembly_held(ip_ptr, current_fragment -> nx_packet_pool_owner) + 1 >
-            (current_fragment -> nx_packet_pool_owner -> nx_packet_pool_total -
-             NX_IP_FRAGMENT_POOL_RESERVE(current_fragment -> nx_packet_pool_owner)))
+        /* AmiNetXDuo: reassembly may not hold any pool's reserve
+           (NX_IP_FRAGMENT_POOL_RESERVE, nx_ip.h).  What this instance's
+           datagrams being assembled hold is counted, buffer by buffer, against
+           every pool the fragment's own buffers come from; the list is this
+           thread's alone.  Other instances on a shared pool are bounded at
+           enqueue (NX_IP_FRAGMENT_ADMIT).  */
+        if (_nx_ip_fragment_assembly_fits(ip_ptr, current_fragment) == NX_FALSE)
         {
 
 #ifndef NX_DISABLE_IP_INFO
