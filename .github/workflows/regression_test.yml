@@ -21,13 +21,16 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_nxd.sh
       test_script: ./scripts/test_nxd.sh
       cmake_path: ./test/cmake/netxduo
       result_affix: NetXDuo
       skip_deploy: true
+      # 43 configurations at about 34 s each: 26 minutes measured on the
+      # runner, past the template default of 15.
+      build_timeout_minutes: 40
   Web:
     permissions:
       contents: read
@@ -36,7 +39,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_web.sh
       test_script: ./scripts/test_web.sh
@@ -51,7 +54,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_ptp.sh
       test_script: ./scripts/test_ptp.sh
@@ -66,7 +69,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_mqtt.sh
       test_script: ./scripts/test_mqtt.sh
@@ -81,7 +84,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_nxd64.sh
       test_script: ./scripts/test_nxd64.sh
@@ -96,7 +99,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_nxd_fast.sh
       test_script: ./scripts/test_nxd_fast.sh
@@ -112,7 +115,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_secure.sh
       test_script: ./scripts/test_secure.sh
@@ -127,7 +130,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       build_script: ./scripts/build_crypto.sh
       test_script: ./scripts/test_crypto.sh
@@ -142,7 +145,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       install_script: ./scripts/install_secure.sh
       build_script: ./scripts/build_secure_interoperability.sh
@@ -158,7 +161,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
+    uses: ./.github/workflows/regression_template.yml
     with:
       install_script: ./scripts/install_mqtt.sh
       build_script: ./scripts/build_mqtt_interoperability.sh
@@ -166,16 +169,3 @@ jobs:
       cmake_path: ./test/cmake/mqtt_interoperability
       result_affix: MQTT_Interoperability
       skip_deploy: true
-  Deploy:
-    permissions:
-      contents: read
-      issues: read
-      checks: write
-      pull-requests: write
-      pages: write
-      id-token: write
-    needs: [NetXDuo, Web, MQTT, NetXDuo64, NetXDuo_Fast, Secure, Crypto, Secure_Interoperability, MQTT_Interoperability]
-    uses: eclipse-threadx/threadx/.github/workflows/regression_template.yml@master
-    with:
-      skip_test: true
-      deploy_list: "NetXDuo Web MQTT NetXDuo64 NetXDuo_Fast Secure Crypto Secure_Interoperability MQTT_Interoperability"
