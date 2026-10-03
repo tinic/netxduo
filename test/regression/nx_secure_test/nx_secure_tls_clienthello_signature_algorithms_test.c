@@ -29,7 +29,7 @@ extern VOID test_control_return(UINT status);
 
 #define TEST_PACKET_OFFSET                 3u
 #define TEST_PACKET_SIZE                   32u
-#define TLS_1_3_EXTENSION_SIZE             20u
+#define TLS_1_3_EXTENSION_SIZE             26u
 #define TLS_1_2_EXTENSION_SIZE             14u
 #define OVERSIZED_TABLE_ENTRY_COUNT        16383u
 
@@ -79,12 +79,14 @@ static const USHORT supported_groups[] =
     (USHORT)NX_CRYPTO_EC_SECP256R1
 };
 
+/* Each RSA row offers rsa_pss_rsae, rsa_pss_pss (RSASSA-PSS public keys,
+   fork d8b60f47) and its TLS 1.2 PKCS#1 fallback.  */
 static const UCHAR expected_tls_1_3_extension[TLS_1_3_EXTENSION_SIZE] =
 {
-    0x00, 0x0D, 0x00, 0x10, 0x00, 0x0E,
-    0x08, 0x04, 0x04, 0x01,
-    0x08, 0x05, 0x05, 0x01,
-    0x08, 0x06, 0x06, 0x01,
+    0x00, 0x0D, 0x00, 0x16, 0x00, 0x14,
+    0x08, 0x04, 0x08, 0x09, 0x04, 0x01,
+    0x08, 0x05, 0x08, 0x0A, 0x05, 0x01,
+    0x08, 0x06, 0x08, 0x0B, 0x06, 0x01,
     0x04, 0x03
 };
 
