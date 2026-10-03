@@ -304,6 +304,14 @@ UINT                 status;
             return(NX_CRYPTO_POINTER_ERROR);
         }
 
+        /* The PRK is copied to output, and input is the IKM the HMAC reads.
+           An empty IKM may be NULL; neither may be NULL otherwise.  Tested
+           before anything is stored in the context (N-160). */
+        if((output == NX_CRYPTO_NULL) || ((input == NX_CRYPTO_NULL) && (input_length_in_byte != 0)))
+        {
+            return(NX_CRYPTO_POINTER_ERROR);
+        }
+
         if(hkdf->nx_crypto_hash_method == NX_CRYPTO_NULL || hkdf->nx_crypto_hmac_method == NX_CRYPTO_NULL)
         {
             return(NX_CRYPTO_METHOD_INITIALIZATION_FAILURE);
