@@ -49,7 +49,49 @@ static NX_PACKET               *copy_packet;
 
 static void    thread_0_entry(ULONG thread_input);
 static void    thread_1_entry(ULONG thread_input);
-extern void    _nx_ram_network_driver_256(struct NX_IP_DRIVER_STRUCT *driver_req);      
+extern void    _nx_ram_network_driver_256(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
+
+static UINT    copied_syn_peer_mss(void);
+static NX_TCP_SOCKET  *parked_socket(void);
+
+/* SYN+ACKs the server sends to the port the copied SYN came from.  */
+static UINT                    copied_syn_port;
+static UINT                    syn_acks_to_copied_port;
+
+static UINT    count_syn_acks(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
+{
+
+UCHAR  *ip_header = packet_ptr -> nx_packet_prepend_ptr;
+UCHAR  *tcp_header;
+
+
+    NX_PARAMETER_NOT_USED(operation_ptr);
+    NX_PARAMETER_NOT_USED(delay_ptr);
+
+    if (ip_ptr != &ip_1)
+    {
+        return(NX_TRUE);
+    }
+    if (((ip_header[0] >> 4) == 4) && (ip_header[9] == NX_PROTOCOL_TCP))
+    {
+        tcp_header = ip_header + ((UINT)(ip_header[0] & 0x0F) << 2);
+    }
+    else if (((ip_header[0] >> 4) == 6) && (ip_header[6] == NX_PROTOCOL_TCP))
+    {
+        tcp_header = ip_header + 40;
+    }
+    else
+    {
+        return(NX_TRUE);
+    }
+    if (((tcp_header[13] & 0x12) == 0x12) &&
+        ((((UINT)tcp_header[2] << 8) | tcp_header[3]) == copied_syn_port))
+    {
+        syn_acks_to_copied_port++;
+    }
+    return(NX_TRUE);
+}      
 static void    my_tcp_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 
 
@@ -370,13 +412,23 @@ ULONG           actual_status;
         error_counter++;
 
     /* Let server receive the packet.  */
+    copied_syn_port = client_socket_1.nx_tcp_socket_port;
+    advanced_packet_process_callback = count_syn_acks;
     _nx_tcp_packet_receive(&ip_1, copy_packet); 
 
-    /* Relisten.  */   
+    /* Since 6b586f93 the SYN that arrived with no socket on the listen
+       request is held by the SYN cache, unanswered and holding no packet
+       (96502647), not queued as a packet the next relisten binds a socket
+       to.  So relisten parks the socket and answers that SYN at once: it
+       returns NX_SUCCESS (NX_CONNECTION_PENDING is for a finished handshake
+       waiting for a socket), one SYN+ACK goes to the SYN's port, and the
+       socket is bound only when the handshake finishes.  The peer's MSS is
+       on the cache entry, where the socket takes it from then.  */
     status =  nx_tcp_server_socket_relisten(&ip_1, SERVER_PORT_1, &server_socket_1);
+    advanced_packet_process_callback = NX_NULL;
 
     /* Check for error.  */
-    if (status != NX_CONNECTION_PENDING)
+    if ((status != NX_SUCCESS) || (syn_acks_to_copied_port != 1))
         error_counter++;
 
     /* Check the socket state.  */
@@ -384,12 +436,58 @@ ULONG           actual_status;
         error_counter++;
 
     /* Check the mss value.  */
-    if (server_socket_1.nx_tcp_socket_peer_mss != 536)    
+    if (copied_syn_peer_mss() != 536)    
         error_counter++;
 
     /* Check the TCP port table.  */
-    if ((ip_1.nx_ip_tcp_port_table[1] != &server_socket_0) || (ip_1.nx_ip_tcp_port_table[1] -> nx_tcp_socket_bound_next != &server_socket_1))
+    if ((ip_1.nx_ip_tcp_port_table[1] != &server_socket_0) || (ip_1.nx_ip_tcp_port_table[1] -> nx_tcp_socket_bound_next != &server_socket_0) ||
+        (server_socket_1.nx_tcp_socket_bound_next != NX_NULL) || (parked_socket() != &server_socket_1))
         error_counter++;
+}
+
+/* The MSS the cache recorded for the copied SYN's connection, which it has
+   answered (SYN_RECEIVED), or 0.  */
+static UINT    copied_syn_peer_mss(void)
+{
+
+UINT                   i;
+UINT                   mss = 0;
+NX_TCP_SYNCACHE_ENTRY *entry;
+
+
+    tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
+    for (i = 0; i < NX_TCP_SYNCACHE_SIZE; i++)
+    {
+        entry = &ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i];
+        if ((entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_SYN_RECEIVED) &&
+            (entry -> nx_tcp_syncache_local_port == SERVER_PORT_1) &&
+            (entry -> nx_tcp_syncache_peer_port == copied_syn_port))
+        {
+            mss = entry -> nx_tcp_syncache_peer_mss;
+        }
+    }
+    tx_mutex_put(&(ip_1.nx_ip_protection));
+
+    return(mss);
+}
+
+/* The socket SERVER_PORT_1's listen request holds for the next connection.  */
+static NX_TCP_SOCKET  *parked_socket(void)
+{
+
+NX_TCP_LISTEN *listen_ptr = ip_1.nx_ip_tcp_active_listen_requests;
+
+
+    do
+    {
+        if (listen_ptr -> nx_tcp_listen_port == SERVER_PORT_1)
+        {
+            return(listen_ptr -> nx_tcp_listen_socket_ptr);
+        }
+        listen_ptr = listen_ptr -> nx_tcp_listen_next;
+    } while (listen_ptr != ip_1.nx_ip_tcp_active_listen_requests);
+
+    return(NX_NULL);
 }         
      
 static void    my_tcp_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr)

@@ -52,6 +52,50 @@ static void    thread_0_entry(ULONG thread_input);
 static void    thread_1_entry(ULONG thread_input);
 extern void    test_control_return(UINT status);
 extern void    _nx_ram_network_driver_256(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
+
+/* Since 6b586f93 a SYN for a listen request with no socket is not a packet
+   held on nx_tcp_listen_queue but an entry in the SYN cache, in state
+   NX_TCP_SYNCACHE_DEFERRED, holding no packet (96502647).  The counts below
+   are of those; what the server sends is counted on the wire, and it sends
+   nothing: a deferred SYN is not answered, and a RST is not.  */
+static ULONG                   server_segments;
+
+static UINT    server_send_count(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
+{
+
+    NX_PARAMETER_NOT_USED(operation_ptr);
+    NX_PARAMETER_NOT_USED(delay_ptr);
+
+    /* TCP only: the server answers the client's ARP requests.  */
+    if ((ip_ptr == &ip_1) && ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) == 4) &&
+        (packet_ptr -> nx_packet_prepend_ptr[9] == NX_PROTOCOL_TCP))
+    {
+        server_segments++;
+    }
+    return(NX_TRUE);
+}
+
+static ULONG   deferred_syns(void)
+{
+
+UINT    i;
+ULONG   count = 0;
+
+
+    tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
+    for (i = 0; i < NX_TCP_SYNCACHE_SIZE; i++)
+    {
+        if ((ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i].nx_tcp_syncache_state == NX_TCP_SYNCACHE_DEFERRED) &&
+            (ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i].nx_tcp_syncache_local_port == 12))
+        {
+            count++;
+        }
+    }
+    tx_mutex_put(&(ip_1.nx_ip_protection));
+
+    return(count);
+}
 
 
 /* Define what the initial system looks like.  */
@@ -164,6 +208,8 @@ NX_TCP_HEADER   tcp_header;
     if (status)
         error_counter++;
 
+    advanced_packet_process_callback = server_send_count;
+
     /* Attempt to connect the socket.  */
     status =  nx_tcp_client_socket_connect(&client_socket, IP_ADDRESS(1, 2, 3, 5), 12, NX_NO_WAIT);
 
@@ -172,7 +218,7 @@ NX_TCP_HEADER   tcp_header;
         error_counter++;
 
     /* Check if queue the SYN packet.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_queue_current != 1)
+    if (deferred_syns() != 1)
         error_counter++;
 
     /* Build TCP header.  */
@@ -192,7 +238,7 @@ NX_TCP_HEADER   tcp_header;
     }
 
     /* Check the queue count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_queue_current != 0)
+    if (deferred_syns() != 0)
         error_counter++;
 
     /* Disconnect the socket.  */
@@ -229,7 +275,7 @@ NX_TCP_HEADER   tcp_header;
         error_counter++;
 
     /* Check if queue the SYN packet.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_queue_current != 1)
+    if (deferred_syns() != 1)
         error_counter++;
 
     /* Bind the socket.  */
@@ -245,7 +291,7 @@ NX_TCP_HEADER   tcp_header;
         error_counter++;
 
     /* Check if queue the SYN packet.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_queue_current != 2)
+    if (deferred_syns() != 2)
         error_counter++;
 
     /* Build TCP header.  */
@@ -258,14 +304,15 @@ NX_TCP_HEADER   tcp_header;
     /* Send RST to reset the second SYN.  */
     _nx_tcp_packet_send_rst(&client_socket, &tcp_header);
 
-    /* Check if the second SYN and the third RST both are released.  */
-    if (pool_0.nx_packet_pool_available != pool_0.nx_packet_pool_total - 1)
+    /* Check if the second SYN and the third RST both are released.  The
+       first SYN is still waiting, but as a cache entry, not a packet.  */
+    if (pool_0.nx_packet_pool_available != pool_0.nx_packet_pool_total)
     {
         error_counter++;
     }
 
     /* Check the queue count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_queue_current != 1)
+    if (deferred_syns() != 1)
         error_counter++;
 
     /* Build TCP header.  */
@@ -285,7 +332,12 @@ NX_TCP_HEADER   tcp_header;
     }
 
     /* Check the queue count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_queue_current != 0)
+    if (deferred_syns() != 0)
+        error_counter++;
+
+    /* Nothing was answered: no SYN+ACK to a deferred SYN, no RST to a RST.  */
+    advanced_packet_process_callback = NX_NULL;
+    if (server_segments != 0)
         error_counter++;
 
     /* Check status.  */
