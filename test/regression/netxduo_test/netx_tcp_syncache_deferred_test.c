@@ -27,12 +27,20 @@
         after handover; a RST with the right sequence number ends the held
         handshake
      G  a cookie answered with no socket parked: the ACK is held, then handed
-        over by relisten  */
+        over by relisten
+     H  an answered SYN that expires on the periodic pass gives the parked
+        socket to the oldest unanswered one
+     I  IPv6: deferral; relisten answers the SYN, and the socket waits for
+        accept in LISTEN with the peer's address while data the client sends
+        is kept unacknowledged, then arrives once accept is called  */
 
 #include   "nx_api.h"
 #include   "nx_ip.h"
 #include   "nx_tcp.h"
 #include   "nx_ram_network_driver_test_1500.h"
+#ifdef FEATURE_NX_IPV6
+#include   "nx_ipv6.h"
+#endif /* FEATURE_NX_IPV6 */
 
 extern void    test_control_return(UINT status);
 #if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
@@ -43,10 +51,12 @@ extern void    test_control_return(UINT status);
 #define PORT_RACE              0x102
 #define PORT_FIN               0x103
 #define PORT_COOKIE            0x104
+#define PORT_EXPIRE            0x105
+#define PORT_V6                0x106
 
 /* Client ports, one per client, so the hook can tell them apart.  */
 #define CPORT_BASE             0x200
-#define CLIENTS                16
+#define CLIENTS                21
 
 #define C_A0                   0
 #define C_A1                   1
@@ -64,8 +74,13 @@ extern void    test_control_return(UINT status);
 #define C_G0                   13
 #define C_G1                   14
 #define C_F4                   15
+#define C_H0                   16
+#define C_H1                   17
+#define C_H2                   18
+#define C_I0                   19
+#define C_I1                   20
 
-#define SERVERS                12
+#define SERVERS                16
 
 static TX_THREAD               thread_0;
 static TX_THREAD               thread_fin;
@@ -79,6 +94,11 @@ static NX_TCP_SOCKET           server[SERVERS];
 
 static ULONG                   error_counter;
 
+#ifdef FEATURE_NX_IPV6
+static NXD_ADDRESS             address_0;
+static NXD_ADDRESS             address_1;
+#endif /* FEATURE_NX_IPV6 */
+
 /* Per client port, what the server sent it.  */
 static UINT                    synack_seen[CLIENTS];
 static UINT                    zero_window_acks[CLIENTS];
@@ -91,6 +111,7 @@ static UINT                    drop_syn_retries[CLIENTS];
 static UINT                    delay_synack[CLIENTS];
 static UINT                    syn_count[CLIENTS];
 static UINT                    drop_window_update[CLIENTS];
+static UINT                    drop_synack[CLIENTS];
 static UINT                    bad_ack_next[CLIENTS];
 static UINT                    bad_seq_next[CLIENTS];
 static UINT                    mutated_zero_acks[CLIENTS];
@@ -159,6 +180,25 @@ UINT    status;
     status += nx_tcp_enable(&ip_1);
     if (status)
         error_counter++;
+
+#ifdef FEATURE_NX_IPV6
+    address_0.nxd_ip_version = NX_IP_VERSION_V6;
+    address_0.nxd_ip_address.v6[0] = 0x20010000;
+    address_0.nxd_ip_address.v6[1] = 0;
+    address_0.nxd_ip_address.v6[2] = 0;
+    address_0.nxd_ip_address.v6[3] = 4;
+    address_1 = address_0;
+    address_1.nxd_ip_address.v6[3] = 5;
+
+    status =  nxd_ipv6_enable(&ip_0);
+    status += nxd_ipv6_enable(&ip_1);
+    status += nxd_icmp_enable(&ip_0);
+    status += nxd_icmp_enable(&ip_1);
+    status += nxd_ipv6_address_set(&ip_0, 0, &address_0, 64, NX_NULL);
+    status += nxd_ipv6_address_set(&ip_1, 0, &address_1, 64, NX_NULL);
+    if (status)
+        error_counter++;
+#endif /* FEATURE_NX_IPV6 */
 }
 
 
@@ -236,6 +276,20 @@ UINT    status;
     status = nx_tcp_client_socket_connect(&client[c], IP_ADDRESS(1, 2, 3, 5), port, NX_NO_WAIT);
     check((status == NX_SUCCESS) || (status == NX_IN_PROGRESS));
 }
+
+
+#ifdef FEATURE_NX_IPV6
+static void    client_start6(UINT c, UINT port)
+{
+
+UINT    status;
+
+
+    check(client_open(c) == NX_SUCCESS);
+    status = nxd_tcp_client_socket_connect(&client[c], &address_1, port, NX_NO_WAIT);
+    check((status == NX_SUCCESS) || (status == NX_IN_PROGRESS));
+}
+#endif /* FEATURE_NX_IPV6 */
 
 
 /* Wait for a client to reach a state, up to a number of ticks.  */
@@ -411,17 +465,23 @@ UCHAR                  buffer[8];
     /* A segment with the wrong acknowledgment, and one outside the window,
        draw no reply at all.  */
     bad_ack_next[queued] = NX_TRUE;
-    while (mutated[queued] == 0)
+    s = 0;
+    while ((mutated[queued] == 0) && (s < 10 * NX_IP_PERIODIC_RATE))
     {
         tx_thread_sleep(1);
+        s++;
     }
+    check(mutated[queued] == 1);
     tx_thread_sleep(NX_IP_PERIODIC_RATE / 4);
     check(zero_window_acks[queued] == mutated_zero_acks[queued]);
     bad_seq_next[queued] = NX_TRUE;
-    while (mutated[queued] == 1)
+    s = 0;
+    while ((mutated[queued] == 1) && (s < 10 * NX_IP_PERIODIC_RATE))
     {
         tx_thread_sleep(1);
+        s++;
     }
+    check(mutated[queued] == 2);
     tx_thread_sleep(NX_IP_PERIODIC_RATE / 4);
     check(zero_window_acks[queued] == mutated_zero_acks[queued]);
 
@@ -546,6 +606,80 @@ UCHAR                  buffer[8];
     check(nx_tcp_server_socket_relisten(&ip_1, PORT_COOKIE, &server[11]) == NX_CONNECTION_PENDING);
     check(nx_tcp_server_socket_accept(&server[11], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
 
+    /* H: two SYNs wait unanswered; relisten answers the older, whose client
+       never hears it.  When that entry expires on the periodic pass, the
+       parked socket goes to the other SYN.  */
+    check(nx_tcp_server_socket_listen(&ip_1, PORT_EXPIRE, &server[12], 4, NX_NULL) == NX_SUCCESS);
+    check(client_open(C_H0) == NX_SUCCESS);
+    check(nx_tcp_client_socket_connect(&client[C_H0], IP_ADDRESS(1, 2, 3, 5), PORT_EXPIRE, 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+    check(nx_tcp_server_socket_accept(&server[12], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+    drop_syn_retries[C_H1] = NX_TRUE;
+    drop_synack[C_H1] = NX_TRUE;
+    client_start(C_H1, PORT_EXPIRE);
+    tx_thread_sleep(NX_IP_PERIODIC_RATE / 10);
+    client_start(C_H2, PORT_EXPIRE);
+    tx_thread_sleep(NX_IP_PERIODIC_RATE / 10);
+    check((entry_state(PORT_EXPIRE, C_H1) == NX_TCP_SYNCACHE_DEFERRED) &&
+          (entry_state(PORT_EXPIRE, C_H2) == NX_TCP_SYNCACHE_DEFERRED));
+    check(nx_tcp_server_socket_relisten(&ip_1, PORT_EXPIRE, &server[13]) == NX_SUCCESS);
+    check((entry_state(PORT_EXPIRE, C_H1) == NX_TCP_SYNCACHE_SYN_RECEIVED) &&
+          (entry_state(PORT_EXPIRE, C_H2) == NX_TCP_SYNCACHE_DEFERRED) &&
+          (synack_seen[C_H1] == 1) && (synack_seen[C_H2] == 0));
+    tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
+    entry = entry_find(PORT_EXPIRE, C_H1);
+    check(entry != NX_NULL);
+    entry -> nx_tcp_syncache_time -= NX_TCP_SYNCACHE_TIMEOUT;
+    tx_mutex_put(&(ip_1.nx_ip_protection));
+    s = 0;
+    while ((entry_state(PORT_EXPIRE, C_H1) != NX_TCP_SYNCACHE_FREE) && (s < 3 * NX_IP_PERIODIC_RATE))
+    {
+        tx_thread_sleep(1);
+        s++;
+    }
+    check(entry_state(PORT_EXPIRE, C_H1) == NX_TCP_SYNCACHE_FREE);
+    check(client_wait(C_H2, NX_TCP_ESTABLISHED, NX_IP_PERIODIC_RATE));
+    check((synack_seen[C_H2] == 1) && (server_rsts[C_H1] == 0));
+    check(nx_tcp_server_socket_accept(&server[13], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+    check(server[13].nx_tcp_socket_connect_port == CPORT_BASE + C_H2);
+    nx_tcp_socket_disconnect(&client[C_H1], NX_NO_WAIT);
+    nx_tcp_client_socket_unbind(&client[C_H1]);
+
+#ifdef FEATURE_NX_IPV6
+
+    /* I: over IPv6, a SYN with no socket parked waits unanswered; relisten
+       answers it.  The finished connection waits for accept on the socket,
+       which stays in LISTEN with the peer's port as an upstream socket a SYN
+       arrived for does; data the client sends meanwhile is neither
+       acknowledged nor refused, and arrives once accept is called.  */
+    check(nx_tcp_server_socket_listen(&ip_1, PORT_V6, &server[14], 4, NX_NULL) == NX_SUCCESS);
+    check(client_open(C_I0) == NX_SUCCESS);
+    check(nxd_tcp_client_socket_connect(&client[C_I0], &address_1, PORT_V6, 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+    check(nx_tcp_server_socket_accept(&server[14], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+    client_start6(C_I1, PORT_V6);
+    tx_thread_sleep(NX_IP_PERIODIC_RATE / 4);
+    check((entry_state(PORT_V6, C_I1) == NX_TCP_SYNCACHE_DEFERRED) && (synack_seen[C_I1] == 0));
+    check(nx_tcp_server_socket_relisten(&ip_1, PORT_V6, &server[15]) == NX_SUCCESS);
+    check(client_wait(C_I1, NX_TCP_ESTABLISHED, NX_IP_PERIODIC_RATE) && (synack_seen[C_I1] == 1));
+    check((server[15].nx_tcp_socket_state == NX_TCP_LISTEN_STATE) &&
+          (server[15].nx_tcp_socket_connect_port == CPORT_BASE + C_I1) &&
+          (server[15].nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6));
+    client_send(C_I1, "early", 5);
+    tx_thread_sleep(NX_IP_PERIODIC_RATE / 4);
+    check((zero_window_acks[C_I1] == 0) && (window_updates[C_I1] == 0) &&
+          (server[15].nx_tcp_socket_state == NX_TCP_LISTEN_STATE));
+    check(nx_tcp_server_socket_accept(&server[15], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+    received = 0;
+    while (received < 5)
+    {
+        check(nx_tcp_socket_receive(&server[15], &packet_ptr, 30 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+        check((received + packet_ptr -> nx_packet_length) <= 5);
+        check(nx_packet_data_retrieve(packet_ptr, &buffer[received], &copied) == NX_SUCCESS);
+        received += copied;
+        nx_packet_release(packet_ptr);
+    }
+    check(memcmp(buffer, "early", 5) == 0);
+#endif /* FEATURE_NX_IPV6 */
+
     advanced_packet_process_callback = NX_NULL;
 
     check(error_counter == 0);
@@ -626,12 +760,21 @@ UCHAR   flags;
 
 
     ip_header = packet_ptr -> nx_packet_prepend_ptr;
-    if (((ip_header[0] >> 4) != 4) || (ip_header[9] != NX_PROTOCOL_TCP))
+    if (((ip_header[0] >> 4) == 4) && (ip_header[9] == NX_PROTOCOL_TCP))
+    {
+        header_length = (UINT)(ip_header[0] & 0x0F) << 2;
+    }
+    else if (((ip_header[0] >> 4) == 6) && (ip_header[6] == NX_PROTOCOL_TCP))
+    {
+
+        /* No extension headers on this link.  */
+        header_length = 40;
+    }
+    else
     {
         return(NX_TRUE);
     }
 
-    header_length = (UINT)(ip_header[0] & 0x0F) << 2;
     tcp_header = ip_header + header_length;
     tcp_header_length = (UINT)(tcp_header[12] >> 4) << 2;
     source_port = ((UINT)tcp_header[0] << 8) | tcp_header[1];
@@ -653,6 +796,10 @@ UCHAR   flags;
         if ((flags & 0x12) == 0x12)
         {
             synack_seen[c]++;
+            if (drop_synack[c] == NX_TRUE)
+            {
+                *operation_ptr = NX_RAMDRIVER_OP_DROP;
+            }
             if (delay_synack[c] == NX_TRUE)
             {
 
