@@ -686,6 +686,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_udp_source_send_test.c
     ${SOURCE_DIR}/netxduo_test/netx_icmp_ping6_fragment_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_ipv6_basic_processing_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_ipv6_address_delete_reset_test.c
     ${SOURCE_DIR}/netxduo_test/netx_ip_interface_attachment_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_send_fail_test2.c
     ${SOURCE_DIR}/netxduo_test/netx_1_20_test.c

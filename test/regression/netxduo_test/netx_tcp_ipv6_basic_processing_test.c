@@ -260,11 +260,14 @@ ULONG           packets_sent, bytes_sent, packets_received, bytes_received, retr
 
     client_socket.nx_tcp_socket_connect_ip.nxd_ip_version = NX_IP_VERSION_V6;
 
-    /* Delete the Ipv6 address. */
-    nxd_ipv6_address_delete(&ip_0, 0);
+    /* Take the address out of the VALID state.  The test used to delete it,
+       which 03f9ad88 makes reset the connections that use it, so the send
+       below would find the socket closed; an address still listed but no
+       longer valid is what the send path refuses.  */
+    ip_0.nx_ipv6_address[0].nxd_ipv6_address_state = NX_IPV6_ADDR_STATE_TENTATIVE;
 
     /* Send the packet. */
-    status = nx_tcp_socket_send(&client_socket, my_packet, 2 * NX_IP_PERIODIC_RATE); 
+    status = nx_tcp_socket_send(&client_socket, my_packet, 2 * NX_IP_PERIODIC_RATE);
 
     /* It must fail since address is invalid. */
     if (status != NX_NO_INTERFACE_ADDRESS)
@@ -273,11 +276,8 @@ ULONG           packets_sent, bytes_sent, packets_received, bytes_received, retr
         test_control_return(1);
     }
 
-    /* Set the address. */
-    nxd_ipv6_address_set(&ip_0, 0, &ipv6_address_1, 64, NX_NULL);
-
-    /* Wait 5 seconds for DAD. */
-    tx_thread_sleep(5 * NX_IP_PERIODIC_RATE);
+    /* Valid again. */
+    ip_0.nx_ipv6_address[0].nxd_ipv6_address_state = NX_IPV6_ADDR_STATE_VALID;
 
     /* Send packet */
     status = nx_tcp_socket_send(&client_socket, my_packet, 2 * NX_IP_PERIODIC_RATE); 
