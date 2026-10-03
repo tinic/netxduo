@@ -183,8 +183,10 @@ NX_PACKET  *my_packet;
         test_control_return(1);
     }
 
-    /* Verify the ICMPv4 error message is received. */
-    if (ip_0.nx_ip_icmp_unhandled_messages != 1)
+    /* Verify the ICMPv4 error message is received.  Counted as received, not
+       as unhandled: 8e0f3edf hands a Destination Unreachable to the transport
+       (RFC 1122 3.2.2.1), so it is no longer an unhandled type.  */
+    if (ip_0.nx_ip_icmp_total_messages_received != 1)
     {
         printf("ERROR!\n");
         test_control_return(1);
@@ -241,8 +243,10 @@ NX_PACKET  *my_packet;
         test_control_return(1);
     }
 
-    /* Verify the ICMPv4 error message is received. */
-    if (ip_0.nx_ip_icmp_unhandled_messages != 2)
+    /* Verify the ICMPv4 error message is received.  Counted as received, not
+       as unhandled: 8e0f3edf hands a Destination Unreachable to the transport
+       (RFC 1122 3.2.2.1), so it is no longer an unhandled type.  */
+    if (ip_0.nx_ip_icmp_total_messages_received != 2)
     {
         printf("ERROR!\n");
         test_control_return(1);
