@@ -211,7 +211,7 @@ UCHAR             code;
        TCP and UDP that is the two ports; for TCP it is also the sequence
        number of the segment the error names.  */
     if (_nx_packet_data_extract_offset(packet_ptr,
-                                       sizeof(NX_ICMPV4_ERROR) + (header_length * sizeof(ULONG)),
+                                       (ULONG)(sizeof(NX_ICMPV4_ERROR) + (header_length * sizeof(ULONG))),
                                        (VOID *)transport, sizeof(transport),
                                        &bytes_copied) != NX_SUCCESS)
     {

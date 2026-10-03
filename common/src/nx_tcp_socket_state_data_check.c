@@ -1126,7 +1126,16 @@ NX_IP         *ip_ptr;
 
         /* Update the rx_window_last_sent for SWS avoidance algorithm.
            RFC1122, Section4.2.3.3, Page97-98.  */
-        socket_ptr -> nx_tcp_socket_rx_window_last_sent -= (socket_ptr -> nx_tcp_socket_rx_sequence - original_rx_sequence);
+        if (socket_ptr -> nx_tcp_socket_rx_window_last_sent > (socket_ptr -> nx_tcp_socket_rx_sequence - original_rx_sequence))
+        {
+            socket_ptr -> nx_tcp_socket_rx_window_last_sent -= (socket_ptr -> nx_tcp_socket_rx_sequence - original_rx_sequence);
+        }
+        else
+        {
+
+            /* Data the free space took past the edge last advertised.  */
+            socket_ptr -> nx_tcp_socket_rx_window_last_sent = 0;
+        }
     }
 
 #ifdef NX_TCP_MAX_OUT_OF_ORDER_PACKETS
@@ -1429,7 +1438,7 @@ NX_IP         *ip_ptr;
     if ((need_ack == NX_TRUE) &&
         ((out_of_sequence == NX_TRUE) ||
          (socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
-         (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
+         (NX_TCP_RX_WINDOW_ADVERTISED(socket_ptr) != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
     {
 
         /* Need to send ACK.  */

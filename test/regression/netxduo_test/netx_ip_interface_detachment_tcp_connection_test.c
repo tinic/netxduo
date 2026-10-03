@@ -183,14 +183,31 @@ ULONG   actual_status;
     if(server_socket.nx_tcp_socket_state != NX_TCP_SYN_RECEIVED)
         error_counter++;
 
+#ifdef NX_TCP_SYNCACHE_SIZE
+    /* With the SYN cache (6b586f93) the connection being built is an entry in
+       the cache, and the socket accept was called on is only armed for it
+       (SYN-RECEIVED, unbound).  */
+    if(ip_0.nx_ip_tcp_syncache.nx_tcp_syncache_age_head == NX_NULL)
+        error_counter++;
+#endif /* NX_TCP_SYNCACHE_SIZE */
+
     /* Detach the 2nd interface(4.3.2.10) from ip_0. */
     status = nx_ip_interface_detach(&ip_0, 1);
     if(status)
         error_counter++;
 
+#ifdef NX_TCP_SYNCACHE_SIZE
+    /* The detach drops the entry (_nx_tcp_syncache_interface_flush); the
+       socket, which never held the connection, stays armed for the next.  */
+    if((ip_0.nx_ip_tcp_syncache.nx_tcp_syncache_age_head != NX_NULL) ||
+       (server_socket.nx_tcp_socket_state != NX_TCP_SYN_RECEIVED) ||
+       (server_socket.nx_tcp_socket_bound_next != NX_NULL))
+        error_counter++;
+#else
     /* Detachment should reset the TCP server  socket which is in connection building progress . */
     if(server_socket.nx_tcp_socket_state != NX_TCP_LISTEN_STATE)
         error_counter++;
+#endif /* NX_TCP_SYNCACHE_SIZE */
 
     /* Attach the 2nd interface(4.3.2.10) removed before to ip_0. */
     nx_ip_interface_attach(&ip_0, "2nd interface", IP_ADDRESS(4, 3, 2, 10), 0xFF000000, _nx_ram_network_driver);
@@ -198,12 +215,17 @@ ULONG   actual_status;
     /* ntest_0 relinquished the CPU. */
     tx_thread_suspend(&ntest_0);
 
+#ifdef NX_TCP_SYNCACHE_SIZE
+    /* Still armed: the retransmitted SYN's handshake finishes on it.  */
+    status = nx_tcp_server_socket_accept(&server_socket, 5 * NX_IP_PERIODIC_RATE);
+#else
     status = nx_tcp_server_socket_unaccept(&server_socket);
 
     /* Relisten the TCP server socket. */
     status += nx_tcp_server_socket_relisten(&ip_0, 12, &server_socket);
 
     status += nx_tcp_server_socket_accept(&server_socket, 5 * NX_IP_PERIODIC_RATE);
+#endif /* NX_TCP_SYNCACHE_SIZE */
     if(status)
         error_counter++;
 

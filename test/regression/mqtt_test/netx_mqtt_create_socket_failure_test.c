@@ -11,11 +11,37 @@
 #include "tx_api.h"
 #include "nx_api.h"
 #include "nx_ip.h"
+#include "nx_tcp.h"
 #include "nxd_mqtt_client.h"
 
 extern void test_control_return(UINT status);
 
 #ifndef NXD_MQTT_CLOUD_ENABLE
+
+/* nxd_mqtt_client.c forces NX_DISABLE_ERROR_CHECKING, so its
+   nx_tcp_socket_create is _nx_tcp_socket_create, which has no failure
+   return: no IP state, TCP disabled included, makes it fail.  The failure
+   this test is about is therefore supplied here.  The test links the
+   shared libnetxduo, whose internal call goes through the PLT, so this
+   definition interposes the library's for this executable only.  */
+UINT _nx_tcp_socket_create(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, CHAR *name,
+                           ULONG type_of_service, ULONG fragment,
+                           UINT time_to_live, ULONG window_size,
+                           VOID (*tcp_urgent_data_callback)(NX_TCP_SOCKET *socket_ptr),
+                           VOID (*tcp_disconnect_callback)(NX_TCP_SOCKET *socket_ptr))
+{
+    NX_PARAMETER_NOT_USED(ip_ptr);
+    NX_PARAMETER_NOT_USED(socket_ptr);
+    NX_PARAMETER_NOT_USED(name);
+    NX_PARAMETER_NOT_USED(type_of_service);
+    NX_PARAMETER_NOT_USED(fragment);
+    NX_PARAMETER_NOT_USED(time_to_live);
+    NX_PARAMETER_NOT_USED(window_size);
+    NX_PARAMETER_NOT_USED(tcp_urgent_data_callback);
+    NX_PARAMETER_NOT_USED(tcp_disconnect_callback);
+
+    return(NX_NOT_ENABLED);
+}
 
 #define DEMO_STACK_SIZE 2048
 
@@ -55,7 +81,7 @@ UINT status;
     NX_PARAMETER_NOT_USED(thread_input);
     printf("NetX Test:   MQTT Create Socket Failure Test.......................");
 
-    /* A valid IP instance with TCP disabled makes socket creation fail. */
+    /* Socket creation fails (see _nx_tcp_socket_create above). */
     ip_0.nx_ip_id = NX_IP_ID;
     status = nxd_mqtt_client_create(&mqtt_client_0, (CHAR *)"MQTT client",
                                     (CHAR *)"client", 6, &ip_0, &pool_0,

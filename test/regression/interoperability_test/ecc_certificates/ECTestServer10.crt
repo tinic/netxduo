@@ -3,11 +3,11 @@ Certificate:
         Version: 3 (0x2)
         Serial Number: 12 (0xc)
         Signature Algorithm: ecdsa-with-SHA256
-        Issuer: C = CN, ST = SH, L = SH, O = EL, OU = EL, CN = ECCA2
+        Issuer: C=CN, ST=SH, L=SH, O=EL, OU=EL, CN=ECCA2
         Validity
-            Not Before: Aug 13 19:56:59 2026 GMT
-            Not After : Aug 13 19:56:59 2046 GMT
-        Subject: C = CN, ST = SH, O = EL, OU = EL, CN = ECTestServer10
+            Not Before: Oct  3 18:39:26 2026 GMT
+            Not After : Oct  3 18:39:26 2046 GMT
+        Subject: C=CN, ST=SH, O=EL, OU=EL, CN=ECTestServer10
         Subject Public Key Info:
             Public Key Algorithm: id-ecPublicKey
                 Public-Key: (256 bit)
@@ -29,27 +29,24 @@ Certificate:
             X509v3 Subject Key Identifier:
                 1E:9D:67:D7:E7:8E:E9:52:43:AC:75:80:09:68:A1:98:CF:D2:D9:2C
             X509v3 Authority Key Identifier:
-                DirName:/C=CN/ST=SH/L=SH/O=EL/OU=EL/CN=ECCA2
-                serial:A6:7D:85:34:93:36:D5:3B
+                1D:D0:0C:E0:73:1B:8F:75:3A:15:38:B7:09:D6:D8:FB:5A:89:49:2A
     Signature Algorithm: ecdsa-with-SHA256
     Signature Value:
-        30:45:02:21:00:e7:d0:05:a8:eb:35:64:fb:ad:59:80:8b:a4:
-        1f:52:b9:58:b7:24:b3:29:bc:8b:fb:47:37:b9:74:c2:d1:c8:
-        25:02:20:47:62:50:13:41:f1:6e:86:39:34:a1:df:5f:ae:d4:
-        04:9f:d8:83:86:2e:a8:ae:54:16:37:57:64:d9:f0:10:16
+        30:45:02:21:00:b8:f1:ab:84:8e:e3:9f:fe:6e:c8:e7:1d:0d:
+        5b:a3:28:86:c9:f9:ae:7e:a2:12:14:1b:2c:74:97:a7:cc:2e:
+        79:02:20:10:68:3a:1b:7f:b7:20:5f:b2:a2:de:f2:29:c0:9b:
+        af:f0:62:87:e9:b1:a6:0b:db:71:12:d2:4c:c6:c9:38:eb
 -----BEGIN CERTIFICATE-----
-MIICcjCCAhigAwIBAgIBDDAKBggqhkjOPQQDAjBRMQswCQYDVQQGEwJDTjELMAkG
+MIICJjCCAcygAwIBAgIBDDAKBggqhkjOPQQDAjBRMQswCQYDVQQGEwJDTjELMAkG
 A1UECAwCU0gxCzAJBgNVBAcMAlNIMQswCQYDVQQKDAJFTDELMAkGA1UECwwCRUwx
-DjAMBgNVBAMMBUVDQ0EyMB4XDTI2MDgxMzE5NTY1OVoXDTQ2MDgxMzE5NTY1OVow
+DjAMBgNVBAMMBUVDQ0EyMB4XDTI2MTAwMzE4MzkyNloXDTQ2MTAwMzE4MzkyNlow
 TTELMAkGA1UEBhMCQ04xCzAJBgNVBAgMAlNIMQswCQYDVQQKDAJFTDELMAkGA1UE
 CwwCRUwxFzAVBgNVBAMMDkVDVGVzdFNlcnZlcjEwMFkwEwYHKoZIzj0CAQYIKoZI
 zj0DAQcDQgAE+RodIH2aZk5+umtGMsWbzxro1zlTJoa5humS1AsXifqckRvUbCCW
-pcJQrQwjGBulM5NYQRUjAcTkmZlAXxyFGKOB5DCB4TAJBgNVHRMEAjAAMAsGA1Ud
+pcJQrQwjGBulM5NYQRUjAcTkmZlAXxyFGKOBmDCBlTAJBgNVHRMEAjAAMAsGA1Ud
 DwQEAwID+DA7BgNVHSUENDAyBggrBgEFBQcDAQYIKwYBBQUHAwIGCCsGAQUFBwMD
 BggrBgEFBQcDBAYIKwYBBQUHAwgwHQYDVR0OBBYEFB6dZ9fnjulSQ6x1gAlooZjP
-0tksMGsGA1UdIwRkMGKhVaRTMFExCzAJBgNVBAYTAkNOMQswCQYDVQQIDAJTSDEL
-MAkGA1UEBwwCU0gxCzAJBgNVBAoMAkVMMQswCQYDVQQLDAJFTDEOMAwGA1UEAwwF
-RUNDQTKCCQCmfYU0kzbVOzAKBggqhkjOPQQDAgNIADBFAiEA59AFqOs1ZPutWYCL
-pB9SuVi3JLMpvIv7Rze5dMLRyCUCIEdiUBNB8W6GOTSh31+u1ASf2IOGLqiuVBY3
-V2TZ8BAW
+0tksMB8GA1UdIwQYMBaAFB3QDOBzG491OhU4twnW2PtaiUkqMAoGCCqGSM49BAMC
+A0gAMEUCIQC48auEjuOf/m7I5x0NW6Mohsn5rn6iEhQbLHSXp8wueQIgEGg6G3+3
+IF+yot7yKcCbr/Bih+mxpgvbcRLSTMbJOOs=
 -----END CERTIFICATE-----

@@ -133,8 +133,14 @@ ULONG tx_window_current;
            those round trips is a context switch and a mutex pair on a machine
            that has neither to spare.  With it, the wait ends when a segment
            can actually be sent.  */
-        if (_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE)
+        if ((_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE) &&
+            ((socket_ptr -> nx_tcp_socket_transmit_suspension_list == NX_NULL) ||
+             (((NX_PACKET *)(socket_ptr -> nx_tcp_socket_transmit_suspension_list -> tx_thread_additional_suspend_info)) -> nx_packet_length >
+              tx_window_current)))
         {
+
+            /* Not if the first waiting write fits whole: rule (2), as the send
+               path applies it.  */
             tx_window_current = 0;
         }
 

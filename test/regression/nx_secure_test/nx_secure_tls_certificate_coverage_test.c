@@ -205,8 +205,10 @@ static UCHAR certificate_header_test_1[] = {
 0x00, 0x03, 0xd9, 0x00, 0x03, 0xd7,
 };
 
+/* Certificate list (3 + ica_cert_der_len) + (3 + device_cert_der_len), then
+   ica_cert_der_len: the ICA is 1002 bytes since it says CA:TRUE.  */
 static UCHAR certificate_header_test_2[] = {
-0x00, 0x07, 0xc8, 0x00, 0x03, 0xe3,
+0x00, 0x07, 0xcf, 0x00, 0x03, 0xea,
 };
 
 static UCHAR certificate_header_test_2_1[] = {

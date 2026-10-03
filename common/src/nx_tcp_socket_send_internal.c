@@ -706,7 +706,11 @@ UINT            compute_checksum = 1;
            _nx_tcp_socket_state_transmit_check applies the same test before it
            wakes anybody, so the wait ends when a segment can actually go
            rather than on every acknowledgment in between.  */
-        if (_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE)
+        /* Rule (2) as RFC 1122 4.2.3.4 has it with Nagle off, as it is
+           here: data that is pushed and fits whole (D <= U) goes now.  Every
+           write is pushed, so the rest of this one is never held back.  */
+        if ((_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE) &&
+            (packet_ptr -> nx_packet_length > tx_window_current))
         {
             tx_window_current = 0;
         }
@@ -989,14 +993,8 @@ UINT            compute_checksum = 1;
             header_ptr -> nx_tcp_header_word_0 =        (((ULONG)(socket_ptr -> nx_tcp_socket_port)) << NX_SHIFT_BY_16) | (ULONG)socket_ptr -> nx_tcp_socket_connect_port;
             header_ptr -> nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_rx_sequence;
 
-            /* Set window size.  Clamped before the shift: the floor is in real
-               bytes and the scaled field is not. */
-            window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
-
-            if (window_size < NX_TCP_SWS_FLOOR(socket_ptr))
-            {
-                window_size = 0;
-            }
+            /* Set window size, in bytes before the shift (nx_tcp.h).  */
+            window_size = NX_TCP_RX_WINDOW_ADVERTISED(socket_ptr);
 
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
             window_size = window_size >> socket_ptr -> nx_tcp_rcv_win_scale_value;
@@ -1034,7 +1032,7 @@ UINT            compute_checksum = 1;
 
             /* Remember the last ACKed sequence and the last reported window size.  */
             socket_ptr -> nx_tcp_socket_rx_sequence_acked =    socket_ptr -> nx_tcp_socket_rx_sequence;
-            socket_ptr -> nx_tcp_socket_rx_window_last_sent =  socket_ptr -> nx_tcp_socket_rx_window_current;
+            socket_ptr -> nx_tcp_socket_rx_window_last_sent =  NX_TCP_RX_WINDOW_ON_WIRE(socket_ptr, window_size);
 
             /* Setup a new delayed ACK timeout.  */
             socket_ptr -> nx_tcp_socket_delayed_ack_timeout =  _nx_tcp_ack_timer_rate;

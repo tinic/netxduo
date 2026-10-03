@@ -14,6 +14,11 @@
 set -e
 
 cd $(dirname $0)
+
+if [ "$1" = "--merge" ]; then
+    exec ../../../scripts/coverage_merge.sh "$PWD" ../../../nx_secure
+fi
+
 root_path=$(cd ../../../nx_secure/src; pwd)
 mkdir -p coverage_report/$1
 extra_args=""
@@ -44,5 +49,5 @@ then
         done
     done
 fi
-gcovr --object-directory=build/$1/netxduo/CMakeFiles/netxduo.dir/nx_secure -r ../../../nx_secure --xml-pretty $extra_args --output coverage_report/$1.xml
+gcovr --object-directory=build/$1/netxduo/CMakeFiles/netxduo.dir/nx_secure -r ../../../nx_secure --json coverage_report/$1.json --xml-pretty $extra_args --output coverage_report/$1.xml
 gcovr --object-directory=build/$1/netxduo/CMakeFiles/netxduo.dir/nx_secure -r ../../../nx_secure --html --html-details $extra_args --output coverage_report/$1/index.html

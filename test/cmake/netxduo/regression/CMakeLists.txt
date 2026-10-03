@@ -47,6 +47,7 @@ if("-DNX_BSD_ENABLE" IN_LIST ${CMAKE_BUILD_TYPE})
       ${SOURCE_DIR}/bsd_test/netx_bsd_udp_basic_blocking_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_basic_nonblocking_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_servers_shared_port_test.c
+      ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_deferred_accept_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_getsockname_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_accept_blocking_timeout_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_udp_checksum_corrupt_test.c
@@ -596,6 +597,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_tcp_nxe_api_test.c
     ${SOURCE_DIR}/netxduo_test/netx_12_01_test.c
     ${SOURCE_DIR}/netxduo_test/netx_ip_fragmentation_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_ip_fragment_reserve_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_wrapping_sequence_test.c
     ${SOURCE_DIR}/netxduo_test/netx_ip_address_conflict_callback_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_send_fail_test3.c
@@ -670,6 +672,11 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_9_20_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_mss_option_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_socket_mss_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_syncache_listen_terms_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_syncache_deferred_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_syncache_accept_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_sws_zero_window_probe_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_syncache_synrcvd_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_overlapping_packet_test_13.c
     ${SOURCE_DIR}/netxduo_test/netx_6_27_test.c
     ${SOURCE_DIR}/netxduo_test/netx_udp_fragment_test.c
@@ -680,6 +687,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_udp_source_send_test.c
     ${SOURCE_DIR}/netxduo_test/netx_icmp_ping6_fragment_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_ipv6_basic_processing_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_ipv6_address_delete_reset_test.c
     ${SOURCE_DIR}/netxduo_test/netx_ip_interface_attachment_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_send_fail_test2.c
     ${SOURCE_DIR}/netxduo_test/netx_1_20_test.c

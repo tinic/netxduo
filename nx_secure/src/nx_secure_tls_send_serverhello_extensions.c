@@ -95,9 +95,9 @@ UINT _nx_secure_tls_send_serverhello_extensions(NX_SECURE_TLS_SESSION *tls_sessi
 {
 ULONG  length = *packet_offset;
 UCHAR *extension_offset;
-#if !defined(NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION) || ((NX_SECURE_TLS_TLS_1_3_ENABLED) && !defined(NX_SECURE_TLS_SERVER_DISABLED))
+#if !defined(NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION) || !defined(NX_SECURE_TLS_SERVER_DISABLED)
 USHORT extension_length = 0;
-#endif /* !defined(NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION) || (NX_SECURE_TLS_TLS_1_3_ENABLED)  */
+#endif /* !defined(NX_SECURE_TLS_DISABLE_SECURE_RENEGOTIATION) || !defined(NX_SECURE_TLS_SERVER_DISABLED) */
 USHORT total_extensions_length;
 UINT   status = NX_SUCCESS;
 

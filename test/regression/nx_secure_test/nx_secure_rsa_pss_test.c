@@ -14,8 +14,9 @@
 /* Regression test for the RSASSA-PSS primitives in nx_crypto_rsa.c:
    _nx_crypto_rsa_pss_sign(), _nx_crypto_rsa_pss_verify() and the MGF1 helper
    they share. These implement EMSA-PSS-ENCODE and EMSA-PSS-VERIFY from
-   RFC 8017 section 9.1, with the salt length pinned to the hash length as
-   RFC 8446 section 4.2.3 requires for TLS 1.3.
+   RFC 8017 section 9.1. Signing pins the salt length to the hash length as
+   RFC 8446 section 4.2.3 requires for TLS 1.3; verification takes the salt
+   length as a parameter, and every vector here uses sLen == hLen.
 
    The signing side generates its salt internally, so its output is not
    reproducible and cannot be compared against a stored vector directly. This
@@ -431,6 +432,7 @@ UCHAR tampered_hash[64];
 
     status = _nx_crypto_rsa_pss_verify(message_hash, hash_length, em_buffer, em_bits,
                                        method, pss_metadata, sizeof(pss_metadata),
+                                       hash_length,
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 
@@ -439,6 +441,7 @@ UCHAR tampered_hash[64];
     tampered_hash[0] = (UCHAR)(tampered_hash[0] ^ 0x01u);
     status = _nx_crypto_rsa_pss_verify(tampered_hash, hash_length, em_buffer, em_bits,
                                        method, pss_metadata, sizeof(pss_metadata),
+                                       hash_length,
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_NOT_SUCCESSFUL, status);
 }
@@ -456,6 +459,7 @@ UINT  em_len = (em_bits + 7u) >> 3;
 
     status = _nx_crypto_rsa_pss_verify(message_hash, hash_length, em_buffer, em_bits,
                                        method, pss_metadata, sizeof(pss_metadata),
+                                       hash_length,
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_NOT_SUCCESSFUL, status);
 }
@@ -480,6 +484,7 @@ NX_CRYPTO_METHOD broken_method;
                                        openssl_em, RSA_2048_EM_BITS,
                                        &crypto_method_sha256,
                                        pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_sha256_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 
@@ -490,6 +495,7 @@ NX_CRYPTO_METHOD broken_method;
                                        openssl_em, RSA_2048_EM_BITS,
                                        &crypto_method_sha512,
                                        pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_sha512_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 
@@ -512,6 +518,7 @@ NX_CRYPTO_METHOD broken_method;
                                        pss_boundary_em_1039, BOUNDARY_EM_BITS_PARTIAL,
                                        &crypto_method_sha512,
                                        pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_boundary_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 
@@ -519,6 +526,7 @@ NX_CRYPTO_METHOD broken_method;
                                        pss_boundary_em_1040, BOUNDARY_EM_BITS_EXACT,
                                        &crypto_method_sha512,
                                        pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_boundary_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 
@@ -587,6 +595,7 @@ NX_CRYPTO_METHOD broken_method;
     status = _nx_crypto_rsa_pss_verify(pss_boundary_mhash, 64,
                                        pss_boundary_em_1039, (BOUNDARY_EM_LEN - 1u) << 3,
                                        &crypto_method_sha512, pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_boundary_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_NOT_SUCCESSFUL, status);
 
@@ -600,6 +609,7 @@ NX_CRYPTO_METHOD broken_method;
     status = _nx_crypto_rsa_pss_verify(pss_sha256_mhash, 32,
                                        pss_sha256_em, RSA_2048_EM_BITS,
                                        &crypto_method_sha256, pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_sha256_salt),
                                        scratch, RSA_2048_MODULUS_SIZE - 2u);
     EXPECT_EQ(NX_CRYPTO_INVALID_BUFFER_SIZE, status);
 
@@ -615,6 +625,7 @@ NX_CRYPTO_METHOD broken_method;
     status = _nx_crypto_rsa_pss_verify(pss_sha256_mhash, 32,
                                        pss_sha256_em, RSA_2048_EM_BITS,
                                        &crypto_method_sha256, pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_sha256_salt),
                                        scratch, RSA_2048_MODULUS_SIZE - 1u);
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 
@@ -625,6 +636,7 @@ NX_CRYPTO_METHOD broken_method;
     status = _nx_crypto_rsa_pss_verify(pss_sha256_mhash, 32,
                                        pss_sha256_em, RSA_2048_EM_BITS,
                                        &broken_method, pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_sha256_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_INVALID_BUFFER_SIZE, status);
 
@@ -633,6 +645,7 @@ NX_CRYPTO_METHOD broken_method;
     status = _nx_crypto_rsa_pss_verify(pss_sha256_mhash, 32,
                                        pss_sha256_em, RSA_2048_EM_BITS,
                                        &broken_method, pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_sha256_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_INVALID_BUFFER_SIZE, status);
 
@@ -670,6 +683,7 @@ NX_CRYPTO_METHOD broken_method;
     status = _nx_crypto_rsa_pss_verify(pss_sha256_mhash, 32,
                                        pss_sha256_em, RSA_2048_EM_BITS,
                                        &wrap_method, pss_metadata, sizeof(pss_metadata),
+                                       sizeof(pss_sha256_salt),
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
     total_calls = wrap_call_count;
@@ -682,6 +696,7 @@ NX_CRYPTO_METHOD broken_method;
         status = _nx_crypto_rsa_pss_verify(pss_sha256_mhash, 32,
                                            pss_sha256_em, RSA_2048_EM_BITS,
                                            &wrap_method, pss_metadata, sizeof(pss_metadata),
+                                           sizeof(pss_sha256_salt),
                                            scratch, sizeof(scratch));
         EXPECT_EQ(WRAP_FAILURE, status);
     }
@@ -698,6 +713,7 @@ NX_CRYPTO_METHOD broken_method;
 
     status = _nx_crypto_rsa_pss_verify(pss_sha256_mhash, 32, em_buffer, RSA_2048_EM_BITS,
                                        &wrap_method, pss_metadata, sizeof(pss_metadata),
+                                       32, /* the signer above pins sLen to hLen */
                                        scratch, sizeof(scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 

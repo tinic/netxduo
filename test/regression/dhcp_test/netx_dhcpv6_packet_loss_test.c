@@ -1062,6 +1062,12 @@ ULONG       message_word;
     /* Set the interface capablility flag to disable the UDP checksum check, (simplify operation)*/
     ip_0.nx_ipv6_address[0].nxd_ipv6_address_attached -> nx_interface_capability_flag |= NX_INTERFACE_CAPABILITY_UDP_RX_CHECKSUM;
 
+    /* And on the packet: the receive paths skip a checksum only for a frame
+       the driver vouches for, the interface flag and the packet's both
+       (1cb134db), and this test is the driver here.  The transaction ID
+       written above is not covered by the captured checksum.  */
+    response_packet -> nx_packet_interface_capability_flag |= NX_INTERFACE_CAPABILITY_UDP_RX_CHECKSUM;
+
     /* Receive the DHCPv6 Server response.  */
     _nx_udp_packet_receive(&ip_0, response_packet);
 

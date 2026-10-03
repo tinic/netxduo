@@ -86,6 +86,7 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_1_3_transcript_hash_save.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_active_certificate_set.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_allocate_handshake_packet.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_alpn.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_check_protocol_version.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_ciphersuite_lookup.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_secure_tls_client_handshake.c

@@ -64,7 +64,8 @@ static UINT        _nx_dhcp_interface_record_find(NX_DHCP *dhcp_ptr, UINT iface_
 
 
 #ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
-static VOID        _nx_dhcp_ip_conflict(NX_IP *ip_ptr, UINT interface_index, ULONG ip_address, ULONG physical_msw, ULONG physical_lsw);
+/* External linkage: the conflict regression tests take its address and call it.  */
+VOID               _nx_dhcp_ip_conflict(NX_IP *ip_ptr, UINT interface_index, ULONG ip_address, ULONG physical_msw, ULONG physical_lsw);
 #endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE */
 
 
@@ -4746,8 +4747,10 @@ UINT                      source_port;
 ULONG                     source_ip_address;
 UINT                      protocol;
 NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
+#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
 TX_INTERRUPT_SAVE_AREA
 UINT                      conflict_flag;
+#endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE  */
 
     /* Setup the DHCP pointer.  */
     NX_THREAD_EXTENSION_PTR_GET(dhcp_ptr, NX_DHCP, dhcp_instance)

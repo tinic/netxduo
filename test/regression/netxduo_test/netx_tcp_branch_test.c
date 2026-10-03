@@ -2115,7 +2115,11 @@ UINT        status;
     server_ip.nxd_ip_address.v6[3] = 0x1;
     ip_0.nx_ipv6_address[address_index].nxd_ipv6_address_attached = NX_NULL;
     status = nxd_tcp_client_socket_connect(&tcp_socket, &server_ip, 80, 0);
-    if (status != NX_INVALID_INTERFACE)
+
+    /* A source with no interface is refused when the source is rechecked
+       under the IP mutex, before the state moves (3e6e13f7, audit N-039),
+       with the code a named source without an interface gets.  */
+    if (status != NX_NO_INTERFACE_ADDRESS)
     {
         error_counter++;
     }

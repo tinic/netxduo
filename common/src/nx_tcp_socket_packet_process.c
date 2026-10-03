@@ -223,6 +223,20 @@ ULONG         tcpip_offload;
         /* Pickup the rx window.  */
         rx_window = socket_ptr -> nx_tcp_socket_rx_window_current;
 
+        /* RCV.WND is the window this end last put on the wire, less what has
+           arrived since (rx_window_last_sent), when that is below the floor
+           and less than the free space (NX_TCP_RX_WINDOW_ADVERTISED,
+           nx_tcp.h).  A window advertised as zero is zero here: RFC 9293
+           3.10.7.4, Tables 5 and 6, admit no segment with data and answer it
+           with an ACK, RCV.NXT unchanged.  Taking the one-byte persist probe
+           instead advanced RCV.NXT past a byte the sender had not counted as
+           sent.  At or above the floor it is the free space, as upstream.  */
+        if ((rx_window < NX_TCP_SWS_FLOOR(socket_ptr)) &&
+            (rx_window > socket_ptr -> nx_tcp_socket_rx_window_last_sent))
+        {
+            rx_window = socket_ptr -> nx_tcp_socket_rx_window_last_sent;
+        }
+
         /* There are four cases for the acceptability test for an incoming segment.
            Section 3.9 Page 69, RFC 793.  */
         outside_of_window = NX_TRUE;
@@ -332,7 +346,7 @@ ULONG         tcpip_offload;
                  (socket_ptr -> nx_tcp_socket_dsack_left != socket_ptr -> nx_tcp_socket_dsack_right) ||
 #endif /* NX_ENABLE_TCP_SACK */
                  (socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
-                 (socket_ptr -> nx_tcp_socket_rx_window_current != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
+                 (NX_TCP_RX_WINDOW_ADVERTISED(socket_ptr) != socket_ptr -> nx_tcp_socket_rx_window_last_sent)))
             {
 
                 /* Send an immediate ACK.  */

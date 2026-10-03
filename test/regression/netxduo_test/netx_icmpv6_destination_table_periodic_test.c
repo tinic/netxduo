@@ -454,7 +454,10 @@ static const unsigned char pkt7[1294] = {
 0x05, 0x05, 0x05, 0x05, 0x05, 0x05              /* ...... */
 };
 
-/* Frame (1294 bytes): Packet Too Big, MTU 56, 3ffe:501:ffff:100:200:ff:fe00:100  */
+/* Frame (1294 bytes): Packet Too Big, MTU 1280, 3ffe:501:ffff:100:200:ff:fe00:100  */
+/* The capture reported MTU 56.  RFC 8201 Section 4 has a report below the IPv6
+   minimum link MTU discarded (2fffd6f4), so the frame reports the minimum,
+   1280, instead; checksum adjusted for that one word (RFC 1624).  */
 static const unsigned char pkt8[1294] = {
 0x00, 0x11, 0x22, 0x33, 0x44, 0x56, 0x00, 0x00, /* .."3DV.. */
 0x00, 0x00, 0x01, 0x00, 0x86, 0xdd, 0x60, 0x00, /* ......`. */
@@ -463,7 +466,7 @@ static const unsigned char pkt8[1294] = {
 0x00, 0xff, 0xfe, 0x00, 0x01, 0x00, 0x3f, 0xfe, /* ......?. */
 0x05, 0x01, 0xff, 0xff, 0x01, 0x00, 0x02, 0x11, /* ........ */
 0x22, 0xff, 0xfe, 0x33, 0x44, 0x56, 0x02, 0x00, /* "..3DV.. */
-0xe1, 0x8e, 0x00, 0x00, 0x00, 0x38, 0x60, 0x00, /* .....8`. */
+0xdc, 0xc6, 0x00, 0x00, 0x05, 0x00, 0x60, 0x00, /* ......`. */
 0x00, 0x00, 0x04, 0xd8, 0x3a, 0x40, 0x3f, 0xfe, /* ....:@?. */
 0x05, 0x01, 0xff, 0xff, 0x01, 0x00, 0x02, 0x11, /* ........ */
 0x22, 0xff, 0xfe, 0x33, 0x44, 0x56, 0x3f, 0xfe, /* "..3DV?. */
@@ -843,7 +846,7 @@ CHAR             mac[6];
         (ip_0.nx_ipv6_destination_table[2].nx_ipv6_destination_entry_MTU_timer_tick != NX_WAIT_FOREVER))
         error_counter ++;
                                 
-    /* Send ICMPv6 Packet too big packet with MTU 56 to ip_0. */
+    /* Send ICMPv6 Packet too big packet with MTU 1280 to ip_0. */
     /* The source address is 0x3ffe:501:ffff:100:200:ff:fe00:100. */
     /* The destination address is 0x3ffe:501:ffff:100:211:22ff:fe33:4456. */
 
@@ -880,7 +883,7 @@ CHAR             mac[6];
         (ip_0.nx_ipv6_destination_table[2].nx_ipv6_destination_entry_destination_address[1] != 0xffff0102) ||
         (ip_0.nx_ipv6_destination_table[2].nx_ipv6_destination_entry_destination_address[2] != 0x020000ff) ||
         (ip_0.nx_ipv6_destination_table[2].nx_ipv6_destination_entry_destination_address[3] != 0xfe00a2a2) ||
-        (ip_0.nx_ipv6_destination_table[2].nx_ipv6_destination_entry_path_mtu != 56) || 
+        (ip_0.nx_ipv6_destination_table[2].nx_ipv6_destination_entry_path_mtu != 1280) || 
         (ip_0.nx_ipv6_destination_table[2].nx_ipv6_destination_entry_MTU_timer_tick != NX_PATH_MTU_INCREASE_WAIT_INTERVAL_TICKS))
         error_counter ++;
 

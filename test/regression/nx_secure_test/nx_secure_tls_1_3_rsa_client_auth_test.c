@@ -237,6 +237,7 @@ UCHAR     *body;
                                        recovered_em, (modulus_length << 3) - 1u,
                                        hash_method,
                                        verify_hash_metadata, sizeof(verify_hash_metadata),
+                                       hash_length, /* RFC 8446 4.2.3: sLen == hLen */
                                        verify_scratch, sizeof(verify_scratch));
     EXPECT_EQ(NX_CRYPTO_SUCCESS, status);
 
@@ -248,6 +249,7 @@ UCHAR     *body;
                                        recovered_em, (modulus_length << 3) - 1u,
                                        hash_method,
                                        verify_hash_metadata, sizeof(verify_hash_metadata),
+                                       hash_length, /* RFC 8446 4.2.3: sLen == hLen */
                                        verify_scratch, sizeof(verify_scratch));
     EXPECT_EQ(NX_CRYPTO_NOT_SUCCESSFUL, status);
 

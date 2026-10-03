@@ -181,10 +181,33 @@ UINT        address_index;
     prefix_address[3] = 0x00000004;
     _nx_ipv6_prefix_list_add_entry(&ip_0, prefix_address, 64, 100, 1);
     _nx_ipv6_prefix_list_delete(&ip_0, prefix_address, 48);
+
+    /* A different /64.  The list compares the prefix bits only (d89bf3d8,
+       RFC 4861 4.6.2: the entry is stored with the bits after its length
+       cleared, here 2001:1:0:2::/64), so the interface-identifier bits that
+       used to make this miss (::3:5 against the stored ::) are now the same
+       prefix; it is the prefix that has to differ.  */
+    prefix_address[1] = 0x00000005;
+    _nx_ipv6_prefix_list_delete(&ip_0, prefix_address, 64);
+    prefix_address[1] = 0x00000002;
     prefix_address[3] = 0x00000005;
+    if (ip_0.nx_ipv6_prefix_list_ptr == NX_NULL)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+
+    /* The same prefix now matches, whatever the address bits, and goes.
+       Before d89bf3d8 no delete here matched -- the stored entry is masked
+       and the compare was full width -- and the entry stayed for the next
+       case, which needs one: it is added again.  */
     _nx_ipv6_prefix_list_delete(&ip_0, prefix_address, 64);
-    prefix_address[3] = 0x00000004;
-    _nx_ipv6_prefix_list_delete(&ip_0, prefix_address, 64);
+    if (ip_0.nx_ipv6_prefix_list_ptr != NX_NULL)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+    _nx_ipv6_prefix_list_add_entry(&ip_0, prefix_address, 64, 100, 1);
 
 
     /* Hit false condition of if (interface_ipv6_address -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_UNKNOWN)  in _nx_ipv6_prefix_list_delete_entry . */    

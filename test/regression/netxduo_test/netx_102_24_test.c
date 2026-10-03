@@ -192,8 +192,14 @@ ULONG      cwnd;
     if(status)
         error_counter++;
 
-     /* Check whether the cwnd = cwnd + MSS * MSS / cwnd.  */
-    if((ack_counter != 1) || (client_socket.nx_tcp_socket_tx_window_congestion != client_socket.nx_tcp_socket_connect_mss2 / cwnd + cwnd))
+    /* Congestion avoidance counts bytes (b77edd28; RFC 3465 2.1, one of the
+       two forms RFC 5681 3.1 allows): the window grows by one segment once a
+       window's worth has been acknowledged, and less than that is carried in
+       nx_tcp_socket_tx_cwnd_acked.  The per-ACK cwnd += SMSS*SMSS/cwnd this
+       test was written for is the other form.  The 28 bytes are counted.  */
+    if((ack_counter != 1) || (cwnd <= 28) ||
+       (client_socket.nx_tcp_socket_tx_window_congestion != cwnd) ||
+       (client_socket.nx_tcp_socket_tx_cwnd_acked != 28))
         error_counter++;
 
     /* Disconnect this socket.  */

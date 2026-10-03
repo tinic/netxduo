@@ -199,7 +199,11 @@ UINT                        status;
         error_counter++;
 
     /* Check for error.  */
+#ifdef NX_TCP_CHALLENGE_ACK_LIMIT
+    if((error_counter) || (data_packet_counter != 1) || (rst_counter != 3) || (syn_counter != 2))
+#else
     if((error_counter) || (data_packet_counter != 1) || (rst_counter != 2) || (syn_counter != 2))
+#endif /* NX_TCP_CHALLENGE_ACK_LIMIT */
     {
         printf("ERROR!\n");
         test_control_return(1);
@@ -452,8 +456,18 @@ NX_TCP_HEADER               *tcp_header_ptr;
 
         NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
 
+#ifdef NX_TCP_CHALLENGE_ACK_LIMIT
+        /* RFC 5961 section 3 (772b79c1): the client's RST carries SEG.ACK of
+           the altered segment, ack_number, which is not the server's RCV.NXT,
+           so the server challenges it with an ACK of RCV.NXT (ack_number - 10)
+           instead of resetting, and the client, still in SYN-SENT, answers
+           that unacceptable ACK the same way: a second RST, SEQ = its SEG.ACK. */
+        if(tcp_header_ptr -> nx_tcp_sequence_number != ((rst_counter == 2) ? ack_number : (ack_number - 10)))
+            error_counter++;
+#else
         if(tcp_header_ptr -> nx_tcp_sequence_number != ack_number)
             error_counter++;
+#endif /* NX_TCP_CHALLENGE_ACK_LIMIT */
 
         NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
     }

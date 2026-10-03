@@ -160,6 +160,9 @@ static INT   nx_bsd_tcp_oob_data_get(NX_BSD_SOCKET *bsd_socket_ptr, struct nx_bs
                                      INT flags);
 static VOID  nx_bsd_udp_packet_received(INT sockID, NX_PACKET *packet_ptr);
 static UINT  nx_bsd_tcp_syn_received_notify(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr);
+static INT   nx_bsd_tcp_master_find(NX_TCP_SOCKET *socket_ptr, UINT bsd_socket_index, ULONG addr_family,
+                                    NX_INTERFACE *interface_ptr, ULONG address);
+static UINT  nx_bsd_tcp_establish_associate(NX_TCP_SOCKET *socket_ptr, UINT bsd_socket_index);
 static INT   nx_bsd_tcp_create_listen_socket(INT master_sockid, INT backlog);
 static VOID  nx_bsd_tcp_pending_connection(UINT local_port, NX_TCP_SOCKET *socket_ptr);
 static INT   nx_bsd_find_interface_by_source_addr(UINT addr_family, ULONG* ip_addr);
@@ -538,6 +541,20 @@ NX_BSD_SOCKET  *bsd_socket_ptr;
            continue;
        }
 
+       /* A secondary socket nx_bsd_tcp_establish_notify found no listening
+          master for: reset its connection and take it off the port, which
+          leaves it CLOSED and in progress for the check below to put back
+          on the listen request.  */
+       if((nx_bsd_socket_array[i].nx_bsd_socket_status_flags & NX_BSD_SOCKET_SERVER_SECONDARY_SOCKET) &&
+          (nx_bsd_socket_array[i].nx_bsd_socket_status_flags & NX_BSD_SOCKET_CONNECTION_INPROGRESS) &&
+          !(nx_bsd_socket_array[i].nx_bsd_socket_status_flags & NX_BSD_SOCKET_CONNECTED) &&
+          (nx_bsd_socket_array[i].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id >= NX_BSD_MAX_SOCKETS) &&
+          (nx_bsd_socket_array[i].nx_bsd_socket_tcp_socket -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED))
+       {
+           nx_tcp_socket_disconnect(nx_bsd_socket_array[i].nx_bsd_socket_tcp_socket, NX_NO_WAIT);
+           nx_tcp_server_socket_unaccept(nx_bsd_socket_array[i].nx_bsd_socket_tcp_socket);
+       }
+
        /* Check for sockets trying to make a TCP connection.
           Detect that the socket state is CLOSED, which is an indication
           that the attempted connection failed, and we shall signal any pending
@@ -588,14 +605,19 @@ NX_BSD_SOCKET  *bsd_socket_ptr;
 
 
                            /* Failed the relisten on the secondary socket.  Set the error code on the
-                              master socket, and wake it up. */
+                              master socket, and wake it up.  A secondary socket no master was
+                              found for (nx_bsd_tcp_establish_notify) has none to tell; it stays
+                              CLOSED and in progress, and is tried again on the next pass. */
 
                            master_socket_index = (bsd_socket_ptr -> nx_bsd_socket_union_id).nx_bsd_socket_master_socket_id;
 
-                           nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_ERROR;
-                           nx_bsd_set_error_code(&nx_bsd_socket_array[master_socket_index], status);
+                           if ((master_socket_index >= 0) && (master_socket_index < NX_BSD_MAX_SOCKETS))
+                           {
+                               nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_ERROR;
+                               nx_bsd_set_error_code(&nx_bsd_socket_array[master_socket_index], status);
 
-                           nx_bsd_select_wakeup((UINT)master_socket_index, (FDSET_READ | FDSET_WRITE | FDSET_EXCEPTION));
+                               nx_bsd_select_wakeup((UINT)master_socket_index, (FDSET_READ | FDSET_WRITE | FDSET_EXCEPTION));
+                           }
                        }
                    }
                }
@@ -9125,6 +9147,61 @@ UINT                    bsd_socket_index;
 }
 
 
+/* For nx_bsd_tcp_establish_notify: the master a secondary socket's new
+   connection belongs to.  nx_bsd_tcp_syn_received_notify sets it when NetX
+   shows the socket the SYN, and an index set there is kept.  With the SYN
+   cache (6b586f93) a SYN that arrives while no socket is parked is answered
+   later, and its connection is given to a socket that was never shown it:
+   the index is then still the NX_BSD_MAX_SOCKETS every secondary socket is
+   created with, and it is looked up here, by the same rules, from the
+   connection's own address family (its connect_ip version) and the
+   interface or IPv6 address it arrived on -- what the SYN carried.  Returns
+   the master's index, or NX_BSD_MAX_SOCKETS if there is none.  */
+static UINT  nx_bsd_tcp_establish_associate(NX_TCP_SOCKET *socket_ptr, UINT bsd_socket_index)
+{
+
+INT             sockID_find = NX_BSD_MAX_SOCKETS;
+
+
+    if (nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id < NX_BSD_MAX_SOCKETS)
+    {
+        return((UINT)nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id);
+    }
+
+    /* Anything but the creation value is not an index nor "not yet": fail
+       closed, with no master.  */
+    if (nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id != NX_BSD_MAX_SOCKETS)
+    {
+        return(NX_BSD_MAX_SOCKETS);
+    }
+
+#ifndef NX_DISABLE_IPV4
+    if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V4)
+    {
+        sockID_find = nx_bsd_tcp_master_find(socket_ptr, bsd_socket_index, AF_INET,
+                                             socket_ptr -> nx_tcp_socket_connect_interface,
+                                             (ULONG)(socket_ptr -> nx_tcp_socket_connect_interface));
+    }
+#endif /* NX_DISABLE_IPV4 */
+#ifdef FEATURE_NX_IPV6
+    if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
+        (socket_ptr -> nx_tcp_socket_ipv6_addr))
+    {
+        sockID_find = nx_bsd_tcp_master_find(socket_ptr, bsd_socket_index, AF_INET6,
+                                             socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_attached,
+                                             (ULONG)(socket_ptr -> nx_tcp_socket_ipv6_addr));
+    }
+#endif /* FEATURE_NX_IPV6 */
+
+    if (sockID_find != NX_BSD_MAX_SOCKETS)
+    {
+        nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id = sockID_find;
+    }
+
+    return((UINT)sockID_find);
+}
+
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -9219,15 +9296,32 @@ UINT                    master_socket_index;
     {
 
         /* Yes, get the master socket.  */
-        master_socket_index =  (UINT)(nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id);
+        master_socket_index =  nx_bsd_tcp_establish_associate(socket_ptr, bsd_socket_index);
 
-        /* Mark the server socket as also connected. */
-        nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_CONNECTED;
+        if (master_socket_index >= NX_BSD_MAX_SOCKETS)
+        {
 
-        nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_CONNECTION_REQUEST;
+            /* No listening master of the connection's family on its port and
+               interface, as nx_bsd_tcp_syn_received_notify refuses a SYN for.
+               The socket is not counted as connected and no master is marked
+               or woken; nx_bsd_timeout_process resets the connection and puts
+               the socket back on the listen request.  Not from here: NetX is
+               still finishing the state change that called this.  */
+            nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_status_flags &=
+                (ULONG)(~(NX_BSD_SOCKET_CONNECTED | NX_BSD_SOCKET_CONNECTION_REQUEST));
+            nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_CONNECTION_INPROGRESS;
+        }
+        else
+        {
 
-        /* Check on connect requests for all server sockets for this master socket. */
-        nx_bsd_select_wakeup(master_socket_index, FDSET_READ);
+            /* Mark the server socket as also connected. */
+            nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_CONNECTED;
+
+            nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_CONNECTION_REQUEST;
+
+            /* Check on connect requests for all server sockets for this master socket. */
+            nx_bsd_select_wakeup(master_socket_index, FDSET_READ);
+        }
     }
     else
     {
@@ -9347,14 +9441,18 @@ UINT                    status;
                 {
 
                     /* Failed the relisten on the secondary socket.  Set the error code on the
-                       master socket, and wake it up. */
+                       master socket, and wake it up.  A secondary socket no master was found
+                       for (nx_bsd_tcp_establish_notify) has none to tell. */
 
                     master_socket_index = (UINT)(bsd_socket_ptr -> nx_bsd_socket_union_id).nx_bsd_socket_master_socket_id;
 
-                    nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_ERROR;
-                    nx_bsd_set_error_code(&nx_bsd_socket_array[master_socket_index], status);
+                    if (master_socket_index < NX_BSD_MAX_SOCKETS)
+                    {
+                        nx_bsd_socket_array[master_socket_index].nx_bsd_socket_status_flags |= NX_BSD_SOCKET_ERROR;
+                        nx_bsd_set_error_code(&nx_bsd_socket_array[master_socket_index], status);
 
-                    nx_bsd_select_wakeup(master_socket_index, (FDSET_READ | FDSET_WRITE | FDSET_EXCEPTION));
+                        nx_bsd_select_wakeup(master_socket_index, (FDSET_READ | FDSET_WRITE | FDSET_EXCEPTION));
+                    }
                 }
             }
 
@@ -9375,6 +9473,16 @@ UINT                    status;
 
         /* Wake up the select on both read and write FDsets. */
         nx_bsd_select_wakeup(bsd_socket_index, (FDSET_READ | FDSET_WRITE | FDSET_EXCEPTION));
+    }
+    else if ((bsd_socket_ptr -> nx_bsd_socket_status_flags & NX_BSD_SOCKET_SERVER_SECONDARY_SOCKET) &&
+             ((bsd_socket_ptr -> nx_bsd_socket_union_id).nx_bsd_socket_master_socket_id >= NX_BSD_MAX_SOCKETS))
+    {
+
+        /* A secondary socket with no master (nx_bsd_tcp_establish_notify): the
+           branch above put it back on the listen request when the reset came,
+           and NetX's disconnect-complete callback reports the same reset again.
+           Nobody holds this socket to be told, and an error left on it would be
+           seen by its next connection.  */
     }
     else
     {
@@ -11247,13 +11355,8 @@ static UINT  nx_bsd_tcp_syn_received_notify(NX_TCP_SOCKET *socket_ptr, NX_PACKET
 {
 
 UINT            bsd_socket_index;
-INT             i;
 INT             sockID_find;
 ULONG           addr_family;
-INT             search_index;
-INT             receiver_match = NX_BSD_MAX_SOCKETS;
-INT             wildcard_match = NX_BSD_MAX_SOCKETS;
-NX_BSD_SOCKET  *bsd_socket_ptr;
 NX_INTERFACE   *interface_ptr;
 
 
@@ -11279,9 +11382,6 @@ NX_INTERFACE   *interface_ptr;
         addr_family = AF_INET6;
     }
 
-    /* Start the search at the position of the input socket. */
-    search_index = (INT)bsd_socket_index;
-
     /* Get the packet interface. */
 #ifdef FEATURE_NX_IPV6
     if(packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
@@ -11293,6 +11393,42 @@ NX_INTERFACE   *interface_ptr;
     else
         return (NX_FALSE);
 #endif /* FEATURE_NX_IPV6 */
+
+    sockID_find = nx_bsd_tcp_master_find(socket_ptr, bsd_socket_index, addr_family, interface_ptr,
+                                         (ULONG)(packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr));
+    if(sockID_find == NX_BSD_MAX_SOCKETS)
+    {
+
+        /* No match found.  Simply return .*/
+        return(NX_FALSE);
+    }
+
+    /*  Found the listening master socket.  Update the master socket ID of the input socket. */
+    nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id = sockID_find;
+
+    return(NX_TRUE);
+}
+
+
+/* The listening master socket a connection on secondary socket
+   bsd_socket_index belongs to: the TCP master of the connection's address
+   family on its port, bound to the interface (or IPv6 address) the
+   connection arrived on, else bound to any.  NX_BSD_MAX_SOCKETS if none.
+   address is the interface pointer for IPv4 and the IPv6 address pointer
+   for IPv6, as nx_packet_address holds it.  */
+static INT  nx_bsd_tcp_master_find(NX_TCP_SOCKET *socket_ptr, UINT bsd_socket_index, ULONG addr_family,
+                                   NX_INTERFACE *interface_ptr, ULONG address)
+{
+
+INT             i;
+INT             search_index;
+INT             receiver_match = NX_BSD_MAX_SOCKETS;
+INT             wildcard_match = NX_BSD_MAX_SOCKETS;
+NX_BSD_SOCKET  *bsd_socket_ptr;
+
+
+    /* Start the search at the position of the input socket. */
+    search_index = (INT)bsd_socket_index;
 
     for(i = 0; i < NX_BSD_MAX_SOCKETS; i++)
     {
@@ -11314,7 +11450,7 @@ NX_INTERFACE   *interface_ptr;
                 wildcard_match = search_index;
             }
             else if(((ULONG)(interface_ptr) == bsd_socket_ptr -> nx_bsd_socket_local_bind_interface) ||
-                    ((ULONG)(packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr) == bsd_socket_ptr -> nx_bsd_socket_local_bind_interface))
+                    (address == bsd_socket_ptr -> nx_bsd_socket_local_bind_interface))
             {
 
                 receiver_match = search_index;
@@ -11333,20 +11469,9 @@ NX_INTERFACE   *interface_ptr;
     }
 
     if(receiver_match != NX_BSD_MAX_SOCKETS)
-        sockID_find = receiver_match;
-    else if(wildcard_match != NX_BSD_MAX_SOCKETS)
-        sockID_find = wildcard_match;
-    else
-    {
+        return(receiver_match);
 
-        /* No match found.  Simply return .*/
-        return(NX_FALSE);
-    }
-
-    /*  Found the listening master socket.  Update the master socket ID of the input socket. */
-    nx_bsd_socket_array[bsd_socket_index].nx_bsd_socket_union_id.nx_bsd_socket_master_socket_id = sockID_find;
-
-    return(NX_TRUE);
+    return(wildcard_match);
 }
 
 /**************************************************************************/

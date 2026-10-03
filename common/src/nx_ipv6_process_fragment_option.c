@@ -97,9 +97,8 @@ NX_IPV6_HEADER_FRAGMENT_OPTION *fragment_option;
         return(NX_OPTION_HEADER_ERROR);
     }
 
-    /* Reassembly may not take the pool past its reserve. */
-    if (packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_available <=
-        NX_IP_FRAGMENT_POOL_RESERVE(packet_ptr -> nx_packet_pool_owner))
+    /* Reassembly may not take a shared pool past its reserve (nx_ip.h). */
+    if (!NX_IP_FRAGMENT_ADMIT(packet_ptr))
     {
         return(NX_POOL_ERROR);
     }

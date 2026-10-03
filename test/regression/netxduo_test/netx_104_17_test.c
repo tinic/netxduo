@@ -281,8 +281,17 @@ NX_PACKET    *my_packet4;
     if(ack_counter == 1)
     {
         /* Check whether the cwnd += SMSS*SMSS/ cwnd or cwnd = mss + ssthresh, but cwnd shall never exceed the advertised window.  */
-        if((server_socket.nx_tcp_socket_tx_window_congestion != server_socket.nx_tcp_socket_connect_mss2 / cwnd + cwnd) && (server_socket.nx_tcp_socket_tx_window_congestion != ssthresh + server_socket.nx_tcp_socket_connect_mss) && 
-           (server_socket.nx_tcp_socket_tx_window_congestion != server_socket.nx_tcp_socket_tx_window_advertised))
+        /* Congestion avoidance counts bytes (b77edd28; RFC 3465 2.1, one of the
+           two forms RFC 5681 3.1 allows): the window grows by one segment once a
+           window's worth has been acknowledged, and less than that is carried in
+           nx_tcp_socket_tx_cwnd_acked.  The per-ACK cwnd += SMSS*SMSS/cwnd this
+           test was written for is the other form.  Deflated to ssthresh, the
+           acknowledged bytes count towards the next segment.  */
+        if((server_socket.nx_tcp_socket_tx_window_congestion != server_socket.nx_tcp_socket_connect_mss2 / cwnd + cwnd) && (server_socket.nx_tcp_socket_tx_window_congestion != ssthresh + server_socket.nx_tcp_socket_connect_mss) &&
+           (server_socket.nx_tcp_socket_tx_window_congestion != server_socket.nx_tcp_socket_tx_window_advertised) &&
+           ((server_socket.nx_tcp_socket_tx_window_congestion != ssthresh) ||
+            (server_socket.nx_tcp_socket_tx_cwnd_acked == 0) ||
+            (server_socket.nx_tcp_socket_tx_cwnd_acked >= ssthresh)))
             error_counter++;
     }
 

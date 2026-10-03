@@ -85,6 +85,10 @@ TX_INTERRUPT_SAVE_AREA
 VOID           (*receive_callback)(struct NX_UDP_SOCKET_STRUCT *socket_ptr);
 TX_THREAD     *thread_ptr;
 
+#ifdef NX_DISABLE_UDP_INFO
+    NX_PARAMETER_NOT_USED(ip_ptr);
+#endif /* NX_DISABLE_UDP_INFO */
+
     /* Disable interrupts.  */
     TX_DISABLE
 
@@ -335,7 +339,9 @@ NX_UDP_SOCKET *socket_ptr;
 NX_UDP_SOCKET *sibling_ptr;
 NX_UDP_SOCKET *notify_ptr;
 NX_UDP_HEADER *udp_header_ptr;
+#ifndef NX_DISABLE_IPV4
 NX_IPV4_HEADER *ipv4_header_ptr;
+#endif /* NX_DISABLE_IPV4 */
 NX_PACKET     *clone_packet_ptr;
 #ifdef FEATURE_NX_IPV6
 NX_IPV6_HEADER *ipv6_header_ptr;
@@ -546,6 +552,7 @@ NX_IPV6_HEADER *ipv6_header_ptr;
 
         /* Determine whether this datagram is destined to a multicast group.  */
         is_multicast = NX_FALSE;
+#ifndef NX_DISABLE_IPV4
         if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V4)
         {
 
@@ -556,8 +563,9 @@ NX_IPV6_HEADER *ipv6_header_ptr;
                 is_multicast = NX_TRUE;
             }
         }
+#endif /* NX_DISABLE_IPV4 */
 #ifdef FEATURE_NX_IPV6
-        else if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
+        if (packet_ptr -> nx_packet_ip_version == NX_IP_VERSION_V6)
         {
 
             /* Test the leading 0xFF of the IPv6 destination.  */

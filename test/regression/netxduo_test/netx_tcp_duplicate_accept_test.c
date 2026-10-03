@@ -45,6 +45,13 @@ static UINT                    ack_number[10];
 static void    thread_0_entry(ULONG thread_input);
 static void    thread_1_entry(ULONG thread_input);
 extern void    _nx_ram_network_driver_1500(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
+static UINT    packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
+
+/* SYN+ACKs the server sent from its own IP thread (answering the SYN, or
+   retransmitting on its timer), and from any other thread (an accept()).  */
+static UINT                    syn_ack_from_ip_thread;
+static UINT                    syn_ack_from_caller;
 static void    tcp_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 
 
@@ -205,6 +212,8 @@ UINT            i;
     if (status)
         error_counter++;
 
+    advanced_packet_process_callback = packet_process;
+
     /* Sleep one second. Let client send SYN first. */
     tx_thread_sleep(NX_IP_PERIODIC_RATE);
 
@@ -238,19 +247,27 @@ UINT            i;
     if (status)
         error_counter++;
 
-    /* Only one SYN+ACK packet is expected. */
-    if (syn_ack_received != 1)
-    {
+    advanced_packet_process_callback = NX_NULL;
+
+    /* The bug this covers sent a SYN+ACK from each accept(), each with a
+       different ACK number.  Since 6b586f93 the SYN cache answers the SYN
+       and retransmits its SYN+ACK on its own timer (1, 3, 7 s), so one
+       second of sleep before accept can see a second SYN+ACK that accept did
+       not cause.  What the second accept must not do is unchanged: send a
+       SYN+ACK of its own (at most one, upstream's first accept, comes from
+       the calling thread; none does under the cache) or change the numbers
+       (every SYN+ACK carries the first one's).  */
+    if ((syn_ack_received < 1) || (syn_ack_from_caller > 1) ||
+        ((syn_ack_from_ip_thread + syn_ack_from_caller) != syn_ack_received))
         error_counter++;
 
-        /* Check whether all sequence and ACK numbers are the same. */
-        for (i = 1; i < syn_ack_received; i++)
-        {
-            if (sequence[i] != sequence[0])
-                error_counter++;
-            if (ack_number[i] != ack_number[0])
-                error_counter++;
-        }
+    /* Check whether all sequence and ACK numbers are the same. */
+    for (i = 1; i < syn_ack_received; i++)
+    {
+        if (sequence[i] != sequence[0])
+            error_counter++;
+        if (ack_number[i] != ack_number[0])
+            error_counter++;
     }
 
     /* Check status.  */
@@ -287,6 +304,38 @@ NX_TCP_HEADER  *tcp_header_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
     /* Drop the packet to avoid RST.  */
     nx_packet_release(packet_ptr);
+}
+
+
+static UINT    packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
+{
+
+UCHAR  *ip_header = packet_ptr -> nx_packet_prepend_ptr;
+UCHAR  *tcp_header;
+
+
+    NX_PARAMETER_NOT_USED(operation_ptr);
+    NX_PARAMETER_NOT_USED(delay_ptr);
+
+    if ((ip_ptr != &ip_1) || ((ip_header[0] >> 4) != 4) || (ip_header[9] != NX_PROTOCOL_TCP))
+    {
+        return(NX_TRUE);
+    }
+
+    tcp_header = ip_header + ((UINT)(ip_header[0] & 0x0F) << 2);
+    if ((tcp_header[13] & 0x12) == 0x12)
+    {
+        if (tx_thread_identify() == &(ip_1.nx_ip_thread))
+        {
+            syn_ack_from_ip_thread++;
+        }
+        else
+        {
+            syn_ack_from_caller++;
+        }
+    }
+
+    return(NX_TRUE);
 }
 #else
 

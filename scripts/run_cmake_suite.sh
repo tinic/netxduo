@@ -115,13 +115,29 @@ if [ "${RUN_CMAKE_SUITE_DRY_RUN:-0}" = "1" ]; then
 fi
 
 if [ "${operation}" = "test" ]; then
+    run_as=()
+    test_status=0
     if [[ "${suite}" = "mqtt_interoperability" || "${suite}" = "nx_secure_interoperability" ]]; then
+        run_as=(sudo)
         sudo env CTEST_PARALLEL_LEVEL=1 CTEST_REPEAT_FAIL="${CTEST_REPEAT_FAIL:-2}" \
-            "${runner}" "${operation}" "$@"
+            "${runner}" "${operation}" "$@" || test_status=$?
     else
         CTEST_PARALLEL_LEVEL=4 CTEST_REPEAT_FAIL="${CTEST_REPEAT_FAIL:-2}" \
-            "${runner}" "${operation}" "$@"
+            "${runner}" "${operation}" "$@" || test_status=$?
     fi
+
+    # Union the per-configuration coverage into coverage_report/merged.xml,
+    # which the regression template summarises and gates.  A test failure
+    # keeps its own nonzero status; a merge failure fails an otherwise
+    # passing run.
+    if compgen -G "${suite_directory}/coverage_report/*.json" > /dev/null; then
+        merge_status=0
+        "${run_as[@]}" "${suite_directory}/coverage.sh" --merge || merge_status=$?
+        if [ "${test_status}" -eq 0 ]; then
+            test_status="${merge_status}"
+        fi
+    fi
+    exit "${test_status}"
 else
     "${runner}" "${operation}" "$@"
 fi

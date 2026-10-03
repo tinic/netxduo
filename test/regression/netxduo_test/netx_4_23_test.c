@@ -169,11 +169,29 @@ ULONG      actual_status;
     if(server_socket.nx_tcp_socket_state == NX_TCP_SYN_RECEIVED)
     {
 
+#ifdef NX_TCP_SYNCACHE_SIZE
+        /* With the SYN cache (6b586f93) the handshake in SYN-RECEIVED is an
+           entry in the cache, and the socket accept was called on owns
+           nothing until it finishes: it is armed, unbound and without a
+           peer.  OPEN on it is refused as on any unbound socket, with
+           NX_NOT_BOUND (nxd_tcp_client_socket_connect.c checks binding
+           before state), and changes nothing: the socket stays armed and the
+           handshake goes on to finish on it.  Upstream's NX_NOT_CLOSED
+           ("connection already exists") is for a socket that owns the
+           connection, which here none does.  */
+        status = nx_tcp_client_socket_connect(&server_socket, IP_ADDRESS(1, 2, 3, 5), 12, NX_IP_PERIODIC_RATE);
+        if((status != NX_NOT_BOUND) ||
+           (server_socket.nx_tcp_socket_state != NX_TCP_SYN_RECEIVED) ||
+           (server_socket.nx_tcp_socket_bound_next != NX_NULL) ||
+           (server_socket.nx_tcp_socket_connect_port != 0))
+            error_counter++;
+#else
         status = nx_tcp_client_socket_connect(&server_socket, IP_ADDRESS(1, 2, 3, 5), 12, NX_IP_PERIODIC_RATE);
 
         /* NX_NOT_CLOSED is equal to the message of "error: connection already exists".  */
         if(status != NX_NOT_CLOSED)
             error_counter++;
+#endif /* NX_TCP_SYNCACHE_SIZE */
     }
 
     status = nx_tcp_socket_state_wait(&server_socket, NX_TCP_ESTABLISHED, NX_IP_PERIODIC_RATE);
