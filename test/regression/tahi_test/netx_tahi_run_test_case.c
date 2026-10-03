@@ -92,6 +92,85 @@ UINT src_port = ((UINT)pkt[14 + 40] << 8) | pkt[14 + 41];
     }
 }
 
+/* RFC 8415 21.4: in a message a client sends, T1 and T2 of an IA_NA are
+   zero.  c0e5b1e1 has the DHCPv6 client send them so for every message type;
+   the captures carry its stored times in Request, Renew and Rebind.  So an
+   IA_NA in a DHCPv6 client message (UDP 546 to 547) is expected with both
+   words zero, and the UDP checksum recomputed for that.  Every other byte is
+   the capture's.  */
+static void expect_iana_times_zero(UCHAR *pkt, int pkt_size)
+{
+UCHAR *udp = pkt + 14 + 40;
+UINT   udp_length = ((UINT)udp[4] << 8) | udp[5];
+UINT   offset;
+UINT   code;
+UINT   length;
+UINT   changed = 0;
+ULONG  sum = 0;
+UINT   i;
+
+    if ((((UINT)udp[0] << 8 | udp[1]) != 546) || (((UINT)udp[2] << 8 | udp[3]) != 547) ||
+        ((int)(14 + 40 + udp_length) > pkt_size) || (udp_length < 12))
+    {
+        return;
+    }
+
+    /* Options follow the message type and transaction ID.  */
+    for (offset = 8 + 4; (offset + 4) <= udp_length; offset += 4 + length)
+    {
+        code = ((UINT)udp[offset] << 8) | udp[offset + 1];
+        length = ((UINT)udp[offset + 2] << 8) | udp[offset + 3];
+        if ((offset + 4 + length) > udp_length)
+        {
+            return;
+        }
+        if ((code == 3) && (length >= 12))
+        {
+            for (i = offset + 8; i < offset + 16; i++)
+            {
+                if (udp[i])
+                {
+                    udp[i] = 0;
+                    changed = 1;
+                }
+            }
+        }
+    }
+
+    if (!changed)
+    {
+        return;
+    }
+
+    /* Pseudo-header: source, destination, UDP length, next header.  */
+    for (i = 14 + 8; i < 14 + 40; i += 2)
+    {
+        sum += ((ULONG)pkt[i] << 8) | pkt[i + 1];
+    }
+    sum += udp_length + NX_PROTOCOL_UDP;
+    udp[6] = 0;
+    udp[7] = 0;
+    for (i = 0; i + 1 < udp_length; i += 2)
+    {
+        sum += ((ULONG)udp[i] << 8) | udp[i + 1];
+    }
+    if (udp_length & 1)
+    {
+        sum += (ULONG)udp[udp_length - 1] << 8;
+    }
+    while (sum >> 16)
+    {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    sum = (~sum) & 0xFFFF;
+    if (sum == 0)
+    {
+        sum = 0xFFFF;
+    }
+    udp[6] = (UCHAR)(sum >> 8);
+    udp[7] = (UCHAR)sum;
+}
+
 static char *expected_packet(char *pkt_data, int pkt_size)
 {
 UCHAR *pkt = (UCHAR *)pkt_data;
@@ -104,6 +183,7 @@ UCHAR *pkt = (UCHAR *)pkt_data;
 
     memcpy(expected_data, pkt_data, (size_t)pkt_size);
     expect_socket_hop_limit(expected_data);
+    expect_iana_times_zero(expected_data, pkt_size);
     return((char *)expected_data);
 }
 
