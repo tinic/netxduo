@@ -146,9 +146,14 @@ UCHAR                *signature_s;
     {
         do
         {
-            /* Generate Key Pair. */
-            _nx_crypto_ec_key_pair_generation_extra(curve, &curve -> nx_crypto_ec_g, &k, &pt,
-                                                    scratch);
+            /* Generate Key Pair.  On failure k and pt are not a key pair, and
+               nothing below may be computed or written from them (N-156). */
+            status = _nx_crypto_ec_key_pair_generation_extra(curve, &curve -> nx_crypto_ec_g, &k, &pt,
+                                                             scratch);
+            if (status != NX_CRYPTO_SUCCESS)
+            {
+                return(status);
+            }
 
             /* Calculate r = pt.x mod n */
             _nx_crypto_huge_number_modulus(&pt.nx_crypto_ec_point_x, &curve -> nx_crypto_ec_n);

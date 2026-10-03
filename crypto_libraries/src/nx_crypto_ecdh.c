@@ -235,6 +235,7 @@ NX_CRYPTO_KEEP UINT _nx_crypto_ecdh_setup(NX_CRYPTO_ECDH  *ecdh_ptr,
                                           HN_UBASE *scratch_buf_ptr)
 {
 UINT public_key_len;
+UINT status;
 /* Actual huge numbers used in calculations */
 NX_CRYPTO_HUGE_NUMBER private_key;
 NX_CRYPTO_EC_POINT    public_key;
@@ -264,9 +265,17 @@ NX_CRYPTO_EC_POINT    public_key;
     NX_CRYPTO_MEMSET(ecdh_ptr -> nx_crypto_ecdh_private_key_buffer, 0,
                      sizeof(ecdh_ptr -> nx_crypto_ecdh_private_key_buffer));
 
-    /* Generate Key Pair. */
-    _nx_crypto_ec_key_pair_generation_extra(curve, &curve -> nx_crypto_ec_g, &private_key,
-                                            &public_key, scratch_buf_ptr);
+    /* Generate Key Pair.  A failure (the RBG, or a number that does not fit)
+       leaves the point unset: nothing is extracted from it, and the half-made
+       private key is not left behind (N-156). */
+    status = _nx_crypto_ec_key_pair_generation_extra(curve, &curve -> nx_crypto_ec_g, &private_key,
+                                                     &public_key, scratch_buf_ptr);
+    if (status != NX_CRYPTO_SUCCESS)
+    {
+        NX_CRYPTO_MEMSET(ecdh_ptr -> nx_crypto_ecdh_private_key_buffer, 0,
+                         sizeof(ecdh_ptr -> nx_crypto_ecdh_private_key_buffer));
+        return(status);
+    }
 
     /* Copy the public key into the return buffer. */
     _nx_crypto_ec_point_extract_uncompressed(curve, &public_key, local_public_key_ptr,
