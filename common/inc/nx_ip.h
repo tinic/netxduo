@@ -100,9 +100,12 @@
    pool packet for NX_IPV4_MAX_REASSEMBLY_TIME or NX_IPV6_MAX_REASSEMBLY_TIME
    however few bytes it carried.  On a small pool a handful of them therefore
    empties it and stops the stack, which a lossy link does by accident and an
-   attacker does for the cost of one packet per pool slot.  A fragment
-   arriving when the pool is already at or below the reserve is dropped, so
-   what is left is always enough for ARP, ND and the TCP that is running.
+   attacker does for the cost of one packet per pool slot.  A fragment is
+   dropped when the datagrams being reassembled already hold all of the pool
+   but the reserve (_nx_ip_fragment_assembly), so what is left is always
+   enough for ARP, ND and the TCP that is running.  It is what reassembly
+   holds that is counted, not what is free: packets in flight elsewhere are
+   not reassembly's to answer for.
 
    NX_ENABLE_LOW_WATERMARK is the same guard applied more widely -- it also
    tail-drops TCP receive queues and UDP -- and remains available on top of

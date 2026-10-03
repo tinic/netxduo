@@ -69,6 +69,45 @@
 /*                                                                        */
 /**************************************************************************/
 
+/* AmiNetXDuo: the packets of pool_ptr held by the datagrams being
+   reassembled, every buffer of every fragment.  */
+static ULONG  _nx_ip_fragment_assembly_held(NX_IP *ip_ptr, NX_PACKET_POOL *pool_ptr)
+{
+
+NX_PACKET *datagram_ptr;
+NX_PACKET *fragment_ptr;
+#ifndef NX_DISABLE_PACKET_CHAIN
+NX_PACKET *buffer_ptr;
+#endif /* NX_DISABLE_PACKET_CHAIN */
+ULONG      held = 0;
+
+
+    for (datagram_ptr = ip_ptr -> nx_ip_fragment_assembly_head; datagram_ptr;
+         datagram_ptr = datagram_ptr -> nx_packet_queue_next)
+    {
+        for (fragment_ptr = datagram_ptr; fragment_ptr;
+             fragment_ptr = fragment_ptr -> nx_packet_union_next.nx_packet_fragment_next)
+        {
+#ifndef NX_DISABLE_PACKET_CHAIN
+            for (buffer_ptr = fragment_ptr; buffer_ptr; buffer_ptr = buffer_ptr -> nx_packet_next)
+            {
+                if (buffer_ptr -> nx_packet_pool_owner == pool_ptr)
+                {
+                    held++;
+                }
+            }
+#else
+            if (fragment_ptr -> nx_packet_pool_owner == pool_ptr)
+            {
+                held++;
+            }
+#endif /* NX_DISABLE_PACKET_CHAIN */
+        }
+    }
+
+    return(held);
+}
+
 VOID  _nx_ip_fragment_assembly(NX_IP *ip_ptr)
 {
 TX_INTERRUPT_SAVE_AREA
@@ -175,6 +214,25 @@ UINT                            packet_consumed;
             current_fragment -> nx_packet_reassembly_time = NX_IPV6_MAX_REASSEMBLY_TIME;
         }
 #endif
+
+        /* AmiNetXDuo: reassembly may not hold the pool's reserve
+           (NX_IP_FRAGMENT_POOL_RESERVE, nx_ip.h).  What the datagrams being
+           assembled hold is counted, buffer by buffer; the list is this
+           thread's alone.  */
+        if (_nx_ip_fragment_assembly_held(ip_ptr, current_fragment -> nx_packet_pool_owner) + 1 >
+            (current_fragment -> nx_packet_pool_owner -> nx_packet_pool_total -
+             NX_IP_FRAGMENT_POOL_RESERVE(current_fragment -> nx_packet_pool_owner)))
+        {
+
+#ifndef NX_DISABLE_IP_INFO
+
+            /* Increment the IP receive packets dropped count.  */
+            ip_ptr -> nx_ip_receive_packets_dropped++;
+#endif
+
+            _nx_packet_release(current_fragment);
+            continue;
+        }
 
         /* Set the found pointer to NULL.  */
         found_ptr =  NX_NULL;

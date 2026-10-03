@@ -444,10 +444,8 @@ UINT            packet_consumed;
 #endif
 
                 /* Yes, the incoming IP header is fragmented.  Check to see if IP fragmenting
-                   has been enabled, and that reassembly may still take from the pool.  */
-                if ((ip_ptr -> nx_ip_fragment_assembly) &&
-                    (packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_available >
-                     NX_IP_FRAGMENT_POOL_RESERVE(packet_ptr -> nx_packet_pool_owner)))
+                   has been enabled.  */
+                if (ip_ptr -> nx_ip_fragment_assembly)
                 {
 
                     /* Yes, fragmenting is available.  Place the packet on the incoming
@@ -570,17 +568,13 @@ UINT            packet_consumed;
 #endif
 
             /* Yes, the incoming IP header is fragmented.  Check to see if IP fragmenting
-               has been enabled, and that reassembly may still take from the pool.  */
+               has been enabled.  */
 #ifdef NX_ENABLE_LOW_WATERMARK
             if (ip_ptr -> nx_ip_fragment_assembly &&
                 (packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_available >=
-                 packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_low_watermark) &&
-                (packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_available >
-                 NX_IP_FRAGMENT_POOL_RESERVE(packet_ptr -> nx_packet_pool_owner)))
+                 packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_low_watermark))
 #else
-            if (ip_ptr -> nx_ip_fragment_assembly &&
-                (packet_ptr -> nx_packet_pool_owner -> nx_packet_pool_available >
-                 NX_IP_FRAGMENT_POOL_RESERVE(packet_ptr -> nx_packet_pool_owner)))
+            if (ip_ptr -> nx_ip_fragment_assembly)
 #endif
             {
 

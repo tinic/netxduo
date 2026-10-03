@@ -86,8 +86,13 @@ UINT    status;
     nx_system_initialize();
 
     /* Create a packet pool.  */
-    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 1500, pointer, 1500 * 10);
-    pointer = pointer + 1500 * 10;
+    /* Fourteen packets' worth, not ten: the 1024-byte datagram reaches ip_2
+       as seven fragments (512 then 256 MTU), and reassembly holds at most the
+       pool less NX_IP_FRAGMENT_POOL_RESERVE, half of it by default (016daf76).
+       Ten made nine packets, room for five; this makes thirteen, room for
+       seven.  The refusal on the small pool is netx_ip_fragment_reserve_test. */
+    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 1500, pointer, 1500 * 14);
+    pointer = pointer + 1500 * 14;
 
     /* Check for pool creation error.  */
     if (status)
