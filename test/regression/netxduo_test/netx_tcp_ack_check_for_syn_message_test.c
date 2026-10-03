@@ -21,6 +21,10 @@
 7. Call nx_tcp_client_socket_connect to send SYN messsage.
 8. Modify the server rx_sequence to let the SYN sequence number in server socket window in callback function.
 9. Check if the server send the RST message.
+   With RFC 5961 section 4 (772b79c1) the server answers the in-window SYN
+   with a challenge ACK instead; the client, in SYN-SENT, answers that
+   unacceptable ACK with a RST, which carries RCV.NXT and tears the old
+   connection down.
 */
 
 #include   "tx_api.h"
@@ -49,6 +53,8 @@ static NX_TCP_SOCKET           server_socket;
 static ULONG                   error_counter; 
 static ULONG                   syn_counter;
 static ULONG                   rst_counter;
+static ULONG                   challenge_counter;
+static ULONG                   client_rst_counter;
 
 /* Define thread prototypes.  */
 
@@ -311,7 +317,12 @@ ULONG          actual_status;
     tx_thread_relinquish();
 
     /* Determine if the test was successful.  */
+#ifdef NX_TCP_CHALLENGE_ACK_LIMIT
+    if ((error_counter) || (syn_counter != 1) || (rst_counter != 0) ||
+        (challenge_counter != 1) || (client_rst_counter != 1))
+#else
     if ((error_counter) || (syn_counter != 1) || (rst_counter != 1))
+#endif /* NX_TCP_CHALLENGE_ACK_LIMIT */
     {
         printf("ERROR!\n");
         test_control_return(1);
@@ -348,6 +359,12 @@ NX_TCP_HEADER        *tcp_header_ptr;
         /* Modified the server rx_sequence to let the SYN sequence number in server socket window.  */
         server_socket.nx_tcp_socket_rx_sequence = tcp_header_ptr -> nx_tcp_sequence_number - 1;
     }
+    else if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)
+    {
+
+        /* The client's answer to a challenge ACK.  */
+        client_rst_counter++;
+    }
 
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
@@ -370,6 +387,13 @@ NX_TCP_HEADER        *tcp_header_ptr;
 
         /* Update the counter.  */
         rst_counter++;    
+    }
+    else if ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT) &&
+             !(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT))
+    {
+
+        /* An acknowledgment of the old connection: the challenge.  */
+        challenge_counter++;
     }
 
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
