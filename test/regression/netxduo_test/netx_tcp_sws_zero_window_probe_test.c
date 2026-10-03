@@ -8,12 +8,15 @@
 /* SPDX-License-Identifier: MIT                                            */
 /***************************************************************************/
 
-/* A receive window below min(MSS, RCV.BUFF/2) goes on the wire as zero
-   (RFC 1122 4.2.3.3), and then it is zero for what arrives as well
-   (RFC 9293 3.10.7.4, Tables 5 and 6): the sender's one-byte persist probe
-   is answered with an ACK that moves neither RCV.NXT nor the window, and is
-   not taken.  Once the application drains the socket the window reopens and
-   everything arrives, once and in order.  */
+/* Receiver silly-window avoidance (RFC 1122 4.2.3.3).  Below
+   min(MSS, RCV.BUFF/2) the right edge of the receive window is not moved:
+   what is left of the window already offered is advertised, not pulled back
+   to zero (RFC 9293 3.8.6.2.2), and a read that frees less than the floor
+   does not open a new sliver.  A window advertised as zero is zero for what
+   arrives as well (RFC 9293 3.10.7.4, Tables 5 and 6): the sender's one-byte
+   persist probe is answered with an ACK that moves neither RCV.NXT nor the
+   window, and is not taken.  Once the application drains the socket the
+   window reopens and everything arrives, once and in order.  */
 
 #include   "nx_api.h"
 #include   "nx_tcp.h"
@@ -25,8 +28,8 @@ extern void    test_control_return(UINT status);
 
 #define SERVER_PORT            0x120
 #define SERVER_WINDOW          2048
-#define CHUNK                  500
-#define CHUNKS                 4
+#define CHUNK                  512
+#define CHUNKS                 5
 #define TOTAL                  (CHUNK * CHUNKS)
 
 static TX_THREAD               thread_0;
@@ -52,6 +55,7 @@ static UINT                    probes;
 static UINT                    acks_while_closed;
 static UINT                    bad_acks_while_closed;
 static ULONG                   closed_ack;
+static ULONG                   last_server_window;
 
 static UCHAR                   buffer[TOTAL];
 
@@ -161,6 +165,37 @@ static void    thread_send_entry(ULONG thread_input)
 }
 
 
+/* Until the server has taken everything sent and its window is free bytes,
+   and a little longer for the acknowledgment to go out.  */
+static void    window_wait(ULONG free)
+{
+
+ULONG ticks = 0;
+
+
+    while ((server.nx_tcp_socket_rx_window_current != free) && (ticks < NX_IP_PERIODIC_RATE))
+    {
+        tx_thread_sleep(1);
+        ticks++;
+    }
+    tx_thread_sleep(NX_IP_PERIODIC_RATE / 2);
+    check(server.nx_tcp_socket_rx_window_current == free);
+}
+
+static void    probes_wait(UINT count)
+{
+
+ULONG ticks = 0;
+
+
+    while ((probes < count) && (ticks < 10 * NX_IP_PERIODIC_RATE))
+    {
+        tx_thread_sleep(1);
+        ticks++;
+    }
+    check(probes >= count);
+}
+
 static void    thread_0_entry(ULONG thread_input)
 {
 
@@ -170,7 +205,7 @@ ULONG      copied;
 ULONG      ticks;
 ULONG      rx_sequence;
 UINT       i;
-UCHAR      data[TOTAL];
+static UCHAR data[TOTAL];
 
 
     NX_PARAMETER_NOT_USED(thread_input);
@@ -194,25 +229,25 @@ UCHAR      data[TOTAL];
     check(nx_tcp_server_socket_accept(&server, 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
 
     /* min(MSS, RCV.BUFF/2) is the half buffer here, so after three chunks
-       what is free (548 bytes) is below it.  */
+       what is free (512 bytes) is below it.  */
     check(NX_TCP_SWS_FLOOR(&server) == SERVER_WINDOW / 2);
 
     advanced_packet_process_callback = packet_process;
 
-    for (i = 0; i < CHUNKS - 1; i++)
+    for (i = 0; i < 3; i++)
     {
         check(chunk_send(i, NX_NO_WAIT) == NX_SUCCESS);
     }
+    window_wait(SERVER_WINDOW - 3 * CHUNK);
 
-    ticks = 0;
-    while ((server.nx_tcp_socket_rx_window_current != SERVER_WINDOW - (CHUNKS - 1) * CHUNK) &&
-           (ticks < NX_IP_PERIODIC_RATE))
-    {
-        tx_thread_sleep(1);
-        ticks++;
-    }
-    tx_thread_sleep(NX_IP_PERIODIC_RATE / 2);
-    check(server.nx_tcp_socket_rx_window_current == SERVER_WINDOW - (CHUNKS - 1) * CHUNK);
+    /* The edge offered after two chunks (1024 bytes) stays where it was:
+       its last 512 bytes are still advertised, not zero.  */
+    check(last_server_window == SERVER_WINDOW - 3 * CHUNK);
+
+    /* The fourth chunk fits that edge, goes at once, and closes it.  */
+    check(chunk_send(3, NX_NO_WAIT) == NX_SUCCESS);
+    window_wait(0);
+    check(last_server_window == 0);
     rx_sequence = server.nx_tcp_socket_rx_sequence;
 
     /* The window is closed on the wire.  The last chunk waits for it, and
@@ -224,12 +259,17 @@ UCHAR      data[TOTAL];
     send_status = 0xFFFF;
     tx_thread_resume(&thread_send);
 
-    ticks = 0;
-    while ((probes < 2) && (ticks < 10 * NX_IP_PERIODIC_RATE))
-    {
-        tx_thread_sleep(1);
-        ticks++;
-    }
+    probes_wait(1);
+
+    /* The application reads one chunk: 512 bytes free, below the floor.
+       That is not a window worth announcing and the edge stays put, so the
+       probes that follow still find it closed.  */
+    check(nx_tcp_socket_receive(&server, &packet_ptr, NX_NO_WAIT) == NX_SUCCESS);
+    check(nx_packet_data_retrieve(packet_ptr, &data[0], &copied) == NX_SUCCESS);
+    check(copied == CHUNK);
+    nx_packet_release(packet_ptr);
+    check(server.nx_tcp_socket_rx_window_current == CHUNK);
+    probes_wait(probes + 2);
 
     tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
     window_closed = NX_FALSE;
@@ -237,15 +277,15 @@ UCHAR      data[TOTAL];
 
     /* Each probe drew an ACK of the unchanged RCV.NXT and a zero window, and
        nothing was taken.  */
-    check(probes >= 2);
+    check(probes >= 3);
     check((acks_while_closed >= probes) && (bad_acks_while_closed == 0));
     check(server.nx_tcp_socket_rx_sequence == rx_sequence);
-    check(server.nx_tcp_socket_rx_window_current == SERVER_WINDOW - (CHUNKS - 1) * CHUNK);
+    check(server.nx_tcp_socket_rx_window_current == CHUNK);
     check(send_status == 0xFFFF);
 
     /* The application drains; the window reopens and the rest arrives once,
        in order.  */
-    received = 0;
+    received = CHUNK;
     while (received < TOTAL)
     {
         check(nx_tcp_socket_receive(&server, &packet_ptr, 10 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
@@ -294,13 +334,24 @@ UINT    length;
     NX_PARAMETER_NOT_USED(delay_ptr);
 
     ip_header = packet_ptr -> nx_packet_prepend_ptr;
-    if (((ip_header[0] >> 4) != 4) || (ip_header[9] != NX_PROTOCOL_TCP) || (window_closed == NX_FALSE))
+    if (((ip_header[0] >> 4) != 4) || (ip_header[9] != NX_PROTOCOL_TCP))
     {
         return(NX_TRUE);
     }
 
     header_length = (UINT)(ip_header[0] & 0x0F) << 2;
     tcp_header = ip_header + header_length;
+
+    /* The window the server last put on the wire (no scaling here).  */
+    if ((ip_ptr == &ip_1) && (tcp_header[13] & 0x10))
+    {
+        last_server_window = ((ULONG)tcp_header[14] << 8) | tcp_header[15];
+    }
+
+    if (window_closed == NX_FALSE)
+    {
+        return(NX_TRUE);
+    }
     length = (UINT)(packet_ptr -> nx_packet_length - header_length - ((UINT)(tcp_header[12] >> 4) << 2));
 
     if (ip_ptr == &ip_0)

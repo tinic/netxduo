@@ -351,6 +351,24 @@
      (ULONG)((s) -> nx_tcp_socket_connect_mss) :                        \
      (((s) -> nx_tcp_socket_rx_window_default) >> 1))
 
+/* The receive window to advertise, in bytes.  At or above the floor, the free
+   space.  Below it the right edge is not moved (RFC 1122 4.2.3.3) and not
+   pulled back (RFC 9293 3.8.6.2.2): what is left of the window last put on
+   the wire, rx_window_last_sent, or the free space if that is less.  */
+#define NX_TCP_RX_WINDOW_ADVERTISED(s)                                  \
+    ((((s) -> nx_tcp_socket_rx_window_current >= NX_TCP_SWS_FLOOR(s)) || \
+      ((s) -> nx_tcp_socket_rx_window_current <=                        \
+       (s) -> nx_tcp_socket_rx_window_last_sent)) ?                     \
+     (s) -> nx_tcp_socket_rx_window_current :                           \
+     (s) -> nx_tcp_socket_rx_window_last_sent)
+
+/* The bytes a window field put on the wire stands for (not a SYN's).  */
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+#define NX_TCP_RX_WINDOW_ON_WIRE(s, w) ((ULONG)(w) << (s) -> nx_tcp_rcv_win_scale_value)
+#else
+#define NX_TCP_RX_WINDOW_ON_WIRE(s, w) ((ULONG)(w))
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
 
 /* Define Basic TCP packet header data type.  This will be used to
    build new TCP packets and to examine incoming packets into NetX.  */

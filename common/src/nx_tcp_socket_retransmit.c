@@ -157,16 +157,9 @@ UINT           compute_checksum = 1;
     /* Convert to network byte order for checksum */
     NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_acknowledgment_number);
 
-    /* Set window size.  Below the floor it goes out as zero, as from the
-       other two senders (RFC 1122 4.2.3.3); the receive side reads
-       rx_window_last_sent on that understanding.  Clamped before the shift:
-       the floor is in real bytes and the scaled field is not.  */
-    window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
-
-    if (window_size < NX_TCP_SWS_FLOOR(socket_ptr))
-    {
-        window_size = 0;
-    }
+    /* Set window size, in bytes before the shift, as from the other two
+       senders (nx_tcp.h).  */
+    window_size = NX_TCP_RX_WINDOW_ADVERTISED(socket_ptr);
 
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
     window_size = window_size >> socket_ptr -> nx_tcp_rcv_win_scale_value;
@@ -213,7 +206,7 @@ UINT           compute_checksum = 1;
 
     /* Remember the last ACKed sequence and the last reported window size.  */
     socket_ptr -> nx_tcp_socket_rx_sequence_acked =    socket_ptr -> nx_tcp_socket_rx_sequence;
-    socket_ptr -> nx_tcp_socket_rx_window_last_sent =  socket_ptr -> nx_tcp_socket_rx_window_current;
+    socket_ptr -> nx_tcp_socket_rx_window_last_sent =  NX_TCP_RX_WINDOW_ON_WIRE(socket_ptr, window_size);
 
     /* Zero out existing checksum before computing new one. */
     header_ptr -> nx_tcp_header_word_4 = header_ptr -> nx_tcp_header_word_4 & 0x0000FFFF;
