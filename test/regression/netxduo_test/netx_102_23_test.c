@@ -251,8 +251,14 @@ ULONG        cwnd;
 
     tx_thread_sleep(NX_IP_PERIODIC_RATE/2);
 
-    /* Check whether the cwnd = cwnd + SMSS*SMSS/ cwnd.  */
-    if((ack_counter != 2) || (server_socket.nx_tcp_socket_tx_window_congestion != server_socket.nx_tcp_socket_connect_mss * server_socket.nx_tcp_socket_connect_mss / cwnd + cwnd))
+    /* Congestion avoidance counts bytes (b77edd28; RFC 3465 2.1, one of the
+       two forms RFC 5681 3.1 allows): the window grows by one segment once a
+       window's worth has been acknowledged, and less than that is carried in
+       nx_tcp_socket_tx_cwnd_acked.  The per-ACK cwnd += SMSS*SMSS/cwnd this
+       test was written for is the other form.  The 20 bytes are counted; slow start had cleared the count.  */
+    if((ack_counter != 2) || (cwnd <= 20) ||
+       (server_socket.nx_tcp_socket_tx_window_congestion != cwnd) ||
+       (server_socket.nx_tcp_socket_tx_cwnd_acked != 20))
         error_counter++;
 
     /* Disconnect the server socket.  */
