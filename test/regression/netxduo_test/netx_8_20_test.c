@@ -256,6 +256,19 @@ ULONG          actual_status;
     tx_thread_suspend(&ntest_1);
 
     /* Send a ack packet.  */
+    /* The ACK is built on the server socket, which upstream bound to the
+       connection when the SYN arrived.  Since 6b586f93 the SYN cache answers
+       the SYN and no socket takes the connection until the handshake
+       finishes, which it never does here, so the socket has no addresses:
+       give it the connection's, as 1c017351 does for 8.17 and 8.18, and the
+       acknowledgment number the SYN would have set.  */
+    server_socket.nx_tcp_socket_connect_ip.nxd_ip_version = NX_IP_VERSION_V4;
+    server_socket.nx_tcp_socket_connect_ip.nxd_ip_address.v4 = IP_ADDRESS(1, 2, 3, 4);
+    server_socket.nx_tcp_socket_connect_port = client_socket.nx_tcp_socket_port;
+    server_socket.nx_tcp_socket_connect_interface = &ip_1.nx_ip_interface[0];
+    server_socket.nx_tcp_socket_next_hop_address = IP_ADDRESS(1, 2, 3, 4);
+    server_socket.nx_tcp_socket_rx_sequence = client_socket.nx_tcp_socket_tx_sequence;
+
     _nx_tcp_packet_send_ack(&server_socket,server_socket.nx_tcp_socket_tx_sequence);
 
     /* Suspend the thread ntest_1.  */
