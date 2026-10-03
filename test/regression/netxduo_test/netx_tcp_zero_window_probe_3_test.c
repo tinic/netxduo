@@ -303,7 +303,13 @@ ULONG bytes_copied;
     /* Check status.  */
     if ((error_counter) || (zero_window_probe == NX_FALSE) || (client_packet_counter != 4)
 #ifndef NX_ENABLE_TCP_KEEPALIVE
-        || (server_packet_counter != 7)
+        /* Six, not seven: the seventh was a "window update" sent when
+           rx_window_current had fallen below rx_window_last_sent (the hook
+           above moves the window under the socket), the unsigned difference
+           wrapped, and a shrunk window looked like a reopening.
+           nx_tcp_socket_receive.c no longer announces a window that has not
+           grown (b5d0ca86).  */
+        || (server_packet_counter != 6)
 #endif
         )
     {

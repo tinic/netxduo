@@ -13,8 +13,11 @@
 /* Requirement: __PRODUCT_NETXDUO__ is defined, NX_DISABLE_ICMPV4_ERROR_MESSAGE is not defined. NX_DISABLE_FRAGMENTATION is not defined. */
 /* Test sequence:
  * 1. ip_0 send ICMP Ping with 600 bytes to ip_2. It is fragmented into three packets.
- * 2. Delay 5 seconds for second fragmentation packet of ip_0 to update the timeout of fragmentation to let ip_1 fragmentation timeout first.
- * 3. Delay NX_IP_TIME_TO_LIVE + 4 seconds for third fragmentation  of ip_0, send the third fragmentation before ip_0 fragmentation timeout, after ip_1 fragmentation timeout.
+ * 2. Delay 5 seconds for second fragmentation packet of ip_0.
+ * 3. Delay NX_IPV4_MAX_REASSEMBLY_TIME - 3 seconds for third fragmentation of ip_0, inside the reassembly time.
+ *    The hold is the flat NX_IPV4_MAX_REASSEMBLY_TIME of RFC 1122 3.3.2 (016daf76), not MAX(that, TTL)
+ *    of RFC 791 3.2: a fragment's TTL no longer extends it, so ip_1's datagram below times out at
+ *    NX_IPV4_MAX_REASSEMBLY_TIME although its TTL is NX_IP_TIME_TO_LIVE.
  * 4. ip_1 send ICMP Ping with 600 bytes to ip_2. It is fragmented into three packets.
  * 5. Discard the third fragmentation packet of ip_1 to let ip_1 fragmentation timeout.
  * 6. Check if ip_1 instance get the fragmentation time exceeded message from ip_2 instance.
@@ -176,6 +179,7 @@ static void    thread_0_entry(ULONG thread_input)
 
 UINT        status;
 NX_PACKET   *my_packet;
+UINT        wait;
 
     /* Print out some test information banners.  */
     printf("NetX Test:   IP Fragmentation Time Exceeded Message Test...............");
@@ -183,8 +187,8 @@ NX_PACKET   *my_packet;
     /* Set the callback function.  */
     advanced_packet_process_callback = my_packet_process;
 
-    /* Ping an IP address that does exist. Set the timeout as NX_IP_TIME_TO_LIVE + 1 + 5. delay the second fragmentation.   */
-    status = nx_icmp_ping(&ip_0, IP_ADDRESS(1, 2, 3, 6), msg, 600, &my_packet, (NX_IP_TIME_TO_LIVE + 1 + 5) * NX_IP_PERIODIC_RATE);
+    /* Ping an IP address that does exist. delay the second and third fragmentation.   */
+    status = nx_icmp_ping(&ip_0, IP_ADDRESS(1, 2, 3, 6), msg, 600, &my_packet, (NX_IPV4_MAX_REASSEMBLY_TIME + 3) * NX_IP_PERIODIC_RATE);
 
     /* Check the status.  */
     if (status == NX_SUCCESS)
@@ -196,6 +200,12 @@ NX_PACKET   *my_packet;
         /* Release the packet.  */
         nx_packet_release(my_packet);
     }    
+
+    /* Wait for ip_1's ping to time out.  */
+    for (wait = 0; (icmp_ping_timeout != NX_TRUE) && (wait < (NX_IPV4_MAX_REASSEMBLY_TIME + 5)); wait++)
+    {
+        tx_thread_sleep(NX_IP_PERIODIC_RATE);
+    }
 
     /* Check status.  */
     if ((error_counter) || (time_exceeded_message != NX_TRUE) || 
@@ -221,8 +231,8 @@ static void    thread_1_entry(ULONG thread_input)
 UINT        status;  
 NX_PACKET   *my_packet;
 
-    /* Ping an IP address that does exist. Set the timeout as NX_IP_TIME_TO_LIVE + 1.   */
-    status = nx_icmp_ping(&ip_1, IP_ADDRESS(1, 2, 3, 6), msg, 600, &my_packet, (NX_IP_TIME_TO_LIVE + 1) * NX_IP_PERIODIC_RATE);
+    /* Ping an IP address that does exist.  The datagram times out at NX_IPV4_MAX_REASSEMBLY_TIME.   */
+    status = nx_icmp_ping(&ip_1, IP_ADDRESS(1, 2, 3, 6), msg, 600, &my_packet, (NX_IPV4_MAX_REASSEMBLY_TIME + 3) * NX_IP_PERIODIC_RATE);
 
     /* Check the status, should not get the response.  */
     if (status == NX_NO_RESPONSE)
@@ -263,8 +273,8 @@ NX_ICMPV4_ERROR *icmpv4_error;
             /* Set the discard operation.  */
             *operation_ptr = NX_RAMDRIVER_OP_DELAY;
                                                                                      
-            /* Delay the third fragmentation ping, send the third fragmentation ping after ip_1 fragmentation timeout, before ip_0 fragmentation timeout.  */
-            *delay_ptr = (NX_IP_TIME_TO_LIVE + 4) * NX_IP_PERIODIC_RATE;
+            /* Delay the third fragmentation ping, inside the reassembly time.  */
+            *delay_ptr = (NX_IPV4_MAX_REASSEMBLY_TIME - 3) * NX_IP_PERIODIC_RATE;
         }
     }  
     /* Check the IP instance.  */
