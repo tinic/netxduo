@@ -475,19 +475,24 @@ NX_TCP_SYNCACHE_ENTRY *entry;
 static NX_TCP_SOCKET  *parked_socket(void)
 {
 
-NX_TCP_LISTEN *listen_ptr = ip_1.nx_ip_tcp_active_listen_requests;
+NX_TCP_LISTEN *listen_ptr;
+NX_TCP_SOCKET *socket_ptr = NX_NULL;
 
 
+    tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
+    listen_ptr = ip_1.nx_ip_tcp_active_listen_requests;
     do
     {
         if (listen_ptr -> nx_tcp_listen_port == SERVER_PORT_1)
         {
-            return(listen_ptr -> nx_tcp_listen_socket_ptr);
+            socket_ptr = listen_ptr -> nx_tcp_listen_socket_ptr;
+            break;
         }
         listen_ptr = listen_ptr -> nx_tcp_listen_next;
     } while (listen_ptr != ip_1.nx_ip_tcp_active_listen_requests);
+    tx_mutex_put(&(ip_1.nx_ip_protection));
 
-    return(NX_NULL);
+    return(socket_ptr);
 }         
      
 static void    my_tcp_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
