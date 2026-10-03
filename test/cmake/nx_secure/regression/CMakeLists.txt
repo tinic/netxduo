@@ -36,6 +36,7 @@ set(nx_secure_test_cases
     ${SOURCE_DIR}/nx_secure_test/nx_secure_x509_key_usage_test.c 
     ${SOURCE_DIR}/nx_secure_test/nx_secure_x509_basic_constraints_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_ems_offer_test.c
+    ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_eku_timestamping_only_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_x509_pkcs7_decode_coverage_test.c 
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_handshake_header_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_session_sni_extension_coverage_test.c
