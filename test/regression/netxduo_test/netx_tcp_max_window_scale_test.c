@@ -382,8 +382,19 @@ ULONG           *source_ip, *dest_ip;
             if (syn_counter == 0)
             {
 
-                /* Modify the Window scale option to 0xFF which is larger than 14.  */
-                *option_word_2 = *option_word_2 | 0x0000FF00;
+                /* Modify the Window scale option to 0xFF which is larger than 14.
+                   The shift count is the third byte of the option: the low
+                   byte of this word after a NOP pad (NOP, 3, 3, shift: 33c01be2,
+                   whose trailing EOL used to end the option list), the second
+                   lowest without one (3, 3, shift, EOL).  */
+                if ((*option_word_2 & 0xFFFFFF00) == 0x01030300)
+                {
+                    *option_word_2 = *option_word_2 | 0x000000FF;
+                }
+                else
+                {
+                    *option_word_2 = *option_word_2 | 0x0000FF00;
+                }
             }
             else
             {
