@@ -78,11 +78,15 @@ ULONG  packet_offset;
 ULONG  extensions_length;
 ULONG  prefix_length;
 ULONG  required_size;
+ULONG  cookie_end;
+ULONG  i;
 
     printf("NetX Secure Test:   TLS 1.3 HelloRetry Cookie Overflow Test............");
 
-    /* Measure what the extensions ahead of the cookie consume, so the boundary
-       cases below do not depend on the enabled version list. */
+    /* Measure where the cookie extension starts and what the whole build with
+       it takes, so the boundary cases below do not depend on the enabled
+       version list or on the extensions that follow the cookie (the fork
+       sends encrypt_then_mac and extended_master_secret after it). */
     cookie_session_setup(0);
     packet_offset = 0;
     extensions_length = 0;
@@ -90,10 +94,32 @@ ULONG  required_size;
                                                         &packet_offset, &extensions_length,
                                                         BUFFER_SIZE);
     EXPECT_EQ(NX_SUCCESS, status);
-    prefix_length = packet_offset;
-    EXPECT_TRUE((prefix_length + COOKIE_HEADER_SIZE + COOKIE_SIZE) < BUFFER_SIZE);
+    EXPECT_TRUE((packet_offset + COOKIE_HEADER_SIZE + COOKIE_SIZE) < BUFFER_SIZE);
 
-    required_size = prefix_length + COOKIE_HEADER_SIZE + COOKIE_SIZE;
+    cookie_session_setup(COOKIE_SIZE);
+    packet_offset = 0;
+    extensions_length = 0;
+    status = _nx_secure_tls_send_clienthello_extensions(&tls_session, packet_buffer,
+                                                        &packet_offset, &extensions_length,
+                                                        BUFFER_SIZE);
+    EXPECT_EQ(NX_SUCCESS, status);
+    required_size = packet_offset;
+
+    /* Type 44 (cookie), extension length, cookie length, as written.  */
+    prefix_length = BUFFER_SIZE;
+    for (i = 0; (i + COOKIE_HEADER_SIZE) <= required_size; i++)
+    {
+        if ((packet_buffer[i] == 0x00) && (packet_buffer[i + 1] == 0x2C) &&
+            (packet_buffer[i + 2] == 0x00) && (packet_buffer[i + 3] == (COOKIE_SIZE + 2)) &&
+            (packet_buffer[i + 4] == 0x00) && (packet_buffer[i + 5] == COOKIE_SIZE))
+        {
+            prefix_length = i;
+            break;
+        }
+    }
+    EXPECT_TRUE(prefix_length < required_size);
+    cookie_end = prefix_length + COOKIE_HEADER_SIZE + COOKIE_SIZE;
+    EXPECT_TRUE(cookie_end <= required_size);
 
     /* The largest cookie a peer can announce cannot reach the buffer. */
     cookie_session_setup(0xFFFF);
@@ -120,13 +146,13 @@ ULONG  required_size;
     EXPECT_TRUE(tls_session.nx_secure_tls_cookie == NX_NULL);
     EXPECT_TRUE(buffer_untouched_from(required_size) == NX_TRUE);
 
-    /* One byte short is rejected before anything is written. */
+    /* One byte short of the cookie is rejected before anything is written. */
     cookie_session_setup(COOKIE_SIZE);
     packet_offset = 0;
     extensions_length = 0;
     status = _nx_secure_tls_send_clienthello_extensions(&tls_session, packet_buffer,
                                                         &packet_offset, &extensions_length,
-                                                        required_size - 1);
+                                                        cookie_end - 1);
     EXPECT_EQ(NX_SECURE_TLS_PACKET_BUFFER_TOO_SMALL, status);
     EXPECT_EQ(0, tls_session.nx_secure_tls_cookie_length);
     EXPECT_TRUE(tls_session.nx_secure_tls_cookie == NX_NULL);
