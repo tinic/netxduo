@@ -1302,7 +1302,12 @@ UINT allocated;
 
     for (i = 0; i < allocated; i++)
     {
-        nx_packet_release(test_packets[i]);
+        status = nx_packet_release(test_packets[i]);
+        if (status)
+        {
+            printf("Error in function nx_packet_release: 0x%x\n", status);
+            error_counter++;
+        }
     }
 
     /* End the TLS session. This is required to properly shut down the TLS connection. */
