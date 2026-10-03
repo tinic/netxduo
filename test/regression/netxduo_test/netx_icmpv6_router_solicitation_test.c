@@ -139,11 +139,25 @@ UINT                address_index;
     tx_thread_sleep((5 + (NX_ICMPV6_RTR_SOLICITATION_INTERVAL * 3)) * NX_IP_PERIODIC_RATE);
     
     /* Check the Router Solicitation count. */
+#ifndef NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL
     if (ip_0.nx_ip_interface[0].nx_ipv6_rtr_solicitation_count != 0)
     {
         printf("ERROR!\n");
         test_control_return(1);
     }
+#else
+    /* c8f31e84 (RFC 7559 2, RFC 8504 5.4): solicitation does not stop after
+       NX_ICMPV6_MAX_RTR_SOLICITATIONS.  The count is held at one, as only a
+       router advertisement clears it, and the interval has begun to double
+       from NX_ICMPV6_RTR_SOLICITATION_INTERVAL.  */
+    if ((ip_0.nx_ip_interface[0].nx_ipv6_rtr_solicitation_count != 1) ||
+        (ip_0.nx_ip_interface[0].nx_ipv6_rtr_solicitation_interval < (2 * NX_ICMPV6_RTR_SOLICITATION_INTERVAL)) ||
+        (ip_0.nx_ip_interface[0].nx_ipv6_rtr_solicitation_interval > NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL))
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+#endif /* NX_ICMPV6_MAX_RTR_SOLICITATION_INTERVAL */
 
     /* Check the error.  */
     if((error_counter) ||(rs_counter != 1))
