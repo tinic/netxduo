@@ -106,13 +106,29 @@ NX_CRYPTO_HUGE_NUMBER modulus_hn, exponent_hn, input_hn, output_hn, p_hn, q_hn;
         return(NX_CRYPTO_SIZE_ERROR);
     }
 
-    if (p && q)
+    /* Each carve rounds up to whole HN_UBASE limbs (NX_CRYPTO_HUGE_NUMBER_
+       INITIALIZE), so the header's formulas are counted in the rounded
+       modulus.  With CRT the halves round separately: the header's 10m + 24
+       holds when they are limb-aligned, and otherwise 16 bytes are added for
+       the two extra roundings of each half-sized carve. */
     {
-        scratch_needed = (10UL * modulus_length) + 24UL;
-    }
-    else
-    {
-        scratch_needed = (7UL * modulus_length) + 8UL;
+        ULONG rounded = ((ULONG)modulus_length + HN_SIZE_ROUND) & ~(ULONG)HN_SIZE_ROUND;
+
+        if (p && q)
+        {
+            if ((modulus_length % (2u * (HN_SIZE_ROUND + 1u))) == 0)
+            {
+                scratch_needed = (10UL * modulus_length) + 24UL;
+            }
+            else
+            {
+                scratch_needed = (10UL * rounded) + 40UL;
+            }
+        }
+        else
+        {
+            scratch_needed = (7UL * rounded) + 8UL;
+        }
     }
 
     if (((ULONG)scratch_buf_length * sizeof(USHORT)) < scratch_needed)
