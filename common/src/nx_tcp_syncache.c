@@ -2078,6 +2078,24 @@ UINT           valid;
         return(NX_TRUE);
     }
 
+    /* A RST may carry data (RFC 9293 3.5.3), which the reset never reads.
+       Kept, it is trimmed to its header, so the window bound above holds for
+       it too.  */
+    if ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT) && (data_length != 0))
+    {
+#ifndef NX_DISABLE_PACKET_CHAIN
+        if (packet_ptr -> nx_packet_next)
+        {
+            _nx_packet_release(packet_ptr -> nx_packet_next);
+            packet_ptr -> nx_packet_next = NX_NULL;
+            packet_ptr -> nx_packet_last = NX_NULL;
+        }
+#endif /* NX_DISABLE_PACKET_CHAIN */
+        header_length = (tcp_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+        packet_ptr -> nx_packet_append_ptr = packet_ptr -> nx_packet_prepend_ptr + header_length;
+        packet_ptr -> nx_packet_length = header_length;
+    }
+
     if (socket_ptr -> nx_tcp_socket_receive_queue_count)
     {
         (socket_ptr -> nx_tcp_socket_receive_queue_tail) -> nx_packet_union_next.nx_packet_tcp_queue_next = packet_ptr;

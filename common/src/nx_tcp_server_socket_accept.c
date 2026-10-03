@@ -72,6 +72,7 @@ UINT  _nx_tcp_server_socket_accept(NX_TCP_SOCKET *socket_ptr, ULONG wait_option)
 {
 
 NX_IP *ip_ptr;
+UINT   status;
 
 
     /* Pickup the associated IP structure.  */
@@ -100,11 +101,15 @@ NX_IP *ip_ptr;
     if (_nx_tcp_syncache_accept(socket_ptr) == NX_TRUE)
     {
 
+        /* What the peer sent while it waited can have ended it.  Read under
+           the protection: the IP thread can move the socket on as soon as it
+           is released.  */
+        status = (socket_ptr -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED) ? NX_SUCCESS : NX_NOT_CONNECTED;
+
         /* Release the IP protection.  */
         tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
-        /* What the peer sent while it waited can have ended it.  */
-        return((socket_ptr -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED) ? NX_SUCCESS : NX_NOT_CONNECTED);
+        return(status);
     }
 
     /* Determine if the socket is still in the listen state or has sent a SYN packet out already
