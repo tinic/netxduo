@@ -9,10 +9,11 @@
 /***************************************************************************/
 
 /* The NetX client against mosquitto as a publisher: with a will message and
-   a user name set, it connects, subscribes to a topic at QoS 2 and publishes
-   to it at QoS 0, 1 and 2, and each message comes back through the broker
-   intact.  The publish and acknowledgment paths of both directions -- PUBACK,
-   PUBREC, PUBREL, PUBCOMP -- are exchanged with a broker that is not NetX.  */
+   a user name set, it connects, subscribes to a topic at QoS 1 and publishes
+   to it at QoS 0 and 1, and each message comes back through the broker
+   intact, the QoS 1 one acknowledged both ways (PUBACK).  QoS 2 is refused
+   by the client itself with NXD_MQTT_QOS2_NOT_SUPPORTED, for a subscription
+   and for a publish, before anything is sent.  */
 
 #include "mqtt_interoperability_test.h"
 #include "nxd_mqtt_client.h"
@@ -102,9 +103,9 @@ static ULONG                        mqtt_client_stack[MQTT_CLIENT_STACK_SIZE / s
 #define  WILL_TOPIC                 "will"
 #define  WILL_MESSAGE               "gone"
 #define  USER_NAME                  "netx"
-#define  MESSAGES                   3
+#define  MESSAGES                   2
 
-static CHAR *messages[MESSAGES] = { "qos0", "qos1", "qos2" };
+static CHAR *messages[MESSAGES] = { "qos0", "qos1" };
 
 static UCHAR message_buffer[NXD_MQTT_MAX_MESSAGE_LENGTH];
 static UCHAR topic_buffer[NXD_MQTT_MAX_TOPIC_NAME_LENGTH];
@@ -141,13 +142,20 @@ INT         test_result = 0;
     exit_if_fail(NX_SUCCESS == status, TLS_TEST_UNKNOWN_TYPE_ERROR);
 
     status = nxd_mqtt_client_subscribe(&mqtt_client, TOPIC_NAME, strlen(TOPIC_NAME), 2);
+    add_error_counter_if_fail(NXD_MQTT_QOS2_NOT_SUPPORTED == status, test_result);
+
+    status = nxd_mqtt_client_subscribe(&mqtt_client, TOPIC_NAME, strlen(TOPIC_NAME), 1);
     add_error_counter_if_fail(NX_SUCCESS == status, test_result);
 
     /* Let the SUBACK arrive before publishing to the topic.  */
     tx_thread_sleep(NX_IP_PERIODIC_RATE);
 
-    /* One message at each QoS; the QoS 1 and 2 calls return once the broker
-       has acknowledged the message (PUBACK, PUBCOMP).  */
+    status = nxd_mqtt_client_publish(&mqtt_client, TOPIC_NAME, strlen(TOPIC_NAME),
+                                     "qos2", 4, 0, 2, 5 * NX_IP_PERIODIC_RATE);
+    add_error_counter_if_fail(NXD_MQTT_QOS2_NOT_SUPPORTED == status, test_result);
+
+    /* One message at each QoS the client supports; the QoS 1 call returns
+       once the broker has acknowledged the message (PUBACK).  */
     for (i = 0; i < MESSAGES; i++)
     {
         status = nxd_mqtt_client_publish(&mqtt_client, TOPIC_NAME, strlen(TOPIC_NAME),
