@@ -40,7 +40,13 @@ static NX_TCP_SOCKET           server;
 static ULONG                   error_counter;
 static UINT                    send_status;
 
-/* What the hook saw while the window was closed.  */
+/* What the hook saw while the window was closed.  window_closed is written
+   under ip_1s mutex and read by the hook on both instances send paths
+   without it.  A stale read can only misjudge a segment at the two edges
+   of that window, and none the checks depend on falls there: the flag is
+   set before the last chunk is queued, a retransmission timeout before the
+   first probe, and a probe that was taken is caught independently by the
+   RCV.NXT check.  */
 static UINT                    window_closed;
 static UINT                    probes;
 static UINT                    acks_while_closed;
