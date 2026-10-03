@@ -9,6 +9,7 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+// Portions of this file were generated with AI assistance.
 
 /**************************************************************************/
 /**************************************************************************/
@@ -128,13 +129,19 @@ UINT       buffer_offset;
             if (handshake_type == NX_SECURE_TLS_CLIENT_HELLO)
 #endif /* (NX_SECURE_TLS_TLS_1_3_ENABLED) */
             {
-                /* The cache is a fixed 500 bytes; the second ClientHello
-                   after a HelloRetryRequest carries the server's cookie. */
+
+                /* The whole message has to be cached: it is hashed once a ciphersuite
+                   fixes the hash method, and a partial copy would hash to the wrong
+                   transcript rather than fail here.  Bounded by everything cached so
+                   far: the second ClientHello after a HelloRetryRequest carries the
+                   server's cookie.  */
                 if ((tls_session -> nx_secure_tls_key_material.nx_secure_tls_handshake_cache_length >
-                     sizeof(tls_session -> nx_secure_tls_key_material.nx_secure_tls_handshake_cache)) ||
-                    ((sizeof(tls_session -> nx_secure_tls_key_material.nx_secure_tls_handshake_cache) -
+                     NX_SECURE_TLS_HANDSHAKE_CACHE_SIZE) ||
+                    ((NX_SECURE_TLS_HANDSHAKE_CACHE_SIZE -
                       tls_session -> nx_secure_tls_key_material.nx_secure_tls_handshake_cache_length) < length))
                 {
+
+                    /* Handshake cache too small. */
                     return(NX_SECURE_TLS_PACKET_BUFFER_TOO_SMALL);
                 }
 
