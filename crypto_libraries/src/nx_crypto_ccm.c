@@ -22,6 +22,31 @@
 
 #include "nx_crypto_ccm.h"
 
+/* Counter i of A(i) is the last L octets of A, big-endian; A[0] holds L - 1 (RFC 3610 2.3).  */
+NX_CRYPTO_KEEP static VOID _nx_crypto_ccm_counter_increment(UCHAR *A)
+{
+UINT i;
+UINT first = (UINT)(NX_CRYPTO_CCM_BLOCK_SIZE - 1 - (A[0] & 0x07));
+
+    /* Add one with carry across the L counter octets.  */
+    for (i = NX_CRYPTO_CCM_BLOCK_SIZE - 1; i >= first; i--)
+    {
+        A[i] = (UCHAR)(A[i] + 1);
+        if (A[i] != 0)
+        {
+            break;
+        }
+    }
+}
+
+NX_CRYPTO_KEEP static VOID _nx_crypto_ccm_counter_zero(UCHAR *A)
+{
+UINT first = (UINT)(NX_CRYPTO_CCM_BLOCK_SIZE - 1 - (A[0] & 0x07));
+
+    /* A(0): all L counter octets zero.  */
+    NX_CRYPTO_MEMSET(A + first, 0, NX_CRYPTO_CCM_BLOCK_SIZE - first);
+}
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -384,7 +409,7 @@ UINT   i = 0, k = 0;
         /* Cipher text block: C(i) = E(Key, A(i)) ^ M(i)   */
         for (i = 0; i < length; i += block_size)
         {
-            A[15] = (UCHAR)(A[15] + 1);
+            _nx_crypto_ccm_counter_increment(A);
             crypto_function(crypto_metadata, A, X, block_size);
 
             for (k = 0; (k < block_size) && ((i + k) < length); k++)
@@ -471,7 +496,7 @@ UINT i;
         NX_CRYPTO_MEMCPY(icv, ccm_metadata -> nx_crypto_ccm_X, ccm_metadata -> nx_crypto_ccm_icv_length); /* Use case of memcpy is verified. */
 
         /* Get encryption block X.  */
-        A[15] = 0;
+        _nx_crypto_ccm_counter_zero(A);
         crypto_function(crypto_metadata, A, A, block_size);
 
         /* Encrypt authentication tag.  */
@@ -541,7 +566,7 @@ UINT i;
     {
 
         NX_CRYPTO_MEMCPY(temp, ccm_metadata -> nx_crypto_ccm_A, block_size); /* Use case of memcpy is verified. */
-        temp[15] = 0;
+        _nx_crypto_ccm_counter_zero(temp);
         crypto_function(crypto_metadata, temp, temp, block_size);
 
         /* Encrypt authentication tag.  */
