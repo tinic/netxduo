@@ -85,6 +85,10 @@ TX_INTERRUPT_SAVE_AREA
 VOID           (*receive_callback)(struct NX_UDP_SOCKET_STRUCT *socket_ptr);
 TX_THREAD     *thread_ptr;
 
+#ifdef NX_DISABLE_UDP_INFO
+    NX_PARAMETER_NOT_USED(ip_ptr);
+#endif /* NX_DISABLE_UDP_INFO */
+
     /* Disable interrupts.  */
     TX_DISABLE
 
