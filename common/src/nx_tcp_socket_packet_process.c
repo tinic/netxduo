@@ -223,6 +223,25 @@ ULONG         tcpip_offload;
         /* Pickup the rx window.  */
         rx_window = socket_ptr -> nx_tcp_socket_rx_window_current;
 
+        /* RCV.WND is the window this end last put on the wire, which is not
+           always rx_window_current: below NX_TCP_SWS_FLOOR it went out as zero
+           (nx_tcp_packet_send_control.c, nx_tcp_socket_send_internal.c).
+           rx_window_last_sent is what rx_window_current was when it went out,
+           less what has arrived since (nx_tcp_socket_state_data_check.c), so
+           adding that back recovers it.  When it was below the floor, and
+           what is free still is, RCV.WND is zero: RFC 9293 3.10.7.4, Tables 5
+           and 6, admit no segment with data and answer it with an ACK, RCV.NXT
+           unchanged.  Taking the one-byte persist probe instead advanced
+           RCV.NXT past a byte the sender had not counted as sent.  A window
+           this end has since reopened is RCV.WND again, as is any window it
+           advertised and the peer is still filling.  */
+        if ((rx_window < NX_TCP_SWS_FLOOR(socket_ptr)) &&
+            ((socket_ptr -> nx_tcp_socket_rx_window_last_sent +
+              (rx_sequence - socket_ptr -> nx_tcp_socket_rx_sequence_acked)) < NX_TCP_SWS_FLOOR(socket_ptr)))
+        {
+            rx_window = 0;
+        }
+
         /* There are four cases for the acceptability test for an incoming segment.
            Section 3.9 Page 69, RFC 793.  */
         outside_of_window = NX_TRUE;

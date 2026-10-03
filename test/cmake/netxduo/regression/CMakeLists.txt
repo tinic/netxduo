@@ -673,6 +673,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_tcp_syncache_listen_terms_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_syncache_deferred_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_syncache_accept_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_sws_zero_window_probe_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_overlapping_packet_test_13.c
     ${SOURCE_DIR}/netxduo_test/netx_6_27_test.c
     ${SOURCE_DIR}/netxduo_test/netx_udp_fragment_test.c
