@@ -2194,12 +2194,9 @@ ULONG      count;
 /*    the connection.  Either it finishes a handshake this end recorded,   */
 /*    or it echoes a cookie, or it is neither and is not ours.             */
 /*                                                                        */
-/*    A segment that is not ours is DROPPED and not reset.  RFC 793 would  */
-/*    reset it, and this stack did before the cache existed too -- but a   */
-/*    reset per unmatched ACK is a packet an attacker gets this machine to */
-/*    send for free, which is the thing being defended against.  A peer    */
-/*    that really is holding a connection this end has forgotten finds     */
-/*    that out from its own retransmit timer.                              */
+/*    A segment that is not ours is the caller's to answer, as an         */
+/*    acknowledgment on a port in LISTEN always was: with a reset          */
+/*    (RFC 9293 3.10.7.2).                                                */
 /*                                                                        */
 /*  OUTPUT                                                                */
 /*                                                                        */
@@ -2228,10 +2225,16 @@ UINT                   local_port;
 UINT                   bucket;
 
 
-    if ((cache -> nx_tcp_syncache_initialized != NX_TRUE) ||
-        (_nx_tcp_syncache_arrival_live(packet_ptr, interface_ptr, dest_ip) != NX_TRUE))
+    if (cache -> nx_tcp_syncache_initialized != NX_TRUE)
     {
         return(NX_FALSE);
+    }
+
+    /* Arrived on an interface or address that has gone since: dropped, with
+       nothing to answer from.  */
+    if (_nx_tcp_syncache_arrival_live(packet_ptr, interface_ptr, dest_ip) != NX_TRUE)
+    {
+        return(NX_TRUE);
     }
 
     local_port = listen_ptr -> nx_tcp_listen_port;
