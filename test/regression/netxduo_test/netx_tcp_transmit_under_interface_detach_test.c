@@ -13,6 +13,7 @@
 
 #include   "tx_api.h"
 #include   "nx_api.h"
+#include   "nx_ram_network_driver_test_1500.h"
                           
 extern void  test_control_return(UINT status);
 
@@ -48,6 +49,8 @@ static void    ntest_1_entry(ULONG thread_input);
 static void    ntest_2_entry(ULONG thread_input);   
 extern void    test_control_return(UINT status);
 extern void    _nx_ram_network_driver_256(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
+static UINT    server_packet_drop(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
 
 
 /* Define what the initial system looks like.  */
@@ -200,6 +203,14 @@ NX_PACKET   *my_packet;
     my_packet -> nx_packet_length =  28;
     my_packet -> nx_packet_append_ptr =  my_packet -> nx_packet_prepend_ptr + 28;
 
+    /* Hold the server's segments back from here on.  The 20 bytes the window
+       admits must still be outstanding, and the rest of the write waiting for
+       the window, when thread 2 detaches the interface.  b5d0ca86 acknowledges
+       once half the receive buffer is unacknowledged, which these 20 bytes
+       are, so the server's ACK would otherwise empty the transmit queue
+       before thread 2 runs; upstream delayed it.  */
+    advanced_packet_process_callback = server_packet_drop;
+
     /* Send the packet out! This packe should not be sent.  */
     status =  nx_tcp_socket_send(&client_socket, my_packet, 5 * NX_IP_PERIODIC_RATE);
 
@@ -286,6 +297,20 @@ UINT        status;
     if (client_socket.nx_tcp_socket_transmit_suspension_list != NX_NULL)       
         error_counter++;
 }    
+static UINT    server_packet_drop(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
+{
+
+    NX_PARAMETER_NOT_USED(packet_ptr);
+    NX_PARAMETER_NOT_USED(delay_ptr);
+
+    if (ip_ptr == &ip_1)
+    {
+        *operation_ptr = NX_RAMDRIVER_OP_DROP;
+    }
+
+    return(NX_TRUE);
+}
+
 #else       
 #ifdef CTEST
 VOID test_application_define(void *first_unused_memory)
