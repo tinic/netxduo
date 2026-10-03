@@ -241,6 +241,52 @@ NX_PACKET  *my_packet;
         test_control_return(1);
     }
 
+#ifdef NX_TCP_CHALLENGE_ACK_LIMIT
+    /* RFC 5961 section 3 (772b79c1): a RST is honoured only at exactly
+       RCV.NXT, zero window or not.  One the zero-window allowance lets in at
+       any other number draws a challenge ACK and leaves the connection up
+       (nx_tcp_socket_packet_process.c, step 2); upstream reset on it.  The
+       out of window URG and ACK above drew nothing, as upstream.  */
+    if (ack_received != 0)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+    /* Send out of window RST packet. */
+    _nx_tcp_packet_send_control(&client_socket, NX_TCP_RST_BIT, client_socket.nx_tcp_socket_tx_sequence + WINDOW_SIZE, 
+                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL, 0, NX_NULL);
+
+    /* Sleep one second. */
+    tx_thread_sleep(NX_IP_PERIODIC_RATE);
+
+    /* Make sure server is still in established state. */
+    if (server_socket.nx_tcp_socket_state != NX_TCP_ESTABLISHED)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+
+    /* One challenge ACK. */
+    if (ack_received != 1)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+
+    /* A RST at RCV.NXT, with the window still zero, closes it. */
+    _nx_tcp_packet_send_control(&client_socket, NX_TCP_RST_BIT, client_socket.nx_tcp_socket_tx_sequence, 
+                                client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL, 0, NX_NULL);
+
+    /* Sleep one second. */
+    tx_thread_sleep(NX_IP_PERIODIC_RATE);
+
+    /* Make sure server is closed. */
+    if (server_socket.nx_tcp_socket_state != NX_TCP_LISTEN_STATE)
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+    }
+#else
     /* Send out of window RST packet. */
     _nx_tcp_packet_send_control(&client_socket, NX_TCP_RST_BIT, client_socket.nx_tcp_socket_tx_sequence + WINDOW_SIZE, 
                                 client_socket.nx_tcp_socket_rx_sequence, 0, 0, NX_NULL, 0, NX_NULL);
@@ -254,9 +300,14 @@ NX_PACKET  *my_packet;
         printf("ERROR!\n");
         test_control_return(1);
     }
+#endif /* NX_TCP_CHALLENGE_ACK_LIMIT */
  
     /* Check status.  */
+#ifdef NX_TCP_CHALLENGE_ACK_LIMIT
+    if (error_counter || (ack_received != 1) || (urg_received != 0))
+#else
     if (error_counter || ack_received || (urg_received != 0))
+#endif /* NX_TCP_CHALLENGE_ACK_LIMIT */
     {
 
         printf("ERROR!\n");
