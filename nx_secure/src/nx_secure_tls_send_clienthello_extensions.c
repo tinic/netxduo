@@ -302,6 +302,14 @@ UINT   status;
     }
     total_extensions_length = (USHORT)(total_extensions_length + extension_length);
 
+#if !(NX_SECURE_TLS_TLS_1_0_ENABLED || NX_SECURE_TLS_TLS_1_1_ENABLED)
+    /* The extended master secret is offered only where TLS 1.2 is the oldest
+       version this client accepts.  A server that negotiates TLS 1.0 or 1.1
+       and echoes it expects session_hash over MD5 and SHA-1 (RFC 7627 3),
+       which _nx_secure_tls_session_hash_capture does not build; a client
+       that then used the classic master secret would derive keys the server
+       does not have (RFC 7627 5.2), and every record after the handshake
+       would fail its MAC.  */
     status = _nx_secure_tls_send_clienthello_empty_extension(NX_SECURE_TLS_EXTENSION_EXTENDED_MASTER_SECRET,
                                                              packet_buffer, &length,
                                                              &extension_length, available_size);
@@ -310,6 +318,7 @@ UINT   status;
         return(status);
     }
     total_extensions_length = (USHORT)(total_extensions_length + extension_length);
+#endif /* !(NX_SECURE_TLS_TLS_1_0_ENABLED || NX_SECURE_TLS_TLS_1_1_ENABLED) */
 
 #ifndef NX_SECURE_TLS_SNI_EXTENSION_DISABLED
     /* Send the server name indication extension. */
