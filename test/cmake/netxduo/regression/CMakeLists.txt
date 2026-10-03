@@ -597,6 +597,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_tcp_nxe_api_test.c
     ${SOURCE_DIR}/netxduo_test/netx_12_01_test.c
     ${SOURCE_DIR}/netxduo_test/netx_ip_fragmentation_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_ip_fragment_reserve_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_wrapping_sequence_test.c
     ${SOURCE_DIR}/netxduo_test/netx_ip_address_conflict_callback_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_send_fail_test3.c
