@@ -175,6 +175,7 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                         socket_ptr -> nx_tcp_socket_rx_window_maximum;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
                 }
+                _nx_tcp_syncache_listen_record(listen_ptr, socket_ptr);
 
                 /* A handshake that finished while this listen request had no
                    socket is waiting in the SYN cache, and this is the socket

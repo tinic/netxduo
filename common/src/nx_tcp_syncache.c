@@ -926,6 +926,71 @@ ULONG window = _nx_tcp_syncache_window(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
 
+/* Record the sending terms of a socket being put on a listen request, for
+   a SYN that arrives while none is parked there.  Called by
+   nx_tcp_server_socket_listen and _relisten under the IP mutex.  */
+VOID  _nx_tcp_syncache_listen_record(NX_TCP_LISTEN *listen_ptr, NX_TCP_SOCKET *socket_ptr)
+{
+
+    listen_ptr -> nx_tcp_listen_mss = socket_ptr -> nx_tcp_socket_mss;
+    listen_ptr -> nx_tcp_listen_type_of_service = socket_ptr -> nx_tcp_socket_type_of_service;
+    listen_ptr -> nx_tcp_listen_fragment_enable = socket_ptr -> nx_tcp_socket_fragment_enable;
+    listen_ptr -> nx_tcp_listen_time_to_live = socket_ptr -> nx_tcp_socket_time_to_live;
+#ifdef NX_ENABLE_VLAN
+    listen_ptr -> nx_tcp_listen_vlan_priority = socket_ptr -> nx_tcp_socket_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
+}
+
+
+/* Copy the listening socket's sending terms into an entry.  The socket
+   parked on the request is read when there is one, so nx_tcp_socket_mss_set
+   and the like after the listen still apply; otherwise the terms recorded on
+   the request.  Runs in the IP thread under the IP mutex, and nothing here
+   outlives the call: the entry holds values, never the socket.  */
+static VOID  _nx_tcp_syncache_terms(NX_TCP_LISTEN *listen_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
+{
+
+NX_TCP_SOCKET *socket_ptr = listen_ptr -> nx_tcp_listen_socket_ptr;
+ULONG          mss;
+ULONG          type_of_service;
+ULONG          fragment_enable;
+UINT           time_to_live;
+
+
+    if (socket_ptr)
+    {
+        mss = socket_ptr -> nx_tcp_socket_mss;
+        type_of_service = socket_ptr -> nx_tcp_socket_type_of_service;
+        fragment_enable = socket_ptr -> nx_tcp_socket_fragment_enable;
+        time_to_live = socket_ptr -> nx_tcp_socket_time_to_live;
+#ifdef NX_ENABLE_VLAN
+        entry -> nx_tcp_syncache_vlan_priority = socket_ptr -> nx_tcp_socket_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
+    }
+    else
+    {
+        mss = listen_ptr -> nx_tcp_listen_mss;
+        type_of_service = listen_ptr -> nx_tcp_listen_type_of_service;
+        fragment_enable = listen_ptr -> nx_tcp_listen_fragment_enable;
+        time_to_live = listen_ptr -> nx_tcp_listen_time_to_live;
+#ifdef NX_ENABLE_VLAN
+        entry -> nx_tcp_syncache_vlan_priority = listen_ptr -> nx_tcp_listen_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
+    }
+
+    /* The MSS option is 16 bits, so a larger cap is no cap.  */
+    entry -> nx_tcp_syncache_mss = (USHORT)((mss > 0xFFFFUL) ? 0xFFFFUL : mss);
+
+    /* The type of service lives in bits 16-23 (NX_IP_TOS_MASK) and the
+       sender only ever puts the low byte of the time to live on the wire, so
+       one byte holds each exactly.  */
+    entry -> nx_tcp_syncache_type_of_service = (UCHAR)((type_of_service & NX_IP_TOS_MASK) >> 16);
+    entry -> nx_tcp_syncache_time_to_live = (UCHAR)(time_to_live & 0xFFu);
+    entry -> nx_tcp_syncache_dont_fragment =
+        (UCHAR)((fragment_enable == NX_DONT_FRAGMENT) ? NX_TRUE : NX_FALSE);
+}
+
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -957,8 +1022,18 @@ NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
     socket_ptr -> nx_tcp_socket_connect_port = entry -> nx_tcp_syncache_peer_port;
     socket_ptr -> nx_tcp_socket_connect_ip = entry -> nx_tcp_syncache_peer_ip;
     socket_ptr -> nx_tcp_socket_connect_interface = entry -> nx_tcp_syncache_interface;
-    socket_ptr -> nx_tcp_socket_time_to_live = (UINT)NX_IP_TIME_TO_LIVE;
-    socket_ptr -> nx_tcp_socket_fragment_enable = NX_FRAGMENT_OKAY;
+
+    /* The listening socket's own terms, as copied at SYN time: the sender
+       caps the advertised MSS with nx_tcp_socket_mss and stamps the rest on
+       the IP header, exactly as for a SYN-ACK sent from the socket.  */
+    socket_ptr -> nx_tcp_socket_mss = (ULONG)entry -> nx_tcp_syncache_mss;
+    socket_ptr -> nx_tcp_socket_time_to_live = (UINT)entry -> nx_tcp_syncache_time_to_live;
+    socket_ptr -> nx_tcp_socket_type_of_service = ((ULONG)entry -> nx_tcp_syncache_type_of_service) << 16;
+    socket_ptr -> nx_tcp_socket_fragment_enable =
+        (entry -> nx_tcp_syncache_dont_fragment == NX_TRUE) ? NX_DONT_FRAGMENT : NX_FRAGMENT_OKAY;
+#ifdef NX_ENABLE_VLAN
+    socket_ptr -> nx_tcp_socket_vlan_priority = entry -> nx_tcp_syncache_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
 
     /* SYN_RECEIVED is what tells the sender this is a SYN-ACK rather than a
        SYN: it decides the ACK bit, whether the options are offered or only
@@ -1210,6 +1285,7 @@ UINT                   bucket;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
         cookie_entry.nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+        _nx_tcp_syncache_terms(listen_ptr, &cookie_entry);
 
         cookie_entry.nx_tcp_syncache_iss =
             _nx_tcp_syncache_cookie_build(cache -> nx_tcp_syncache_key, tuple, tuple_words, irs,
@@ -1234,6 +1310,7 @@ UINT                   bucket;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
     entry -> nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+    _nx_tcp_syncache_terms(listen_ptr, entry);
     entry -> nx_tcp_syncache_stamp = NX_TCP_SYNCACHE_CLOCK();
 
     /* The sequence number is a cookie here too.  It costs one hash and it
@@ -1462,6 +1539,12 @@ UCHAR         scale;
 #endif /* !NX_DISABLE_IPV4 */
 
         local_mss &= 0x0000FFFFUL;
+
+        /* The listening socket's MSS cap, as the sender applies it.  */
+        if ((entry -> nx_tcp_syncache_mss) && ((ULONG)entry -> nx_tcp_syncache_mss < local_mss))
+        {
+            local_mss = (ULONG)entry -> nx_tcp_syncache_mss;
+        }
 
         if (local_mss < (ULONG)entry -> nx_tcp_syncache_peer_mss)
         {
@@ -1744,6 +1827,12 @@ UINT                   bucket;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
         final.nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+        /* A cookie has no room for the listening socket's terms, so they are
+           read off the listen request again, as the window is: the MSS cap
+           has to bound the rebuilt segment size the way it bounded the
+           SYN-ACK's.  */
+        _nx_tcp_syncache_terms(listen_ptr, &final);
 
         /* The segment size and the window scale this end announced in the
            SYN-ACK are not carried in the cookie: they are what this machine's
