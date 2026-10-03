@@ -1261,13 +1261,33 @@ static void test_no_packet_pool_server()
 NX_PACKET *test_packets[20];
 UINT status;
 UINT i;
+UINT allocated;
 
     tls_server_setup();
 
-    /* Consume packets in the pool to make the handshake fail. */
-    for (i = 0; i < 16; i++)
+    /* Consume packets in the pool to make the handshake fail: all but one,
+       which the client's ClientHello needs on its way in.  A fixed count
+       (15 upstream, 16 since 6a731995) leaves whatever this server's
+       credentials do not use: with the single-certificate credential the
+       flight fits in the four that 16 left, and the handshake succeeded.
+       With the pool fully drained the ClientHello never arrives.  */
+    allocated = 0;
+    while ((pool_0.nx_packet_pool_available > 1) &&
+           (allocated < (sizeof(test_packets) / sizeof(test_packets[0]))))
     {
-        nx_packet_allocate(&pool_0, &test_packets[i], NX_IPv4_TCP_PACKET, NX_IP_PERIODIC_RATE);
+        status = nx_packet_allocate(&pool_0, &test_packets[allocated], NX_IPv4_TCP_PACKET, NX_NO_WAIT);
+        if (status)
+        {
+            printf("Error in function nx_packet_allocate: 0x%x\n", status);
+            error_counter++;
+            break;
+        }
+        allocated++;
+    }
+    if (pool_0.nx_packet_pool_available != 1)
+    {
+        printf("Error: %lu packets free, not one\n", pool_0.nx_packet_pool_available);
+        error_counter++;
     }
 
     /* Start the TLS Session now that we have a connected socket. */
@@ -1280,7 +1300,7 @@ UINT i;
         error_counter++;
     }
 
-    for (i = 0; i < 16; i++)
+    for (i = 0; i < allocated; i++)
     {
         nx_packet_release(test_packets[i]);
     }
