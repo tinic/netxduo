@@ -284,9 +284,10 @@ UINT   status;
 #endif
 
     /* RFC 7366 and RFC 7627.  Both are TLS 1.2-and-below properties and both
-       are zero-length offers, and both are sent unconditionally: a server that
-       negotiates TLS 1.3 is required to ignore them, and this ClientHello does
-       not yet know which version it will get.
+       are zero-length offers.  Encrypt-then-MAC is sent unconditionally, and
+       the extended master secret wherever TLS 1.2 is the oldest version (see
+       below): a server that negotiates TLS 1.3 is required to ignore them,
+       and this ClientHello does not yet know which version it will get.
 
        Not optional from a security point of view.  Without encrypt-then-MAC
        the CBC suites below need a constant-time padding check to answer Lucky
