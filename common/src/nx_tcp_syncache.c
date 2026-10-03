@@ -1446,14 +1446,14 @@ UCHAR         scale;
 #ifdef FEATURE_NX_IPV6
         if (entry -> nx_tcp_syncache_peer_ip.nxd_ip_version == NX_IP_VERSION_V6)
         {
-            local_mss -= sizeof(NX_IPV6_HEADER);
+            local_mss -= (ULONG)sizeof(NX_IPV6_HEADER);
         }
 #endif /* FEATURE_NX_IPV6 */
 
 #ifndef NX_DISABLE_IPV4
         if (entry -> nx_tcp_syncache_peer_ip.nxd_ip_version == NX_IP_VERSION_V4)
         {
-            local_mss -= sizeof(NX_IPV4_HEADER);
+            local_mss -= (ULONG)sizeof(NX_IPV4_HEADER);
         }
 #endif /* !NX_DISABLE_IPV4 */
 
