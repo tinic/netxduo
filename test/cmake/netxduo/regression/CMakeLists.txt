@@ -47,6 +47,7 @@ if("-DNX_BSD_ENABLE" IN_LIST ${CMAKE_BUILD_TYPE})
       ${SOURCE_DIR}/bsd_test/netx_bsd_udp_basic_blocking_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_basic_nonblocking_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_servers_shared_port_test.c
+      ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_deferred_accept_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_getsockname_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_tcp_accept_blocking_timeout_test.c
       ${SOURCE_DIR}/bsd_test/netx_bsd_udp_checksum_corrupt_test.c
