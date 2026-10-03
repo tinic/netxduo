@@ -145,6 +145,7 @@ UINT        i;
     return(packet_ptr);
 }
 
+#ifndef NX_DISABLE_PACKET_CHAIN
 /* A first fragment of datagram id whose IP header buffer is head_pool's and
    whose payload is a second buffer, tail_pool's.  */
 static UINT    fragment_send_chained(NX_IP *ip_ptr, NX_PACKET_POOL *head_pool, NX_PACKET_POOL *tail_pool, USHORT id)
@@ -174,6 +175,7 @@ NX_PACKET  *tail_ptr;
     _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
     return(NX_SUCCESS);
 }
+#endif /* NX_DISABLE_PACKET_CHAIN */
 
 static UINT    fragment_send_from(NX_PACKET_POOL *pool_ptr, USHORT id, ULONG offset, UINT more)
 {
@@ -351,6 +353,7 @@ UINT        old_priority;
         test_control_return(1);
     }
 
+#ifndef NX_DISABLE_PACKET_CHAIN
     /* A chain whose second buffer is pool_0's is charged to pool_0 as well,
        and refused: neither pool keeps a buffer of it.  */
     fragment_send_chained(&ip_0, &pool_1, &pool_0, 400);
@@ -361,6 +364,7 @@ UINT        old_priority;
         printf("ERROR!\n");
         test_control_return(1);
     }
+#endif /* NX_DISABLE_PACKET_CHAIN */
 
     /* A second instance on pool_0.  Its own assembly list is empty, but the
        pool is at its reserve, so its fragments are refused at enqueue.  */
