@@ -196,6 +196,14 @@ NX_PACKET *decrypted_packet;
 
         if (status != NX_SECURE_TLS_SUCCESS)
         {
+            if (status == NX_CONTINUE)
+            {
+
+                /* The next header is incomplete at the end of the queue: keep the cursor
+                   and the bytes already processed for the next call. */
+                tls_session -> nx_secure_tls_record_offset = record_offset;
+                tls_session -> nx_secure_tls_bytes_processed = *bytes_processed;
+            }
             return(status);
         }
 
@@ -452,8 +460,22 @@ NX_PACKET *decrypted_packet;
                 }
                 else
                 {
-                    /* process another message in the same record. */
-                    record_offset += message_length;
+
+                    /* A middle fragment: the next record starts where this one ends on
+                       the wire, not after its decrypted payload. */
+                    record_offset = record_offset_next;
+
+                    /* Check if reaching the end of this TCP packet. */
+                    if (record_offset == packet_ptr -> nx_packet_length)
+                    {
+
+                        /* Wait more TCP packets for the next fragment, save record_offset and bytes_processed for next record processing. */
+                        tls_session -> nx_secure_tls_record_offset = record_offset;
+                        tls_session -> nx_secure_tls_bytes_processed = *bytes_processed;
+                        return(NX_CONTINUE);
+                    }
+
+                    /* Did not reach the end, continue to process this packet. */
                     status = NX_CONTINUE;
                     continue;
                 }
