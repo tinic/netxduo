@@ -124,6 +124,9 @@ static TX_THREAD               thread_fin;
 static UINT                    fin_client;
 static UINT                    fin_status;
 static NX_PACKET_POOL          pool_0;
+/* The pool has its own storage: with the stacks and the IP and ARP areas it
+   would not fit the 64000 bytes the Linux port gives first_unused_memory.  */
+static ULONG                   pool_area[(1536 * 40) / sizeof(ULONG)];
 static NX_IP                   ip_0;
 static NX_IP                   ip_1;
 static NX_TCP_SOCKET           client[CLIENTS];
@@ -192,8 +195,7 @@ UINT    status;
 
     nx_system_initialize();
 
-    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 1536, pointer, 1536 * 40);
-    pointer = pointer + 1536 * 40;
+    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 1536, pool_area, sizeof(pool_area));
     if (status)
         error_counter++;
 
