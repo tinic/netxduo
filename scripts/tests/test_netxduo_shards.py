@@ -34,7 +34,11 @@ def junit(profile, tests=2, failures=0, errors=0, cases=None, child=""):
             f'errors="{errors}">{body}</testsuite>')
 
 
-def write_shard(root, shard, profiles, failed=0):
+TRACEFILE = '{"gcovr/format_version": "0.6", "files": [{"file": "nx_ip_create.c", "lines": []}]}'
+
+
+def write_shard(root, shard, profiles, failed=0, instrumented=None):
+    instrumented = shards.coverage_profiles(shards.canonical_profiles()) if instrumented is None else instrumented
     results = root / f"{shard['result_name']}-results-{SUFFIX}"
     coverage = root / f"{shard['result_name']}-coverage-{SUFFIX}"
     for profile in profiles:
@@ -43,13 +47,15 @@ def write_shard(root, shard, profiles, failed=0):
             f"  1/2 Test  #1: x\n{100 if failed == 0 else 50}% tests passed, {failed} tests failed out of 2\n"
             "Total Test time (real) =   1.00 sec\n")
         (results / profile / f"{profile}.xml").write_text(junit(profile))
-        coverage.mkdir(parents=True, exist_ok=True)
-        (coverage / f"{profile}.json").write_text("{}")
+        if profile in instrumented:
+            coverage.mkdir(parents=True, exist_ok=True)
+            (coverage / f"{profile}.json").write_text(TRACEFILE)
 
 
 class NetXDuoShardsTest(unittest.TestCase):
     def setUp(self):
         self.profiles = shards.canonical_profiles()
+        self.instrumented = shards.coverage_profiles(self.profiles)
         self.matrix = shards.plan(self.profiles)
         self.directory = Path(tempfile.mkdtemp())
         self.artifacts = self.directory / "artifacts"
@@ -61,7 +67,8 @@ class NetXDuoShardsTest(unittest.TestCase):
 
     def run_check(self, matrix=None):
         return shards.check(matrix or self.matrix, self.artifacts, SUFFIX,
-                            self.directory / "coverage", self.directory / "junit", self.profiles)
+                            self.directory / "coverage", self.directory / "junit", self.profiles,
+                            self.instrumented)
 
     def assert_rejected(self, text):
         with self.assertRaises(shards.ShardError) as caught:
@@ -76,7 +83,7 @@ class NetXDuoShardsTest(unittest.TestCase):
 
     def test_complete_artifacts_pass(self):
         self.assertEqual(self.run_check(), len(self.profiles))
-        self.assertEqual(len(list((self.directory / "coverage").glob("*.json"))), len(self.profiles))
+        self.assertEqual(len(list((self.directory / "coverage").glob("*.json"))), len(self.instrumented))
         self.assertEqual(len(list((self.directory / "junit").glob("*.xml"))), len(self.profiles))
 
     def test_missing_shard_artifact_fails(self):
@@ -96,11 +103,56 @@ class NetXDuoShardsTest(unittest.TestCase):
         (self.artifacts / f"{shard['result_name']}-results-{SUFFIX}" / profile / f"{profile}.xml").unlink()
         self.assert_rejected("no JUnit report")
 
+    def coverage_shard(self):
+        for shard in self.matrix:
+            hit = [p for p in shard["profiles"].split() if p in self.instrumented]
+            if hit:
+                return shard, hit[0], self.artifacts / f"{shard['result_name']}-coverage-{SUFFIX}"
+        self.fail("no shard holds a coverage profile")
+
+    def test_coverage_profiles_follow_the_cmake_rule(self):
+        self.assertEqual(self.instrumented, [p for p in self.profiles if "_coverage" in p])
+        self.assertTrue(set(self.instrumented) < set(self.profiles))
+
+    def test_shard_without_coverage_profile_needs_no_coverage_artifact(self):
+        plain = [s for s in self.matrix if not set(s["profiles"].split()) & set(self.instrumented)]
+        self.assertTrue(plain)
+        for shard in plain:
+            self.assertFalse((self.artifacts / f"{shard['result_name']}-coverage-{SUFFIX}").exists())
+        self.assertEqual(self.run_check(), len(self.profiles))
+
     def test_missing_tracefile_fails(self):
-        shard = self.matrix[5]
-        profile = shard["profiles"].split()[-1]
-        (self.artifacts / f"{shard['result_name']}-coverage-{SUFFIX}" / f"{profile}.json").unlink()
+        _, profile, coverage = self.coverage_shard()
+        (coverage / f"{profile}.json").unlink()
         self.assert_rejected("found 0")
+
+    def test_missing_coverage_artifact_of_a_coverage_shard_fails(self):
+        _, _, coverage = self.coverage_shard()
+        shutil.rmtree(coverage)
+        self.assert_rejected("is missing")
+
+    def test_malformed_tracefile_fails(self):
+        _, profile, coverage = self.coverage_shard()
+        (coverage / f"{profile}.json").write_text('{"files": [')
+        self.assert_rejected("is not valid JSON")
+
+    def test_empty_tracefile_fails(self):
+        _, profile, coverage = self.coverage_shard()
+        (coverage / f"{profile}.json").write_text('{"gcovr/format_version": "0.6", "files": []}')
+        self.assert_rejected("names no source file")
+
+    def test_tracefile_for_an_uninstrumented_profile_fails(self):
+        shard = [s for s in self.matrix if not set(s["profiles"].split()) & set(self.instrumented)][0]
+        profile = shard["profiles"].split()[0]
+        coverage = self.artifacts / f"{shard['result_name']}-coverage-{SUFFIX}"
+        coverage.mkdir(parents=True)
+        (coverage / f"{profile}.json").write_text(TRACEFILE)
+        self.assert_rejected("which is not instrumented")
+
+    def test_no_coverage_profile_at_all_fails(self):
+        with self.assertRaises(shards.ShardError):
+            shards.check(self.matrix, self.artifacts, SUFFIX, self.directory / "coverage",
+                         self.directory / "junit", self.profiles, [])
 
     def test_failed_test_in_summary_fails(self):
         shard = self.matrix[1]

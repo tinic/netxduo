@@ -17,9 +17,12 @@ plan   derives the shards from BUILD_CONFIGURATIONS in
        to or removed from the CMake list moves with it.
 check  is the aggregate: the planned matrix has to be the one derived now,
        and every profile has to have come back from its shard exactly once,
-       with a CTest summary showing no failure, a JUnit report that agrees
-       with it and records no failure, and a coverage tracefile.  It copies the tracefiles and the JUnit reports into one
-       place for the coverage union and the test-result publication.
+       with a CTest summary showing no failure and a JUnit report that agrees
+       with it and records no failure.  A coverage profile, one the NetX
+       CMake instruments, has to return a non-empty gcovr tracefile; any other
+       profile has to return none.  It copies the tracefiles and the JUnit
+       reports into one place for the coverage union and the test-result
+       publication.
 
 At the slowest rate seen on the runners, about 325 s of CTest per profile
 (netx_rtcp_basic_test, 2026-10-03), MAX_PROFILES_PER_SHARD profiles take
@@ -45,6 +48,11 @@ RESULT_PREFIX = "NetXDuo-shard-"
 SUMMARY_LINE = re.compile(r"^\s*\d+% tests passed, (\d+) tests failed out of (\d+)")
 
 
+# The NetX CMake instruments a profile only when its name matches this, in
+# the block after "# Coverage"; TX_COVERAGE does not change that.
+COVERAGE_RULE = re.compile(r'#\s*Coverage\s*\n\s*if\s*\(\s*CMAKE_BUILD_TYPE\s+MATCHES\s+"([^"]+)"\s*\)')
+
+
 class ShardError(Exception):
     """A shard plan or a shard result that cannot be accepted."""
 
@@ -54,6 +62,30 @@ def canonical_profiles(repository_root=REPOSITORY_ROOT):
     if not profiles or len(profiles) != len(set(profiles)):
         raise ShardError("BUILD_CONFIGURATIONS is empty or lists a profile twice")
     return profiles
+
+
+def coverage_profiles(profiles, repository_root=REPOSITORY_ROOT):
+    """The profiles the NetX CMake instruments, by its own rule."""
+    text = (repository_root / "test" / "cmake" / SUITE / "CMakeLists.txt").read_text()
+    rules = COVERAGE_RULE.findall(text)
+    if len(rules) != 1:
+        raise ShardError(f"expected one coverage rule in the {SUITE} CMakeLists.txt, found {len(rules)}")
+    # CMake MATCHES is an unanchored search.
+    instrumented = [profile for profile in profiles if re.search(rules[0], profile)]
+    if not instrumented:
+        raise ShardError("no profile is instrumented for coverage, so the union would be empty")
+    return instrumented
+
+
+def check_tracefile(tracefile):
+    """A gcovr JSON tracefile that names at least one file."""
+    try:
+        data = json.loads(tracefile.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ShardError(f"{tracefile.name} is not valid JSON: {error}") from error
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, list) or not files:
+        raise ShardError(f"{tracefile.name} names no source file")
 
 
 def plan(profiles):
@@ -118,10 +150,12 @@ def _one(directory, pattern, what):
     return found[0]
 
 
-def check(matrix, artifacts, run_suffix, coverage_out, junit_out, profiles):
+def check(matrix, artifacts, run_suffix, coverage_out, junit_out, profiles, instrumented):
     """Fail on any missing shard, missing or duplicate profile, or missing report."""
     if matrix != plan(profiles):
         raise ShardError("the planned matrix is not the one BUILD_CONFIGURATIONS gives now")
+    if not instrumented or not set(instrumented) <= set(profiles):
+        raise ShardError("the coverage profiles are empty or not all in BUILD_CONFIGURATIONS")
     errors = []
     seen = {}
     coverage_out.mkdir(parents=True, exist_ok=True)
@@ -130,7 +164,10 @@ def check(matrix, artifacts, run_suffix, coverage_out, junit_out, profiles):
         assigned = shard["profiles"].split()
         results = artifacts / f"{shard['result_name']}-results-{run_suffix}"
         coverage = artifacts / f"{shard['result_name']}-coverage-{run_suffix}"
-        absent = [directory for directory in (results, coverage) if not directory.is_dir()]
+        # A shard with no coverage profile collects no tracefile, and the
+        # worker uploads no coverage artifact for it.
+        expected = [results] + ([coverage] if set(assigned) & set(instrumented) else [])
+        absent = [directory for directory in expected if not directory.is_dir()]
         for directory in absent:
             errors.append(f"shard {shard['name']}: artifact {directory.name} is missing")
         if absent:
@@ -138,9 +175,12 @@ def check(matrix, artifacts, run_suffix, coverage_out, junit_out, profiles):
 
         # Nothing beyond the assigned profiles may come back from a shard.
         returned = {path.stem for path in results.glob("*.txt")}
-        returned |= {path.stem for path in coverage.rglob("*.json")}
+        traced = {path.stem for path in coverage.rglob("*.json")} if coverage.is_dir() else set()
+        returned |= traced
         for stray in sorted(returned - set(assigned)):
             errors.append(f"shard {shard['name']}: reports for {stray}, which it was not assigned")
+        for uninstrumented in sorted((traced & set(assigned)) - set(instrumented)):
+            errors.append(f"shard {shard['name']}: a tracefile for {uninstrumented}, which is not instrumented")
 
         for profile in assigned:
             if profile in seen:
@@ -162,8 +202,10 @@ def check(matrix, artifacts, run_suffix, coverage_out, junit_out, profiles):
                 if not junit.is_file():
                     raise ShardError(f"no JUnit report {profile}/{junit.name}")
                 check_junit(junit, failed, total)
-                tracefile = _one(coverage, f"{profile}.json", "coverage")
-                shutil.copyfile(tracefile, coverage_out / tracefile.name)
+                if profile in instrumented:
+                    tracefile = _one(coverage, f"{profile}.json", "coverage")
+                    check_tracefile(tracefile)
+                    shutil.copyfile(tracefile, coverage_out / tracefile.name)
                 shutil.copyfile(junit, junit_out / junit.name)
             except (ShardError, ElementTree.ParseError, ValueError) as error:
                 errors.append(f"shard {shard['name']}, {profile}: {error}")
@@ -201,9 +243,11 @@ def main(argv=None):
             for shard in matrix:
                 print(f"  {shard['result_name']}: {shard['profiles']}")
             return 0
+        instrumented = coverage_profiles(profiles)
         count = check(json.loads(arguments.matrix), arguments.artifacts, arguments.run_suffix,
-                      arguments.coverage_out, arguments.junit_out, profiles)
-        print(f"all {count} profiles returned once, with summary, JUnit report and coverage tracefile")
+                      arguments.coverage_out, arguments.junit_out, profiles, instrumented)
+        print(f"all {count} profiles returned once, with summary and JUnit report; "
+              f"tracefiles for the {len(instrumented)} coverage profiles: {' '.join(instrumented)}")
         return 0
     except ShardError as error:
         print(f"netxduo_shards.py: {error}", file=sys.stderr)
