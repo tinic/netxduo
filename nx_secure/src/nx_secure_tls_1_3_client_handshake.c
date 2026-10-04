@@ -134,6 +134,7 @@ UINT            header_bytes;
 UINT            message_length;
 UINT            packet_buffer_length = data_length;
 UCHAR          *packet_start;
+UCHAR          *packet_buffer_base = packet_buffer;
 NX_PACKET      *send_packet = NX_NULL;
 NX_PACKET_POOL *packet_pool;
 const NX_CRYPTO_METHOD
@@ -218,6 +219,23 @@ const UCHAR    *server_random;
             tls_session -> nx_secure_tls_handshake_record_expected_length = message_length + header_bytes;
 
             tls_session -> nx_secure_tls_handshake_record_fragment_state = NX_SECURE_TLS_HANDSHAKE_RECEIVED_FRAGMENT;
+
+            /* Called by _nx_secure_tls_process_record on the session's record buffer:
+               the messages before this one in the record are processed, so keep only
+               this message's bytes, at the start of the buffer. */
+            if ((tls_session -> nx_secure_tls_packet_buffer != NX_NULL) &&
+                (packet_buffer_base == tls_session -> nx_secure_tls_packet_buffer) &&
+                (packet_buffer != packet_buffer_base) &&
+                (tls_session -> nx_secure_tls_packet_buffer_bytes_copied ==
+                 (ULONG)(packet_buffer - packet_buffer_base) + data_length))
+            {
+                NX_SECURE_MEMMOVE(packet_buffer_base, packet_buffer, data_length); /* Use case of memmove is verified. */
+#ifdef NX_SECURE_KEY_CLEAR
+                NX_SECURE_MEMSET(packet_buffer_base + data_length, 0,
+                                 (ULONG)(packet_buffer - packet_buffer_base));
+#endif /* NX_SECURE_KEY_CLEAR */
+                tls_session -> nx_secure_tls_packet_buffer_bytes_copied = data_length;
+            }
 
             return(NX_SECURE_TLS_HANDSHAKE_FRAGMENT_RECEIVED);
         }
