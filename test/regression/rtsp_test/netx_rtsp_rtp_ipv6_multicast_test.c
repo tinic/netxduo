@@ -251,10 +251,13 @@ UINT    status;
     status = nxd_icmp_enable(&server_ip);
     CHECK_STATUS(0, status);
 
-    /* Enable ARP and supply ARP cache memory for the server IP instance.  */
+#ifndef NX_DISABLE_IPV4
+    /* Enable ARP and supply ARP cache memory for the server IP instance.
+       ARP is IPv4's; without IPv4 it is not supported and not needed.  */
     status = nx_arp_enable(&server_ip, (void *) pointer, 1024);
     pointer = pointer + 1024;
     CHECK_STATUS(0, status);
+#endif /* NX_DISABLE_IPV4 */
 
 
      /* Enable TCP traffic.  */
@@ -300,9 +303,11 @@ UINT    status;
     status = nxd_icmp_enable(&client_ip_0);
     CHECK_STATUS(0, status);
 
+#ifndef NX_DISABLE_IPV4
     status  = nx_arp_enable(&client_ip_0, (void *) pointer, 1024);
     pointer =  pointer + 1024;
     CHECK_STATUS(0, status);
+#endif /* NX_DISABLE_IPV4 */
 
      /* Enable TCP traffic.  */
     status = nx_tcp_enable(&client_ip_0);
@@ -347,9 +352,11 @@ UINT    status;
     status = nxd_icmp_enable(&client_ip_1);
     CHECK_STATUS(0, status);
 
+#ifndef NX_DISABLE_IPV4
     status  = nx_arp_enable(&client_ip_1, (void *) pointer, 1024);
     pointer =  pointer + 1024;
     CHECK_STATUS(0, status);
+#endif /* NX_DISABLE_IPV4 */
 
      /* Enable TCP traffic.  */
     status = nx_tcp_enable(&client_ip_1);
@@ -736,8 +743,11 @@ NXD_ADDRESS client_ip_address;
     group_address[0].nxd_ip_address.v6[3] = GROUP_ADDRESS_3;
 
     /* Enable IGMP & join in multicast group.  */
+#ifndef NX_DISABLE_IPV4
+    /* IGMP is IPv4's, as ARP is above.  */
     status = nx_igmp_enable(&server_ip);
     CHECK_STATUS(0, status);
+#endif /* NX_DISABLE_IPV4 */
     status = nxd_ipv6_multicast_interface_join(&server_ip, &group_address[0],  0);
     CHECK_STATUS(0, status);
 
