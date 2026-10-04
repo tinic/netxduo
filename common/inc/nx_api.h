@@ -2680,10 +2680,6 @@ typedef struct NX_TCP_SYNCACHE_STRUCT
     ULONG        nx_tcp_syncache_cookies_invalid;
     ULONG        nx_tcp_syncache_resets_refused;
 
-    /* When the last SYN-ACK went out with nothing recorded for it.  An ACK
-       is read as a cookie only while one of those can still be valid.  */
-    ULONG        nx_tcp_syncache_cookie_time;
-
     UINT         nx_tcp_syncache_initialized;
 } NX_TCP_SYNCACHE;
 

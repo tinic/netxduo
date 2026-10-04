@@ -69,16 +69,8 @@
  * machine one packet and nothing else.
  *
  * The sequence number a cached entry carries is the same cookie.  It costs
- * one more hash per SYN and it means a connection whose entry was pushed out
- * between the SYN and the ACK still completes while the cache is overflowing.
- *
- * An ACK is read as a cookie only within the cookie lifetime of the last
- * SYN-ACK sent with nothing recorded for it.  At any other time an ACK on a
- * listening port that matches no entry is answered with a reset, as RFC 9293
- * 3.10.7.2 answers it.  Without that gate, the ACK of a connection this end
- * has since aborted still acknowledges the ISS the cache minted, and would
- * rebuild the connection instead.  FreeBSD and Linux gate their cookies the
- * same way, on a recent overflow.
+ * one more hash per SYN and it means a connection whose entry aged out
+ * between the SYN and the ACK still completes.
  *
  * OPTIONS SURVIVE THE COOKIE
  *
@@ -1554,7 +1546,6 @@ UINT                   ready;
         _nx_tcp_syncache_send_synack(ip_ptr, &cookie_entry);
 
         cache -> nx_tcp_syncache_cookies_sent++;
-        cache -> nx_tcp_syncache_cookie_time = (ULONG)tx_time_get();
 
         return;
     }
@@ -1572,9 +1563,8 @@ UINT                   ready;
     _nx_tcp_syncache_terms(listen_ptr, entry);
 
     /* The sequence number is a cookie here too.  It costs one hash and it
-       means an entry pushed out between the SYN and the ACK is not a lost
-       connection while cookies are being read: the ACK still carries
-       everything needed to rebuild it.  */
+       means an entry that aged out between the SYN and the ACK is not a lost
+       connection: the ACK still carries everything needed to rebuild it.  */
     entry -> nx_tcp_syncache_iss =
         _nx_tcp_syncache_cookie_build(cache -> nx_tcp_syncache_key, tuple, tuple_words, irs,
                                       _nx_tcp_syncache_counter(),
@@ -2392,18 +2382,9 @@ UINT                   bucket;
     else
     {
 
-        /* Nothing recorded.  Unless a SYN-ACK went out with nothing recorded
-           for it recently enough for its cookie to be valid still, this is
-           not a cookie: it is the caller's to reset.  */
-        if ((cache -> nx_tcp_syncache_cookies_sent == 0) ||
-            (NX_TCP_SYNCACHE_U32((ULONG)tx_time_get() - cache -> nx_tcp_syncache_cookie_time) >=
-             ((ULONG)NX_TCP_SYNCACHE_COOKIE_MAXDIFF << NX_TCP_SYNCACHE_COOKIE_SHIFT)))
-        {
-            return(NX_FALSE);
-        }
-
-        /* If the acknowledgment number is one this end minted, the connection
-           can be rebuilt out of it and nothing was ever stored for it.  */
+        /* Nothing recorded.  If the acknowledgment number is one this end
+           minted, the connection can be rebuilt out of it and nothing was
+           ever stored for it.  */
         cookie = tcp_header_ptr -> nx_tcp_acknowledgment_number - 1;
         irs = tcp_header_ptr -> nx_tcp_sequence_number - 1;
 
