@@ -16,8 +16,9 @@ jobs:
   # NetX Duo, the 32-bit suite, runs as shards of at most four profiles.  As
   # one job its 43 configurations no longer fit the 60 minute test step on
   # every runner: netx_rtcp_basic_test spins on ThreadX ticks and takes about
-  # 300 s instead of 6 s where the timer thread is starved (2026-10-03), which
-  # makes a v4 configuration about 325 s.  scripts/ci/netxduo_shards.py derives
+  # 300 s instead of 6 s on some runners (2026-10-03), which makes a v4
+  # configuration about 325 s.  That the ThreadX timer thread is starved there
+  # is inferred, not measured.  scripts/ci/netxduo_shards.py derives
   # the shards from BUILD_CONFIGURATIONS; _test-suite.yml runs each; the
   # NetXDuo job below is the one check that stands for the suite.
   NetXDuo_plan:

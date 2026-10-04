@@ -17,8 +17,8 @@ plan   derives the shards from BUILD_CONFIGURATIONS in
        to or removed from the CMake list moves with it.
 check  is the aggregate: the planned matrix has to be the one derived now,
        and every profile has to have come back from its shard exactly once,
-       with a CTest summary showing no failure, a JUnit report and a coverage
-       tracefile.  It copies the tracefiles and the JUnit reports into one
+       with a CTest summary showing no failure, a JUnit report that agrees
+       with it and records no failure, and a coverage tracefile.  It copies the tracefiles and the JUnit reports into one
        place for the coverage union and the test-result publication.
 
 At the slowest rate seen on the runners, about 325 s of CTest per profile
@@ -87,6 +87,30 @@ def validate_plan(matrix, profiles):
         raise ShardError("two shards share a result name")
 
 
+def check_junit(junit, failed, total):
+    """The JUnit report has to record no failure and agree with the summary."""
+    root = ElementTree.parse(junit).getroot()
+    suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+    if len(suites) != 1:
+        raise ShardError(f"{junit.name} has {len(suites)} testsuites, not one")
+    suite = suites[0]
+    tests, failures, errors = (int(suite.get(name, "0")) for name in ("tests", "failures", "errors"))
+    if tests == 0:
+        raise ShardError(f"{junit.name} reports no tests")
+    if failures or errors:
+        raise ShardError(f"{junit.name}: testsuite records {failures} failures and {errors} errors")
+    cases = suite.findall("testcase")
+    if len(cases) != tests:
+        raise ShardError(f"{junit.name}: tests={tests} but {len(cases)} testcase elements")
+    bad = [case.get("name", "?") for case in cases
+           if case.find("failure") is not None or case.find("error") is not None]
+    if bad:
+        raise ShardError(f"{junit.name}: testcase {bad[0]} has a failure or error ({len(bad)} in all)")
+    if (failed, total) != (failures + errors, tests):
+        raise ShardError(f"{junit.name}: summary says {failed} failed of {total}, "
+                         f"JUnit says {failures + errors} of {tests}")
+
+
 def _one(directory, pattern, what):
     found = sorted(directory.rglob(pattern))
     if len(found) != 1:
@@ -137,10 +161,7 @@ def check(matrix, artifacts, run_suffix, coverage_out, junit_out, profiles):
                 junit = results / profile / f"{profile}.xml"
                 if not junit.is_file():
                     raise ShardError(f"no JUnit report {profile}/{junit.name}")
-                root = ElementTree.parse(junit).getroot()
-                suite = root if root.tag == "testsuite" else root.find("testsuite")
-                if suite is None or int(suite.get("tests", "0")) == 0:
-                    raise ShardError(f"{junit.name} reports no tests")
+                check_junit(junit, failed, total)
                 tracefile = _one(coverage, f"{profile}.json", "coverage")
                 shutil.copyfile(tracefile, coverage_out / tracefile.name)
                 shutil.copyfile(junit, junit_out / junit.name)

@@ -26,6 +26,14 @@ import netxduo_shards as shards  # noqa: E402
 SUFFIX = "1234-1"
 
 
+def junit(profile, tests=2, failures=0, errors=0, cases=None, child=""):
+    cases = tests if cases is None else cases
+    body = "".join(f'<testcase name="{profile}::t{i}" status="run">{child if i == 0 else ""}</testcase>'
+                   for i in range(cases))
+    return (f'<?xml version="1.0"?><testsuite name="{profile}" tests="{tests}" failures="{failures}" '
+            f'errors="{errors}">{body}</testsuite>')
+
+
 def write_shard(root, shard, profiles, failed=0):
     results = root / f"{shard['result_name']}-results-{SUFFIX}"
     coverage = root / f"{shard['result_name']}-coverage-{SUFFIX}"
@@ -34,8 +42,7 @@ def write_shard(root, shard, profiles, failed=0):
         (results / f"{profile}.txt").write_text(
             f"  1/2 Test  #1: x\n{100 if failed == 0 else 50}% tests passed, {failed} tests failed out of 2\n"
             "Total Test time (real) =   1.00 sec\n")
-        (results / profile / f"{profile}.xml").write_text(
-            f'<?xml version="1.0"?><testsuite name="{profile}" tests="2" failures="0"></testsuite>')
+        (results / profile / f"{profile}.xml").write_text(junit(profile))
         coverage.mkdir(parents=True, exist_ok=True)
         (coverage / f"{profile}.json").write_text("{}")
 
@@ -99,6 +106,40 @@ class NetXDuoShardsTest(unittest.TestCase):
         shard = self.matrix[1]
         write_shard(self.artifacts, shard, [shard["profiles"].split()[0]], failed=1)
         self.assert_rejected("1 of 2 tests failed")
+
+    def replace_junit(self, text, shard_index=4):
+        shard = self.matrix[shard_index]
+        profile = shard["profiles"].split()[0]
+        (self.artifacts / f"{shard['result_name']}-results-{SUFFIX}" / profile / f"{profile}.xml").write_text(
+            text.replace("PROFILE", profile))
+
+    def test_consistent_junit_set_passes(self):
+        self.replace_junit(junit("PROFILE"))
+        self.assertEqual(self.run_check(), len(self.profiles))
+
+    def test_junit_suite_failures_fail(self):
+        self.replace_junit(junit("PROFILE", failures=1))
+        self.assert_rejected("records 1 failures and 0 errors")
+
+    def test_junit_suite_errors_fail(self):
+        self.replace_junit(junit("PROFILE", errors=1))
+        self.assert_rejected("records 0 failures and 1 errors")
+
+    def test_junit_testcase_failure_fails(self):
+        self.replace_junit(junit("PROFILE", child='<failure message="Failed"/>'))
+        self.assert_rejected("has a failure or error")
+
+    def test_junit_testcase_error_fails(self):
+        self.replace_junit(junit("PROFILE", child='<error message="Error"/>'))
+        self.assert_rejected("has a failure or error")
+
+    def test_summary_total_disagreeing_with_junit_fails(self):
+        self.replace_junit(junit("PROFILE", tests=3))
+        self.assert_rejected("summary says 0 failed of 2, JUnit says 0 of 3")
+
+    def test_junit_tests_disagreeing_with_testcases_fails(self):
+        self.replace_junit(junit("PROFILE", tests=2, cases=1))
+        self.assert_rejected("tests=2 but 1 testcase elements")
 
     def test_profile_returned_by_a_second_shard_fails(self):
         stray = self.matrix[0]["profiles"].split()[0]
