@@ -144,8 +144,9 @@ NX_PACKET *send_packet;
 
         if (status != NX_SUCCESS)
         {
-            /* Release the protection. */
+            /* Release the protection, and the packet allocated above. */
             tx_mutex_put(&_nx_secure_tls_protection);
+            nx_secure_tls_packet_release(send_packet);
             return(status);
         }
 #endif
@@ -153,20 +154,23 @@ NX_PACKET *send_packet;
         /* Populate our packet with clienthello data. */
         status = _nx_secure_tls_send_clienthello(tls_session, send_packet);
 
-        if (status == NX_SUCCESS)
+        if (status != NX_SUCCESS)
         {
 
-            /* Send the ClientHello to kick things off. */
-            status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CLIENT_HELLO, wait_option);
+            /* Release the protection.  The packet is still ours: release it. */
+            tx_mutex_put(&_nx_secure_tls_protection);
+            nx_secure_tls_packet_release(send_packet);
+            return(status);
         }
 
-        /* If anything after the allocate fails, we need to release our packet. */
+        /* Send the ClientHello to kick things off.  The sender consumes the packet on every return. */
+        status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CLIENT_HELLO, wait_option);
+
         if (status != NX_SUCCESS)
         {
 
             /* Release the protection. */
             tx_mutex_put(&_nx_secure_tls_protection);
-            nx_secure_tls_packet_release(send_packet);
             return(status);
         }
 
@@ -231,16 +235,14 @@ NX_PACKET *send_packet;
 
         tls_session -> nx_secure_tls_local_initiated_renegotiation = NX_TRUE;
 
-        /* Send the HelloRequest to kick things off. */
+        /* Send the HelloRequest to kick things off.  The sender consumes the packet on every return. */
         status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_HELLO_REQUEST, wait_option);
 
-        /* If anything after the allocate fails, we need to release our packet. */
         if (status != NX_SUCCESS)
         {
 
             /* Release the protection. */
             tx_mutex_put(&_nx_secure_tls_protection);
-            nx_secure_tls_packet_release(send_packet);
             return(status);
         }
 

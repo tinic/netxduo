@@ -42,6 +42,10 @@
 /*    in the NX_PACKET structure before passing the packet along to the   */
 /*    generic TLS record send function.                                   */
 /*                                                                        */
+/*    It consumes send_packet on every return: on success the TCP layer   */
+/*    holds it, on any failure it has been released here.  The caller    */
+/*    owns the packet only before the call.                               */
+/*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
 /*    tls_session                           TLS control block             */
@@ -141,7 +145,9 @@ UINT       buffer_offset;
                       tls_session -> nx_secure_tls_key_material.nx_secure_tls_handshake_cache_length) < length))
                 {
 
-                    /* Handshake cache too small. */
+                    /* Handshake cache too small.  The packet is consumed on this
+                       return too.  */
+                    nx_secure_tls_packet_release(send_packet);
                     return(NX_SECURE_TLS_PACKET_BUFFER_TOO_SMALL);
                 }
 

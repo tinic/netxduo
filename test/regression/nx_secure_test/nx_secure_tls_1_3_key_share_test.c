@@ -487,20 +487,23 @@ NX_SECURE_TLS_ECDHE_HANDSHAKE_DATA   *ecdhe_data;
             status = nx_packet_data_append(send_packet, client_hello_two_key_share, sizeof(client_hello_two_key_share), tls_session -> nx_secure_tls_packet_pool, NX_NO_WAIT);
         }
 
-        if (status == NX_SUCCESS)
+        if (status != NX_SUCCESS)
         {
 
-            /* Send the ClientHello to kick things off. */
-            status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CLIENT_HELLO, wait_option);
+            /* Release the protection.  The packet is still ours: release it. */
+            tx_mutex_put(&_nx_secure_tls_protection);
+            nx_packet_release(send_packet);
+            return(status);
         }
 
-        /* If anything after the allocate fails, we need to release our packet. */
+        /* Send the ClientHello to kick things off.  The sender consumes the packet on every return. */
+        status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CLIENT_HELLO, wait_option);
+
         if (status != NX_SUCCESS)
         {
 
             /* Release the protection. */
             tx_mutex_put(&_nx_secure_tls_protection);
-            nx_packet_release(send_packet);
             return(status);
         }
     }

@@ -339,6 +339,7 @@ const NX_CRYPTO_METHOD
 
                     if (status != NX_SUCCESS)
                     {
+                        nx_secure_tls_packet_release(send_packet);
                         return(status);
                     }
 
@@ -404,6 +405,7 @@ const NX_CRYPTO_METHOD
 
                 if (status != NX_SUCCESS)
                 {
+                    nx_secure_tls_packet_release(send_packet);
                     break;
                 }
 
@@ -435,6 +437,7 @@ const NX_CRYPTO_METHOD
 
             if (status != NX_SUCCESS)
             {
+                nx_secure_tls_packet_release(send_packet);
                 break;
             }
 
@@ -475,6 +478,7 @@ const NX_CRYPTO_METHOD
 
                 if (status != NX_SUCCESS)
                 {
+                    nx_secure_tls_packet_release(send_packet);
                     break;
                 }
 
