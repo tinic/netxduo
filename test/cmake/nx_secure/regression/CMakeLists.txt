@@ -136,6 +136,7 @@ set(nx_secure_test_cases
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_process_finished_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_packet_trim_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_process_record_test.c
+    ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_process_record_fragment_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_rsa_4096_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_rsa_private_key_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_serverhello_session_id_test.c
