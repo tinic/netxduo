@@ -95,7 +95,15 @@ char           pid_string[16];
     if (gdb_pid == 0)
     {
         dup2(STDOUT_FILENO, STDERR_FILENO);
-        execlp("timeout", "timeout", "30", "gdb", "-batch", "-nx", "-p", pid_string,
+        /* No frame arguments, no entry values, no locals: a frame's
+           arguments and strings could carry key or credential material.
+           Function names and addresses only.  gdb itself is bounded, and
+           killed if it does not stop.  */
+        execlp("timeout", "timeout", "-k", "5", "30", "gdb", "-batch", "-nx", "-p", pid_string,
+               "-ex", "set debuginfod enabled off",
+               "-ex", "set print frame-arguments none",
+               "-ex", "set print entry-values no",
+               "-ex", "set print address on",
                "-ex", "thread apply all bt", (char *)NULL);
         printf("    (no stack: timeout/gdb could not be run)\n");
         _exit(127);
@@ -184,6 +192,8 @@ struct timespec tick = { 0, 100L * 1000L * 1000L };
 
     tls_test_director_stalled = 1;
     tls_test_director_dump_group(pid);
+
+    /* Whatever the dump did.  */
     kill(-pid, SIGKILL);
     return((waitpid(pid, exit_status_ptr, 0) == pid) ? 0 : -1);
 }
