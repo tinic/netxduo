@@ -244,6 +244,7 @@ const NX_CRYPTO_METHOD               *method_ptr = NX_NULL;
 
             if (status != NX_SUCCESS)
             {
+                nx_secure_tls_packet_release(send_packet);
                 break;
             }
 
@@ -301,6 +302,7 @@ const NX_CRYPTO_METHOD               *method_ptr = NX_NULL;
                 status = _nx_secure_tls_send_server_key_exchange(tls_session, send_packet);
                 if (status != NX_SUCCESS)
                 {
+                    nx_secure_tls_packet_release(send_packet);
                     break;
                 }
 

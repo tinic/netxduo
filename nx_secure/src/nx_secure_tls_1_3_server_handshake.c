@@ -337,6 +337,7 @@ NX_SECURE_TLS_SERVER_STATE            old_server_state;
 
             if (status != NX_SUCCESS)
             {
+                nx_secure_tls_packet_release(send_packet);
                 break;
             }
 
@@ -384,6 +385,7 @@ NX_SECURE_TLS_SERVER_STATE            old_server_state;
 
             if (status != NX_SUCCESS)
             {
+                nx_secure_tls_packet_release(send_packet);
                 break;
             }
 
@@ -555,6 +557,7 @@ NX_SECURE_TLS_SERVER_STATE            old_server_state;
 
             if (status != NX_SUCCESS)
             {
+                nx_secure_tls_packet_release(send_packet);
                 break;
             }
 

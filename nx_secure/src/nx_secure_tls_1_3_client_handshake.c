@@ -405,25 +405,25 @@ const UCHAR    *server_random;
             /* Populate our packet with clienthello data. */
             status = _nx_secure_tls_send_clienthello(tls_session, send_packet);
 
-            if (status == NX_SUCCESS)
-            {
-
-                /* To avoid a hash update on the second ClientHello packet switch to idle state (pre-handshake). */
-                tls_session -> nx_secure_tls_client_state = NX_SECURE_TLS_CLIENT_STATE_IDLE;
-
-                /* Send the ClientHello. */
-                status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CLIENT_HELLO, wait_option);
-
-                /* This state is used to avoid processing a second HelloRetryRequest packet if one is sent in error. */
-                tls_session -> nx_secure_tls_client_state = NX_SECURE_TLS_CLIENT_STATE_HELLO_RETRY;
-            }
-
-            /* If anything after the allocate fails, we need to release our packet. */
             if (status != NX_SUCCESS)
             {
 
-                /* Release the protection. */
+                /* The packet is still ours: release it. */
                 nx_secure_tls_packet_release(send_packet);
+                return(status);
+            }
+
+            /* To avoid a hash update on the second ClientHello packet switch to idle state (pre-handshake). */
+            tls_session -> nx_secure_tls_client_state = NX_SECURE_TLS_CLIENT_STATE_IDLE;
+
+            /* Send the ClientHello.  The sender consumes the packet on every return. */
+            status = _nx_secure_tls_send_handshake_record(tls_session, send_packet, NX_SECURE_TLS_CLIENT_HELLO, wait_option);
+
+            /* This state is used to avoid processing a second HelloRetryRequest packet if one is sent in error. */
+            tls_session -> nx_secure_tls_client_state = NX_SECURE_TLS_CLIENT_STATE_HELLO_RETRY;
+
+            if (status != NX_SUCCESS)
+            {
                 return(status);
             }
             break;
