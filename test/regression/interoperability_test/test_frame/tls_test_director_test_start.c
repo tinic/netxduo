@@ -363,6 +363,8 @@ static void signal_handler_kill_process_group( int signum)
 {
     /* Install an one shot signal handler. */
     struct sigaction sig_act;
+    memset( &sig_act, 0, sizeof(sig_act));
+    sigemptyset( &sig_act.sa_mask);
     sig_act.sa_handler = signal_handler_wait_all;
     sig_act.sa_flags = SA_RESETHAND;
     sigaction( signum, &sig_act, NULL);
@@ -429,6 +431,9 @@ int err = 0;
 
             /* Install signal handler for SIGALRM and SIGTERM. */
             struct sigaction sig_act;
+            memset( &sig_act, 0, sizeof(sig_act));
+            status = sigemptyset( &sig_act.sa_mask);
+            return_value_if_fail( -1 != status, TLS_TEST_SYSTEM_CALL_FAILED);
             sig_act.sa_handler = signal_handler_kill_process_group;    /* Specify signal handler. */
             sig_act.sa_flags = SA_RESETHAND;                /* Set the signal handler as a one shot handler. */
             status = sigaction( SIGALRM, &sig_act, NULL);
