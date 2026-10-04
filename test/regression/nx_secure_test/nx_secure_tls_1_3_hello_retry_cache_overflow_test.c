@@ -42,6 +42,7 @@ extern VOID    test_control_return(UINT status);
 static TX_THREAD                thread_server;
 static TX_THREAD                thread_client;
 static NX_PACKET_POOL           pool_0;
+static NX_PACKET_POOL           client_tls_pool;
 static NX_IP                    ip_0;
 static UINT                     error_counter;
 
@@ -57,6 +58,7 @@ static NX_SECURE_X509_CERT      server_remote_cert;
 static NX_SECURE_X509_CERT      server_local_certificate;
 
 static ULONG                    pool_0_memory[PACKET_POOL_SIZE / sizeof(ULONG)];
+static ULONG                    client_tls_pool_memory[PACKET_POOL_SIZE / sizeof(ULONG)];
 static ULONG                    thread_server_stack[THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG                    thread_client_stack[THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG                    ip_0_stack[THREAD_STACK_SIZE / sizeof(ULONG)];
@@ -155,6 +157,12 @@ CHAR    *pointer;
                                     pool_0_memory, PACKET_POOL_SIZE);
     do_something_if_fail(status == NX_SUCCESS);
 
+    /* The client's TLS packets come from a pool of their own, so the end of the
+       test can check that every one of them came back exactly once.  */
+    status =  nx_packet_pool_create(&client_tls_pool, "Client TLS Packet Pool", PACKET_SIZE,
+                                    client_tls_pool_memory, PACKET_POOL_SIZE);
+    do_something_if_fail(status == NX_SUCCESS);
+
     /* Create an IP instance.  */
     status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL,
                           &pool_0, _nx_ram_network_driver_1500,
@@ -204,6 +212,9 @@ UINT status;
 
     status = nx_secure_tls_session_packet_buffer_set(tls_session_ptr, tls_packet_buffer[0],
                                                      sizeof(tls_packet_buffer[0]));
+    do_something_if_fail(status == NX_SUCCESS);
+
+    status = nx_secure_tls_session_packet_pool_set(tls_session_ptr, &client_tls_pool);
     do_something_if_fail(status == NX_SUCCESS);
 }
 
@@ -330,6 +341,11 @@ UINT i;
     nx_secure_tls_session_delete(&tls_client_session_0);
     nx_tcp_client_socket_unbind(&client_socket_0);
     nx_tcp_socket_delete(&client_socket_0);
+
+    /* The second ClientHello stopped at the cache cap: it was released once, by
+       the record sender, and every other client packet is back too.  */
+    do_something_if_fail(client_tls_pool.nx_packet_pool_available == client_tls_pool.nx_packet_pool_total);
+    do_something_if_fail(client_tls_pool.nx_packet_pool_invalid_releases == 0);
 }
 
 /* Rewrite the session start function.
@@ -350,8 +366,12 @@ NX_SECURE_TLS_ECDHE_HANDSHAKE_DATA   *ecdhe_data;
     /* Get the protection. */
     tx_mutex_get(&_nx_secure_tls_protection, TX_WAIT_FOREVER);
 
-    /* Assign the packet pool from which TLS will allocate internal message packets. */
-    tls_session -> nx_secure_tls_packet_pool = tcp_socket -> nx_tcp_socket_ip_ptr -> nx_ip_default_packet_pool;
+    /* Assign the packet pool from which TLS will allocate internal message packets,
+       unless the session has one of its own, as nx_secure_tls_session_start does. */
+    if (tls_session -> nx_secure_tls_packet_pool == NX_NULL)
+    {
+        tls_session -> nx_secure_tls_packet_pool = tcp_socket -> nx_tcp_socket_ip_ptr -> nx_ip_default_packet_pool;
+    }
 
     /* Assign the TCP socket to the TLS session. */
     tls_session -> nx_secure_tls_tcp_socket = tcp_socket;

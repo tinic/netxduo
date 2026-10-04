@@ -404,7 +404,7 @@ NX_SECURE_TLS_ECDHE_HANDSHAKE_DATA   *ecdhe_data;
         /* The cache must be untouched by the rejected message. */
         do_something_if_fail(tls_session -> nx_secure_tls_key_material.nx_secure_tls_handshake_cache_length == 0);
 
-        nx_secure_tls_packet_release(send_packet);
+        /* The sender consumed send_packet on this return too: nothing to release. */
     }
     else
     /* Initialize client session as if we sent a ClientHello. */
