@@ -110,6 +110,38 @@ class NetXDuoShardsTest(unittest.TestCase):
                 return shard, hit[0], self.artifacts / f"{shard['result_name']}-coverage-{SUFFIX}"
         self.fail("no shard holds a coverage profile")
 
+    BLOCK = ("if({condition})\n"
+             "  target_compile_options(${{PRODUCT}} PRIVATE -fprofile-arcs -ftest-coverage)\n"
+             "endif()\n")
+
+    def rule_text(self, *conditions):
+        return "\n".join(self.BLOCK.format(condition=c) for c in conditions)
+
+    def test_both_known_spellings_give_the_same_profiles(self):
+        old = self.rule_text('CMAKE_BUILD_TYPE MATCHES ".*_coverage"')
+        new = self.rule_text('NOT MSVC AND CMAKE_BUILD_TYPE MATCHES ".*_coverage"')
+        self.assertEqual(shards.coverage_profiles(self.profiles, text=old), self.instrumented)
+        self.assertEqual(shards.coverage_profiles(self.profiles, text=new), self.instrumented)
+
+    def test_unknown_coverage_condition_fails(self):
+        with self.assertRaisesRegex(shards.ShardError, "unsupported coverage condition"):
+            shards.coverage_profiles(self.profiles, text=self.rule_text(
+                'NOT WIN32 AND CMAKE_BUILD_TYPE MATCHES ".*_coverage"'))
+
+    def test_duplicate_coverage_rule_fails(self):
+        with self.assertRaisesRegex(shards.ShardError, "found 2"):
+            shards.coverage_profiles(self.profiles, text=self.rule_text(
+                'CMAKE_BUILD_TYPE MATCHES ".*_coverage"', 'NOT MSVC AND CMAKE_BUILD_TYPE MATCHES ".*_coverage"'))
+
+    def test_missing_coverage_rule_fails(self):
+        with self.assertRaisesRegex(shards.ShardError, "found 0"):
+            shards.coverage_profiles(self.profiles, text="if(NOT MSVC)\n  add_subdirectory(samples)\nendif()\n")
+
+    def test_coverage_rule_matching_no_profile_fails(self):
+        with self.assertRaisesRegex(shards.ShardError, "no profile is instrumented"):
+            shards.coverage_profiles(self.profiles, text=self.rule_text(
+                'NOT MSVC AND CMAKE_BUILD_TYPE MATCHES ".*_nothing"'))
+
     def test_coverage_profiles_follow_the_cmake_rule(self):
         self.assertEqual(self.instrumented, [p for p in self.profiles if "_coverage" in p])
         self.assertTrue(set(self.instrumented) < set(self.profiles))
