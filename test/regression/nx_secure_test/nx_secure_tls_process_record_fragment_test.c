@@ -438,7 +438,8 @@ UINT           end_protected;
         }
         else if ((status == NX_CONTINUE) &&
                  ((session.nx_secure_tls_record_offset != leg -> saved) ||
-                  (session.nx_secure_tls_bytes_processed != leg -> saved)))
+                  (session.nx_secure_tls_bytes_processed != leg -> saved) ||
+                  (bytes_processed != leg -> saved)))
         {
             printf("    call %u: expected saved offset and bytes %lu\n", call + 1, leg -> saved);
             ok = NX_FALSE;
