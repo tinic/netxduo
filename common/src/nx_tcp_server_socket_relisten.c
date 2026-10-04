@@ -175,6 +175,7 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                         socket_ptr -> nx_tcp_socket_rx_window_maximum;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
                 }
+                _nx_tcp_syncache_listen_record(listen_ptr, socket_ptr);
 
                 /* A handshake that finished while this listen request had no
                    socket is waiting in the SYN cache, and this is the socket
@@ -188,7 +189,7 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
                     tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
                     /* Connection pending, which is also a success: the socket
-                       is connected and the next accept returns at once.  */
+                       has the connection, and the next accept connects it.  */
                     return(NX_CONNECTION_PENDING);
                 }
 
@@ -216,6 +217,10 @@ VOID                         (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT 
 
                     /* Remember what port is associated for this socket.  */
                     socket_ptr -> nx_tcp_socket_port =  port;
+
+                    /* A SYN that arrived while the request had no socket has
+                       been waiting unanswered for this one.  */
+                    _nx_tcp_syncache_answer_deferred(ip_ptr, listen_ptr);
 
                     /* Release the protection.  */
                     tx_mutex_put(&(ip_ptr -> nx_ip_protection));

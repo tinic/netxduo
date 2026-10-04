@@ -3,11 +3,11 @@ Certificate:
         Version: 3 (0x2)
         Serial Number: 6 (0x6)
         Signature Algorithm: ecdsa-with-SHA256
-        Issuer: C = CN, ST = SH, L = SH, O = EL, OU = EL, CN = ECCA4
+        Issuer: C=CN, ST=SH, L=SH, O=EL, OU=EL, CN=ECCA4
         Validity
-            Not Before: Aug 13 19:56:58 2026 GMT
-            Not After : Aug 13 19:56:58 2046 GMT
-        Subject: C = CN, ST = SH, O = EL, OU = EL, CN = ECTestServer7_256
+            Not Before: Oct  3 18:39:25 2026 GMT
+            Not After : Oct  3 18:39:25 2046 GMT
+        Subject: C=CN, ST=SH, O=EL, OU=EL, CN=ECTestServer7_256
         Subject Public Key Info:
             Public Key Algorithm: id-ecPublicKey
                 Public-Key: (256 bit)
@@ -29,29 +29,27 @@ Certificate:
             X509v3 Subject Key Identifier:
                 07:89:34:CF:67:2D:BE:EC:59:F7:2D:50:29:2C:A6:FF:B4:50:FB:59
             X509v3 Authority Key Identifier:
-                DirName:/C=CN/ST=SH/L=SH/O=EL/OU=EL/CN=ECCA4
-                serial:BC:64:D9:FE:6A:91:0E:C2
+                C1:71:B2:07:B3:49:11:CE:83:49:B0:01:18:45:BD:13:A9:3D:53:63
     Signature Algorithm: ecdsa-with-SHA256
     Signature Value:
-        30:64:02:30:79:2f:7c:d1:2d:95:5d:b9:3b:ed:d9:4d:52:ec:
-        7f:c2:17:a5:67:a2:be:ca:87:c2:ee:53:8a:af:d9:6a:bd:37:
-        a5:00:ca:ec:48:7f:4e:76:95:d5:66:a7:86:fd:2f:26:02:30:
-        6e:d0:e2:32:06:e8:7c:a8:1a:78:9e:38:43:97:c1:8a:6a:f3:
-        ce:b8:68:cd:b8:82:02:d4:68:97:f5:b9:48:33:5f:7c:79:2f:
-        74:9e:44:e3:3a:a2:fe:2e:e5:6d:b6:66
+        30:65:02:30:44:b4:f0:32:0d:88:37:e0:77:4e:4b:7d:ab:6c:
+        c8:32:4a:55:d6:8a:52:3a:39:2a:c0:aa:70:fc:7c:3b:e4:c5:
+        e9:32:47:fe:3f:e5:11:a9:de:a4:12:f0:56:63:52:a4:02:31:
+        00:88:e1:2d:45:3e:40:44:33:76:39:79:7f:f0:b5:3c:c8:11:
+        cd:3d:6b:49:dc:da:b3:d0:31:00:c5:f6:56:95:97:c1:69:57:
+        e1:0d:b6:22:67:f4:54:9f:c3:2a:85:54:a0
 -----BEGIN CERTIFICATE-----
-MIIClDCCAhugAwIBAgIBBjAKBggqhkjOPQQDAjBRMQswCQYDVQQGEwJDTjELMAkG
+MIICSTCCAc+gAwIBAgIBBjAKBggqhkjOPQQDAjBRMQswCQYDVQQGEwJDTjELMAkG
 A1UECAwCU0gxCzAJBgNVBAcMAlNIMQswCQYDVQQKDAJFTDELMAkGA1UECwwCRUwx
-DjAMBgNVBAMMBUVDQ0E0MB4XDTI2MDgxMzE5NTY1OFoXDTQ2MDgxMzE5NTY1OFow
+DjAMBgNVBAMMBUVDQ0E0MB4XDTI2MTAwMzE4MzkyNVoXDTQ2MTAwMzE4MzkyNVow
 UDELMAkGA1UEBhMCQ04xCzAJBgNVBAgMAlNIMQswCQYDVQQKDAJFTDELMAkGA1UE
 CwwCRUwxGjAYBgNVBAMMEUVDVGVzdFNlcnZlcjdfMjU2MFkwEwYHKoZIzj0CAQYI
 KoZIzj0DAQcDQgAE7uhrgTJCeZ4WJ3E7xmIs6lCDE74HIJbznrTJ4Mz5lzu+XO+8
-OcAzBidupva6JY9AcSqxoURPNwUXRmQ7KXRisKOB5DCB4TAJBgNVHRMEAjAAMAsG
+OcAzBidupva6JY9AcSqxoURPNwUXRmQ7KXRisKOBmDCBlTAJBgNVHRMEAjAAMAsG
 A1UdDwQEAwID+DA7BgNVHSUENDAyBggrBgEFBQcDAQYIKwYBBQUHAwIGCCsGAQUF
 BwMDBggrBgEFBQcDBAYIKwYBBQUHAwgwHQYDVR0OBBYEFAeJNM9nLb7sWfctUCks
-pv+0UPtZMGsGA1UdIwRkMGKhVaRTMFExCzAJBgNVBAYTAkNOMQswCQYDVQQIDAJT
-SDELMAkGA1UEBwwCU0gxCzAJBgNVBAoMAkVMMQswCQYDVQQLDAJFTDEOMAwGA1UE
-AwwFRUNDQTSCCQC8ZNn+apEOwjAKBggqhkjOPQQDAgNnADBkAjB5L3zRLZVduTvt
-2U1S7H/CF6Vnor7Kh8LuU4qv2Wq9N6UAyuxIf052ldVmp4b9LyYCMG7Q4jIG6Hyo
-GnieOEOXwYpq8864aM24ggLUaJf1uUgzX3x5L3SeROM6ov4u5W22Zg==
+pv+0UPtZMB8GA1UdIwQYMBaAFMFxsgezSRHOg0mwARhFvROpPVNjMAoGCCqGSM49
+BAMCA2gAMGUCMES08DINiDfgd05LfatsyDJKVdaKUjo5KsCqcPx8O+TF6TJH/j/l
+EanepBLwVmNSpAIxAIjhLUU+QEQzdjl5f/C1PMgRzT1rSdzas9AxAMX2VpWXwWlX
+4Q22Imf0VJ/DKoVUoA==
 -----END CERTIFICATE-----

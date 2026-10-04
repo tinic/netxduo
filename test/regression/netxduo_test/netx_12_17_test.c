@@ -331,8 +331,11 @@ ULONG           source_ip, dest_ip;
         tcp_header_ptr -> nx_tcp_header_word_4 = 0;
 
 #if defined(__PRODUCT_NETXDUO__)
-            dest_ip = &server_socket.nx_tcp_socket_connect_ip.nxd_ip_address.v4;
-            source_ip = &server_socket. nx_tcp_socket_connect_interface -> nx_interface_ip_address;
+            /* The SYN-ACK comes from the SYN cache, before the server socket is bound
+               to the connection, so its addresses are the two IP instances', not
+               the socket's connect fields.  */
+            dest_ip = &ip_0.nx_ip_interface[0].nx_interface_ip_address;
+            source_ip = &ip_1.nx_ip_interface[0].nx_interface_ip_address;
             checksum = _nx_ip_checksum_compute(packet_ptr, NX_PROTOCOL_TCP,
                                                packet_ptr -> nx_packet_length,
                                                source_ip, dest_ip);

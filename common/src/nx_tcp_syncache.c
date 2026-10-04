@@ -68,9 +68,16 @@
  * receive our SYN-ACK cannot produce that number, so the flood costs the
  * machine one packet and nothing else.
  *
- * The sequence number a cached entry carries is the same cookie.  It costs
- * one more hash per SYN and it means a connection whose entry aged out
- * between the SYN and the ACK still completes.
+ * The sequence number a cached entry carries is built the same way, with
+ * NX_TCP_SYNCACHE_DATA_MAX added to its option field, so it can never
+ * decode as a cookie: the check refuses any option value at or above it.
+ * The cache's ISS stays unpredictable, and an ACK that matches no entry is
+ * read as a cookie only if this end sent it statelessly.  Without that, the
+ * ACK of a connection this end has since aborted still acknowledges the ISS
+ * the cache minted and would rebuild the connection, instead of drawing the
+ * reset RFC 9293 3.10.7.2 forms for an ACK in LISTEN.  The cost: a cached
+ * handshake whose entry expires or is pushed out before its ACK arrives
+ * does not complete; the peer starts again.
  *
  * OPTIONS SURVIVE THE COOKIE
  *
@@ -191,6 +198,9 @@ static const UCHAR _nx_tcp_syncache_retry_ladder[NX_TCP_SYNCACHE_RETRIES] =
  * these paths, and it holds nx_ip_protection while it does, so one is enough.
  */
 static NX_TCP_SOCKET _nx_tcp_syncache_scratch;
+
+static UINT   _nx_tcp_syncache_socket_ready(NX_TCP_SOCKET *socket_ptr);
+static ULONG  _nx_tcp_syncache_accept_queued(NX_TCP_SYNCACHE *cache, UINT port);
 
 
 /**************************************************************************/
@@ -596,11 +606,15 @@ UINT                   bucket;
     }
 
     bucket = _nx_tcp_syncache_bucket(entry -> nx_tcp_syncache_peer_ip.nxd_ip_version,
-#ifdef FEATURE_NX_IPV6
+#if defined(FEATURE_NX_IPV6) && !defined(NX_DISABLE_IPV4)
                                      (entry -> nx_tcp_syncache_peer_ip.nxd_ip_version == NX_IP_VERSION_V6) ?
                                      &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v6[0]) :
-#endif /* FEATURE_NX_IPV6 */
                                      &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v4),
+#elif defined(FEATURE_NX_IPV6)
+                                     &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v6[0]),
+#else
+                                     &(entry -> nx_tcp_syncache_peer_ip.nxd_ip_address.v4),
+#endif /* FEATURE_NX_IPV6 && !NX_DISABLE_IPV4 */
                                      entry -> nx_tcp_syncache_local_port,
                                      entry -> nx_tcp_syncache_peer_port);
 
@@ -922,25 +936,86 @@ ULONG window = _nx_tcp_syncache_window(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
 
+/* Record the sending terms of a socket being put on a listen request, for
+   a SYN that arrives while none is parked there.  Called by
+   nx_tcp_server_socket_listen and _relisten under the IP mutex.  */
+VOID  _nx_tcp_syncache_listen_record(NX_TCP_LISTEN *listen_ptr, NX_TCP_SOCKET *socket_ptr)
+{
+
+    listen_ptr -> nx_tcp_listen_mss = socket_ptr -> nx_tcp_socket_mss;
+    listen_ptr -> nx_tcp_listen_type_of_service = socket_ptr -> nx_tcp_socket_type_of_service;
+    listen_ptr -> nx_tcp_listen_fragment_enable = socket_ptr -> nx_tcp_socket_fragment_enable;
+    listen_ptr -> nx_tcp_listen_time_to_live = socket_ptr -> nx_tcp_socket_time_to_live;
+#ifdef NX_ENABLE_VLAN
+    listen_ptr -> nx_tcp_listen_vlan_priority = socket_ptr -> nx_tcp_socket_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
+}
+
+
+/* Copy the listening socket's sending terms into an entry.  The socket
+   parked on the request is read when there is one, so nx_tcp_socket_mss_set
+   and the like after the listen still apply; otherwise the terms recorded on
+   the request.  Runs in the IP thread under the IP mutex, and nothing here
+   outlives the call: the entry holds values, never the socket.  */
+static VOID  _nx_tcp_syncache_terms(NX_TCP_LISTEN *listen_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
+{
+
+NX_TCP_SOCKET *socket_ptr = listen_ptr -> nx_tcp_listen_socket_ptr;
+ULONG          mss;
+ULONG          type_of_service;
+ULONG          fragment_enable;
+UINT           time_to_live;
+
+
+    if (socket_ptr)
+    {
+        mss = socket_ptr -> nx_tcp_socket_mss;
+        type_of_service = socket_ptr -> nx_tcp_socket_type_of_service;
+        fragment_enable = socket_ptr -> nx_tcp_socket_fragment_enable;
+        time_to_live = socket_ptr -> nx_tcp_socket_time_to_live;
+#ifdef NX_ENABLE_VLAN
+        entry -> nx_tcp_syncache_vlan_priority = socket_ptr -> nx_tcp_socket_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
+    }
+    else
+    {
+        mss = listen_ptr -> nx_tcp_listen_mss;
+        type_of_service = listen_ptr -> nx_tcp_listen_type_of_service;
+        fragment_enable = listen_ptr -> nx_tcp_listen_fragment_enable;
+        time_to_live = listen_ptr -> nx_tcp_listen_time_to_live;
+#ifdef NX_ENABLE_VLAN
+        entry -> nx_tcp_syncache_vlan_priority = listen_ptr -> nx_tcp_listen_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
+    }
+
+    /* The MSS option is 16 bits, so a larger cap is no cap.  */
+    entry -> nx_tcp_syncache_mss = (USHORT)((mss > 0xFFFFUL) ? 0xFFFFUL : mss);
+
+    /* The type of service lives in bits 16-23 (NX_IP_TOS_MASK) and the
+       sender only ever puts the low byte of the time to live on the wire, so
+       one byte holds each exactly.  */
+    entry -> nx_tcp_syncache_type_of_service = (UCHAR)((type_of_service & NX_IP_TOS_MASK) >> 16);
+    entry -> nx_tcp_syncache_time_to_live = (UCHAR)(time_to_live & 0xFFu);
+    entry -> nx_tcp_syncache_dont_fragment =
+        (UCHAR)((fragment_enable == NX_DONT_FRAGMENT) ? NX_TRUE : NX_FALSE);
+}
+
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
-/*    _nx_tcp_syncache_send_synack                        PORTABLE C      */
+/*    _nx_tcp_syncache_scratch_setup                      PORTABLE C      */
 /*                                                                        */
 /*  DESCRIPTION                                                           */
 /*                                                                        */
-/*    Answer a SYN from an entry, with no socket committed to the          */
-/*    connection.  The option words are built by the ordinary sender, so   */
-/*    a handshake settled here negotiates exactly what one settled on a    */
-/*    socket does.                                                        */
-/*                                                                        */
-/*    On return the entry carries the segment size and the window scale    */
-/*    the sender chose, which is what the connection has to be rebuilt     */
-/*    with when the ACK arrives.                                          */
+/*    Fill the scratch socket from an entry for a segment sent with no    */
+/*    socket committed to the connection.  The option words are built by */
+/*    the ordinary senders, so a handshake settled here negotiates        */
+/*    exactly what one settled on a socket does.                          */
 /*                                                                        */
 /**************************************************************************/
-static VOID  _nx_tcp_syncache_send_synack(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
+static NX_TCP_SOCKET  *_nx_tcp_syncache_scratch_setup(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
 {
 
 NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
@@ -953,21 +1028,20 @@ NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
     socket_ptr -> nx_tcp_socket_connect_port = entry -> nx_tcp_syncache_peer_port;
     socket_ptr -> nx_tcp_socket_connect_ip = entry -> nx_tcp_syncache_peer_ip;
     socket_ptr -> nx_tcp_socket_connect_interface = entry -> nx_tcp_syncache_interface;
-    socket_ptr -> nx_tcp_socket_time_to_live = (UINT)NX_IP_TIME_TO_LIVE;
-    socket_ptr -> nx_tcp_socket_fragment_enable = NX_FRAGMENT_OKAY;
 
-    /* SYN_RECEIVED is what tells the sender this is a SYN-ACK rather than a
-       SYN: it decides the ACK bit, whether the options are offered or only
-       echoed, and that the segment size is the smaller of the two ends'.  */
-    socket_ptr -> nx_tcp_socket_state = NX_TCP_SYN_RECEIVED;
+    /* The listening socket's own terms, as copied at SYN time: the sender
+       caps the advertised MSS with nx_tcp_socket_mss and stamps the rest on
+       the IP header, exactly as for a SYN-ACK sent from the socket.  */
+    socket_ptr -> nx_tcp_socket_mss = (ULONG)entry -> nx_tcp_syncache_mss;
+    socket_ptr -> nx_tcp_socket_time_to_live = (UINT)entry -> nx_tcp_syncache_time_to_live;
+    socket_ptr -> nx_tcp_socket_type_of_service = ((ULONG)entry -> nx_tcp_syncache_type_of_service) << 16;
+    socket_ptr -> nx_tcp_socket_fragment_enable =
+        (entry -> nx_tcp_syncache_dont_fragment == NX_TRUE) ? NX_DONT_FRAGMENT : NX_FRAGMENT_OKAY;
+#ifdef NX_ENABLE_VLAN
+    socket_ptr -> nx_tcp_socket_vlan_priority = entry -> nx_tcp_syncache_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
 
     socket_ptr -> nx_tcp_socket_rx_sequence = entry -> nx_tcp_syncache_irs + 1;
-    socket_ptr -> nx_tcp_socket_rx_window_current = entry -> nx_tcp_syncache_rx_window;
-    socket_ptr -> nx_tcp_socket_rx_window_default = entry -> nx_tcp_syncache_rx_window;
-    socket_ptr -> nx_tcp_socket_rx_window_last_sent = entry -> nx_tcp_syncache_rx_window;
-#ifdef NX_ENABLE_TCP_WINDOW_SCALING
-    socket_ptr -> nx_tcp_socket_rx_window_maximum = entry -> nx_tcp_syncache_rx_window_maximum;
-#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
     socket_ptr -> nx_tcp_socket_peer_mss = entry -> nx_tcp_syncache_peer_mss;
 
 #ifndef NX_DISABLE_IPV4
@@ -1007,6 +1081,41 @@ NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
     socket_ptr -> nx_tcp_socket_ts_recent = entry -> nx_tcp_syncache_ts_recent;
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
 
+    return(socket_ptr);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_syncache_send_synack                        PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    Answer a SYN from an entry, with no socket committed to the          */
+/*    connection.  On return the entry carries the segment size and the    */
+/*    window scale the sender chose.                                      */
+/*                                                                        */
+/**************************************************************************/
+static VOID  _nx_tcp_syncache_send_synack(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
+{
+
+NX_TCP_SOCKET *socket_ptr = _nx_tcp_syncache_scratch_setup(ip_ptr, entry);
+
+
+    /* SYN_RECEIVED is what tells the sender this is a SYN-ACK rather than a
+       SYN: it decides the ACK bit, whether the options are offered or only
+       echoed, and that the segment size is the smaller of the two ends'.  */
+    socket_ptr -> nx_tcp_socket_state = NX_TCP_SYN_RECEIVED;
+
+    socket_ptr -> nx_tcp_socket_rx_window_current = entry -> nx_tcp_syncache_rx_window;
+    socket_ptr -> nx_tcp_socket_rx_window_default = entry -> nx_tcp_syncache_rx_window;
+    socket_ptr -> nx_tcp_socket_rx_window_last_sent = entry -> nx_tcp_syncache_rx_window;
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    socket_ptr -> nx_tcp_socket_rx_window_maximum = entry -> nx_tcp_syncache_rx_window_maximum;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
     _nx_tcp_packet_send_syn(socket_ptr, entry -> nx_tcp_syncache_iss);
 
     /* What the sender settled, read back rather than recomputed here: one
@@ -1021,7 +1130,8 @@ NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
 
 /* Reset a peer that believes it is established when this end has decided it
    is not.  */
-static VOID  _nx_tcp_syncache_send_rst(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry)
+static VOID  _nx_tcp_syncache_send_rst(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry,
+                                       NX_TCP_HEADER *tcp_header_ptr)
 {
 
 NX_TCP_SOCKET *socket_ptr = &_nx_tcp_syncache_scratch;
@@ -1059,7 +1169,192 @@ NX_TCP_HEADER  header;
     header.nx_tcp_acknowledgment_number = entry -> nx_tcp_syncache_iss + 1;
     header.nx_tcp_sequence_number = entry -> nx_tcp_syncache_irs + 1;
 
+    /* Or, answering a segment, the acknowledgment that segment carried
+       (RFC 9293 3.10.7.4: <SEQ=SEG.ACK><CTL=RST>).  */
+    if (tcp_header_ptr)
+    {
+        header.nx_tcp_acknowledgment_number = tcp_header_ptr -> nx_tcp_acknowledgment_number;
+        header.nx_tcp_sequence_number = tcp_header_ptr -> nx_tcp_sequence_number;
+    }
+
     _nx_tcp_packet_send_rst(socket_ptr, &header);
+}
+
+
+/* Answer a segment on a finished handshake that is waiting in the accept
+   queue: acknowledge nothing new, and advertise a window of zero.
+
+   The connection has no socket, so nothing it sends can be kept.  Dropping
+   it silently left the peer retransmitting against its data retry limit
+   until an application relisten came or did not; a zero window instead puts
+   it into persist, which RFC 1122 4.2.2.17 has it keep up for as long as it
+   is answered, and the window update deliver() sends on handover lets it go
+   on.  Nothing is ever acknowledged that was not kept: the acknowledgment
+   field stays at irs + 1.
+
+   The SYN-ACK advertised a nonzero window, so this moves the right edge of
+   the window left: a shrink.  RFC 9293 3.8.6 says a receiver SHOULD NOT
+   shrink the window (SHLD-14); this is the exception that SHOULD leaves room
+   for, a resource this end does not have -- here, a socket -- confined to a
+   handshake that finished with no socket to take it.  Senders MUST be robust
+   against a shrinking window (MUST-34).  */
+static VOID  _nx_tcp_syncache_send_ack(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry, ULONG window)
+{
+
+NX_TCP_SOCKET *socket_ptr = _nx_tcp_syncache_scratch_setup(ip_ptr, entry);
+
+
+    socket_ptr -> nx_tcp_socket_state = NX_TCP_ESTABLISHED;
+    socket_ptr -> nx_tcp_socket_rx_window_current = window;
+    socket_ptr -> nx_tcp_socket_rx_window_last_sent = window;
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    socket_ptr -> nx_tcp_rcv_win_scale_value = entry -> nx_tcp_syncache_rcv_win_scale;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
+    _nx_tcp_packet_send_ack(socket_ptr, entry -> nx_tcp_syncache_iss + 1);
+}
+
+
+/* A segment for a finished handshake in the accept queue.  The ACK and
+   the sequence number are checked before anything is sent, so an off-path
+   segment draws no reply: the acknowledgment has to be our iss + 1 and the
+   sequence number has to fall inside the window the SYN-ACK advertised.  A
+   segment that carries data or a FIN is answered with a zero window and
+   dropped; a bare acknowledgment needs no answer.  */
+static VOID  _nx_tcp_syncache_queued_segment(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry,
+                                             NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr)
+{
+
+ULONG header_length;
+ULONG offset;
+ULONG limit;
+
+
+    if (tcp_header_ptr -> nx_tcp_acknowledgment_number != (entry -> nx_tcp_syncache_iss + 1))
+    {
+        return;
+    }
+
+    offset = NX_TCP_SYNCACHE_U32(tcp_header_ptr -> nx_tcp_sequence_number - (entry -> nx_tcp_syncache_irs + 1));
+    limit = (entry -> nx_tcp_syncache_rx_window != 0) ? entry -> nx_tcp_syncache_rx_window : 1;
+
+    if (offset >= limit)
+    {
+        return;
+    }
+
+    entry -> nx_tcp_syncache_peer_window = tcp_header_ptr -> nx_tcp_header_word_3 & NX_LOWER_16_MASK;
+
+    header_length = (tcp_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+
+    if ((packet_ptr -> nx_packet_length > header_length) ||
+        (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT))
+    {
+        _nx_tcp_syncache_send_ack(ip_ptr, entry, 0);
+    }
+}
+
+
+/* How many SYNs this port is holding unanswered, and the oldest of them.  */
+static ULONG  _nx_tcp_syncache_deferred_count(NX_TCP_SYNCACHE *cache, UINT port)
+{
+
+NX_TCP_SYNCACHE_ENTRY *entry;
+ULONG                  count = 0;
+
+
+    for (entry = cache -> nx_tcp_syncache_age_head; entry; entry = entry -> nx_tcp_syncache_age_next)
+    {
+        if ((entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_DEFERRED) &&
+            (entry -> nx_tcp_syncache_local_port == port))
+        {
+            count++;
+        }
+    }
+
+    return(count);
+}
+
+
+static UINT  _nx_tcp_syncache_answered(NX_TCP_SYNCACHE *cache, UINT port)
+{
+
+NX_TCP_SYNCACHE_ENTRY *entry;
+
+
+    for (entry = cache -> nx_tcp_syncache_age_head; entry; entry = entry -> nx_tcp_syncache_age_next)
+    {
+        if ((entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_SYN_RECEIVED) &&
+            (entry -> nx_tcp_syncache_local_port == port))
+        {
+            return(NX_TRUE);
+        }
+    }
+
+    return(NX_FALSE);
+}
+
+
+static NX_TCP_LISTEN  *_nx_tcp_syncache_listen_find(NX_IP *ip_ptr, UINT port)
+{
+
+NX_TCP_LISTEN *listen_ptr = ip_ptr -> nx_ip_tcp_active_listen_requests;
+
+
+    if (listen_ptr)
+    {
+        do
+        {
+            if (listen_ptr -> nx_tcp_listen_port == port)
+            {
+                return(listen_ptr);
+            }
+            listen_ptr = listen_ptr -> nx_tcp_listen_next;
+        } while (listen_ptr != ip_ptr -> nx_ip_tcp_active_listen_requests);
+    }
+
+    return(NX_NULL);
+}
+
+
+static NX_TCP_SYNCACHE_ENTRY  *_nx_tcp_syncache_oldest_deferred(NX_TCP_SYNCACHE *cache, UINT port)
+{
+
+NX_TCP_SYNCACHE_ENTRY *entry;
+
+
+    for (entry = cache -> nx_tcp_syncache_age_head; entry; entry = entry -> nx_tcp_syncache_age_next)
+    {
+        if ((entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_DEFERRED) &&
+            (entry -> nx_tcp_syncache_local_port == port))
+        {
+            return(entry);
+        }
+    }
+
+    return(NX_NULL);
+}
+
+
+/* Answer a deferred SYN now that a socket is parked.  The window and the
+   sending terms are read again, off the listen request and the socket now on
+   it, because that socket is the one the connection will land on.  */
+static VOID  _nx_tcp_syncache_answer(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
+                                     NX_TCP_SYNCACHE_ENTRY *entry)
+{
+
+    entry -> nx_tcp_syncache_rx_window = _nx_tcp_syncache_window(listen_ptr);
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+    entry -> nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+    _nx_tcp_syncache_terms(listen_ptr, entry);
+
+    entry -> nx_tcp_syncache_state = NX_TCP_SYNCACHE_SYN_RECEIVED;
+    entry -> nx_tcp_syncache_retries = 0;
+    entry -> nx_tcp_syncache_time = (ULONG)tx_time_get();
+    entry -> nx_tcp_syncache_stamp = NX_TCP_SYNCACHE_CLOCK();
+
+    _nx_tcp_syncache_send_synack(ip_ptr, entry);
 }
 
 
@@ -1099,6 +1394,7 @@ ULONG                  irs;
 ULONG                  window;
 UINT                   local_port;
 UINT                   bucket;
+UINT                   ready;
 
 
     if ((cache -> nx_tcp_syncache_initialized != NX_TRUE) ||
@@ -1157,6 +1453,23 @@ UINT                   bucket;
             return;
         }
 
+        /* The same SYN again while it is still unanswered.  Answer it if a
+           socket has been parked since; otherwise the peer is still trying,
+           and the entry lives as long again.  */
+        if ((entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_DEFERRED) &&
+            (entry -> nx_tcp_syncache_irs == irs))
+        {
+            if (_nx_tcp_syncache_socket_ready(listen_ptr -> nx_tcp_listen_socket_ptr))
+            {
+                _nx_tcp_syncache_answer(ip_ptr, listen_ptr, entry);
+            }
+            else
+            {
+                entry -> nx_tcp_syncache_time = (ULONG)tx_time_get();
+            }
+            return;
+        }
+
         if (entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_ESTABLISHED)
         {
 
@@ -1179,6 +1492,29 @@ UINT                   bucket;
 
     tuple_words = _nx_tcp_syncache_tuple(tuple, packet_ptr -> nx_packet_ip_version,
                                          source_ip, dest_ip, local_port, source_port);
+
+    /* With no socket parked the SYN is recorded and not answered: the peer
+       stays in SYN-SENT and repeats its SYN, as it did while the listen queue
+       held SYNs here, and no data can arrive for a connection nothing can
+       take.  The listen backlog bounds how many wait, finished handshakes
+       included; past it the oldest unanswered one makes room, which is the
+       rule the listen queue had, and if every slot is a finished handshake
+       this SYN is dropped.  */
+    ready = _nx_tcp_syncache_socket_ready(listen_ptr -> nx_tcp_listen_socket_ptr);
+
+    if ((ready == NX_FALSE) && (cache -> nx_tcp_syncache_free != NX_NULL) &&
+        ((_nx_tcp_syncache_deferred_count(cache, local_port) +
+          _nx_tcp_syncache_accept_queued(cache, local_port)) >=
+         listen_ptr -> nx_tcp_listen_queue_maximum))
+    {
+
+        entry = _nx_tcp_syncache_oldest_deferred(cache, local_port);
+        if (entry == NX_NULL)
+        {
+            return;
+        }
+        _nx_tcp_syncache_release(ip_ptr, entry);
+    }
 
     entry = cache -> nx_tcp_syncache_free;
 
@@ -1206,6 +1542,7 @@ UINT                   bucket;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
         cookie_entry.nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+        _nx_tcp_syncache_terms(listen_ptr, &cookie_entry);
 
         cookie_entry.nx_tcp_syncache_iss =
             _nx_tcp_syncache_cookie_build(cache -> nx_tcp_syncache_key, tuple, tuple_words, irs,
@@ -1230,18 +1567,20 @@ UINT                   bucket;
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
     entry -> nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
-    entry -> nx_tcp_syncache_stamp = NX_TCP_SYNCACHE_CLOCK();
+    _nx_tcp_syncache_terms(listen_ptr, entry);
 
-    /* The sequence number is a cookie here too.  It costs one hash and it
-       means an entry that aged out between the SYN and the ACK is not a lost
-       connection: the ACK still carries everything needed to rebuild it.  */
+    /* The cookie construction, keyed and unpredictable, with the marker
+       NX_TCP_SYNCACHE_DATA_MAX in the option field before it is hashed in:
+       the check recovers the field and refuses it, so this number never
+       rebuilds a connection once the entry is gone.  */
     entry -> nx_tcp_syncache_iss =
         _nx_tcp_syncache_cookie_build(cache -> nx_tcp_syncache_key, tuple, tuple_words, irs,
                                       _nx_tcp_syncache_counter(),
                                       _nx_tcp_syncache_options_encode(peer_mss, window_scale,
-                                                                      options));
+                                                                      options) |
+                                      NX_TCP_SYNCACHE_DATA_MAX);
 
-    entry -> nx_tcp_syncache_state = NX_TCP_SYNCACHE_SYN_RECEIVED;
+    entry -> nx_tcp_syncache_state = NX_TCP_SYNCACHE_DEFERRED;
 
     bucket = _nx_tcp_syncache_bucket(packet_ptr -> nx_packet_ip_version, source_ip,
                                      local_port, source_port);
@@ -1261,7 +1600,10 @@ UINT                   bucket;
     cache -> nx_tcp_syncache_count++;
     cache -> nx_tcp_syncache_added++;
 
-    _nx_tcp_syncache_send_synack(ip_ptr, entry);
+    if (ready == NX_TRUE)
+    {
+        _nx_tcp_syncache_answer(ip_ptr, listen_ptr, entry);
+    }
 }
 
 
@@ -1446,18 +1788,24 @@ UCHAR         scale;
 #ifdef FEATURE_NX_IPV6
         if (entry -> nx_tcp_syncache_peer_ip.nxd_ip_version == NX_IP_VERSION_V6)
         {
-            local_mss -= sizeof(NX_IPV6_HEADER);
+            local_mss -= (ULONG)sizeof(NX_IPV6_HEADER);
         }
 #endif /* FEATURE_NX_IPV6 */
 
 #ifndef NX_DISABLE_IPV4
         if (entry -> nx_tcp_syncache_peer_ip.nxd_ip_version == NX_IP_VERSION_V4)
         {
-            local_mss -= sizeof(NX_IPV4_HEADER);
+            local_mss -= (ULONG)sizeof(NX_IPV4_HEADER);
         }
 #endif /* !NX_DISABLE_IPV4 */
 
         local_mss &= 0x0000FFFFUL;
+
+        /* The listening socket's MSS cap, as the sender applies it.  */
+        if ((entry -> nx_tcp_syncache_mss) && ((ULONG)entry -> nx_tcp_syncache_mss < local_mss))
+        {
+            local_mss = (ULONG)entry -> nx_tcp_syncache_mss;
+        }
 
         if (local_mss < (ULONG)entry -> nx_tcp_syncache_peer_mss)
         {
@@ -1539,8 +1887,36 @@ static UINT  _nx_tcp_syncache_socket_ready(NX_TCP_SOCKET *socket_ptr)
 }
 
 
-/* Hand a finished handshake to the socket a listen request is holding, and
-   drive it to ESTABLISHED with the ACK that finished it.  */
+/* Drive a handed-over socket to ESTABLISHED with the ACK that finished its
+   handshake, rebuilt from the socket: what the state machine reads out of it
+   is the acknowledgment number, which the cache has checked, and the window,
+   which hand_over keeps raw in nx_tcp_socket_tx_window_advertised.  */
+static VOID  _nx_tcp_syncache_establish(NX_TCP_SOCKET *socket_ptr)
+{
+
+NX_TCP_HEADER synthetic;
+
+
+    memset((VOID *)&synthetic, 0, sizeof(NX_TCP_HEADER));
+    synthetic.nx_tcp_header_word_3 =
+        NX_TCP_ACK_BIT | (socket_ptr -> nx_tcp_socket_tx_window_advertised & NX_LOWER_16_MASK);
+    synthetic.nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_tx_sequence;
+    synthetic.nx_tcp_sequence_number = socket_ptr -> nx_tcp_socket_rx_sequence;
+
+    _nx_tcp_socket_state_syn_received(socket_ptr, &synthetic);
+}
+
+
+/* Hand a finished handshake to the socket a listen request is holding.
+
+   A socket accept has already been called on (SYN_RECEIVED) is driven to
+   ESTABLISHED with the ACK that finished the handshake, which wakes the
+   accept.  One it has not is left where an upstream passive open leaves a
+   socket a SYN arrived for before accept: bound, in LISTEN, with the peer's
+   address and port.  Servers that find a new connection by that state (FTP,
+   Telnet, RTSP) depend on it.  What the peer sends meanwhile is held on the
+   socket (_nx_tcp_syncache_hold), and nx_tcp_server_socket_accept() connects
+   it (_nx_tcp_syncache_accept).  */
 static VOID  _nx_tcp_syncache_hand_over(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                                         NX_TCP_SOCKET *socket_ptr,
                                         NX_TCP_SYNCACHE_ENTRY *entry,
@@ -1548,7 +1924,7 @@ static VOID  _nx_tcp_syncache_hand_over(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr
 {
 
 VOID (*listen_callback)(NX_TCP_SOCKET *socket_ptr, UINT port);
-NX_TCP_HEADER synthetic;
+UINT  accept_called;
 
 
     /* The application has to call relisten with a new socket for the next
@@ -1558,25 +1934,31 @@ NX_TCP_HEADER synthetic;
         listen_ptr -> nx_tcp_listen_socket_ptr = NX_NULL;
     }
 
+    accept_called = (socket_ptr -> nx_tcp_socket_state == NX_TCP_SYN_RECEIVED) ? NX_TRUE : NX_FALSE;
+
     _nx_tcp_syncache_setup_socket(ip_ptr, socket_ptr, entry);
 
-    if (tcp_header_ptr == NX_NULL)
-    {
-
-        /* Handed over by relisten rather than by the ACK's arrival, so the
-           ACK is long gone.  What the state machine reads out of it is the
-           acknowledgment number and the window, and both are recorded.  */
-        memset((VOID *)&synthetic, 0, sizeof(NX_TCP_HEADER));
-        synthetic.nx_tcp_header_word_3 =
-            NX_TCP_ACK_BIT | (entry -> nx_tcp_syncache_peer_window & NX_LOWER_16_MASK);
-        synthetic.nx_tcp_acknowledgment_number = entry -> nx_tcp_syncache_iss + 1;
-        synthetic.nx_tcp_sequence_number = entry -> nx_tcp_syncache_irs + 1;
-        tcp_header_ptr = &synthetic;
-    }
+    /* The window of the last segment from the peer, as it was on the wire;
+       the state machine scales it.  */
+    socket_ptr -> nx_tcp_socket_tx_window_advertised = entry -> nx_tcp_syncache_peer_window & NX_LOWER_16_MASK;
 
     listen_callback = listen_ptr -> nx_tcp_listen_callback;
 
-    _nx_tcp_socket_state_syn_received(socket_ptr, tcp_header_ptr);
+    if (accept_called == NX_TRUE)
+    {
+        if (tcp_header_ptr)
+        {
+            _nx_tcp_socket_state_syn_received(socket_ptr, tcp_header_ptr);
+        }
+        else
+        {
+            _nx_tcp_syncache_establish(socket_ptr);
+        }
+    }
+    else
+    {
+        socket_ptr -> nx_tcp_socket_state = NX_TCP_LISTEN_STATE;
+    }
 
     ip_ptr -> nx_ip_tcp_syncache.nx_tcp_syncache_completed++;
 
@@ -1595,6 +1977,292 @@ NX_TCP_HEADER synthetic;
 }
 
 
+/* A socket hand_over left waiting for accept: a server socket, bound, in
+   LISTEN, with a peer.  Nothing else leaves one so -- a reset clears the
+   peer (_nx_tcp_socket_block_cleanup) -- so the state is its own record.  */
+static UINT  _nx_tcp_syncache_awaiting_accept(NX_TCP_SOCKET *socket_ptr)
+{
+
+    return(((socket_ptr -> nx_tcp_socket_state == NX_TCP_LISTEN_STATE) &&
+            (socket_ptr -> nx_tcp_socket_client_type == NX_FALSE) &&
+            (socket_ptr -> nx_tcp_socket_bound_next != NX_NULL) &&
+            (socket_ptr -> nx_tcp_socket_connect_port != 0)) ? NX_TRUE : NX_FALSE);
+}
+
+
+/* How many segments a connection waiting for accept may have kept.  Nothing
+   is acknowledged while it waits, so a sender keeping to its congestion
+   control cannot have sent more than its initial window, which RFC 6928 caps
+   at ten segments.  */
+#define NX_TCP_SYNCACHE_HOLD_SEGMENTS           10
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_syncache_hold                               PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    A segment for a connection waiting for accept.  What the peer sends */
+/*    in order is kept on the socket's receive queue, unacknowledged, and */
+/*    processed when accept is called: data and a FIN that acknowledge    */
+/*    the SYN-ACK and start where what is kept ends, and a RST on the     */
+/*    sequence number expected next.  Nothing is answered, so the peer    */
+/*    sees a slow receiver and not a window that shrank.  What is kept is */
+/*    bounded twice, by the window the SYN-ACK offered and by             */
+/*    NX_TCP_SYNCACHE_HOLD_SEGMENTS.  Everything else is dropped: a bare  */
+/*    acknowledgment needs nothing, a retransmission is already kept, and */
+/*    the rest the state machine would have refused.  Caller holds the IP */
+/*    mutex.                                                              */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    NX_TRUE   the packet was taken                                      */
+/*    NX_FALSE  the socket is not waiting for accept                      */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_packet_process                                              */
+/*                                                                        */
+/**************************************************************************/
+UINT  _nx_tcp_syncache_hold(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr)
+{
+
+NX_TCP_HEADER *tcp_header_ptr;
+NX_TCP_HEADER *queued_header_ptr;
+NX_PACKET     *queued_ptr;
+ULONG          header_length;
+ULONG          data_length;
+ULONG          held;
+ULONG          count;
+UINT           valid;
+
+
+    if (_nx_tcp_syncache_awaiting_accept(socket_ptr) != NX_TRUE)
+    {
+        return(NX_FALSE);
+    }
+
+    /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+    tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+    header_length = (tcp_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+    data_length = (packet_ptr -> nx_packet_length > header_length) ? (packet_ptr -> nx_packet_length - header_length) : 0;
+
+    /* What is kept already: its data, and whether it ends in a FIN or a RST,
+       after which nothing more is.  */
+    held = 0;
+    valid = NX_TRUE;
+    queued_ptr = socket_ptr -> nx_tcp_socket_receive_queue_head;
+    for (count = socket_ptr -> nx_tcp_socket_receive_queue_count; count; count--)
+    {
+        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
+        queued_header_ptr = (NX_TCP_HEADER *)queued_ptr -> nx_packet_prepend_ptr;
+        header_length = (queued_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+        if (queued_ptr -> nx_packet_length > header_length)
+        {
+            held += queued_ptr -> nx_packet_length - header_length;
+        }
+        if (queued_header_ptr -> nx_tcp_header_word_3 & (NX_TCP_FIN_BIT | NX_TCP_RST_BIT))
+        {
+            valid = NX_FALSE;
+        }
+        queued_ptr = queued_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+    }
+
+    if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT)
+    {
+
+        /* RFC 5961 section 3: only RCV.NXT, which nothing kept has moved.  */
+        if (tcp_header_ptr -> nx_tcp_sequence_number != socket_ptr -> nx_tcp_socket_rx_sequence)
+        {
+            valid = NX_FALSE;
+        }
+    }
+    else if (((tcp_header_ptr -> nx_tcp_header_word_3 & (NX_TCP_ACK_BIT | NX_TCP_SYN_BIT)) != NX_TCP_ACK_BIT) ||
+             (tcp_header_ptr -> nx_tcp_acknowledgment_number != socket_ptr -> nx_tcp_socket_tx_sequence) ||
+             (tcp_header_ptr -> nx_tcp_sequence_number != NX_TCP_SYNCACHE_U32(socket_ptr -> nx_tcp_socket_rx_sequence + held)) ||
+             ((data_length == 0) && ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT) == 0)) ||
+             ((held + data_length) > socket_ptr -> nx_tcp_socket_rx_window_current))
+    {
+        valid = NX_FALSE;
+    }
+
+    if ((valid != NX_TRUE) ||
+        (socket_ptr -> nx_tcp_socket_receive_queue_count >= NX_TCP_SYNCACHE_HOLD_SEGMENTS))
+    {
+        _nx_packet_release(packet_ptr);
+        return(NX_TRUE);
+    }
+
+    /* A RST may carry data (RFC 9293 3.5.3), which the reset never reads.
+       Kept, it is trimmed to its header, so the window bound above holds for
+       it too.  */
+    if ((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT) && (data_length != 0))
+    {
+#ifndef NX_DISABLE_PACKET_CHAIN
+        if (packet_ptr -> nx_packet_next)
+        {
+            _nx_packet_release(packet_ptr -> nx_packet_next);
+            packet_ptr -> nx_packet_next = NX_NULL;
+            packet_ptr -> nx_packet_last = NX_NULL;
+        }
+#endif /* NX_DISABLE_PACKET_CHAIN */
+        header_length = (tcp_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+        packet_ptr -> nx_packet_append_ptr = packet_ptr -> nx_packet_prepend_ptr + header_length;
+        packet_ptr -> nx_packet_length = header_length;
+    }
+
+    if (socket_ptr -> nx_tcp_socket_receive_queue_count)
+    {
+        (socket_ptr -> nx_tcp_socket_receive_queue_tail) -> nx_packet_union_next.nx_packet_tcp_queue_next = packet_ptr;
+    }
+    else
+    {
+        socket_ptr -> nx_tcp_socket_receive_queue_head = packet_ptr;
+    }
+    socket_ptr -> nx_tcp_socket_receive_queue_tail = packet_ptr;
+    socket_ptr -> nx_tcp_socket_receive_queue_count++;
+
+    /*lint -e{923} suppress cast of ULONG to pointer.  */
+    packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next = (NX_PACKET *)NX_PACKET_ENQUEUED;
+
+    return(NX_TRUE);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_syncache_accept                             PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    accept() on a socket waiting for it: the SYN-ACK that upstream's    */
+/*    accept sends here went out from the cache already, so the           */
+/*    connection is completed instead, the window the peer may have been  */
+/*    held at is opened, and what the peer sent while it waited is        */
+/*    processed.  Caller holds the IP mutex.                              */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    NX_TRUE   the socket was waiting for accept; its state says how     */
+/*              the connection went                                       */
+/*    NX_FALSE  it was not, nothing changed                               */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_server_socket_accept                                        */
+/*                                                                        */
+/**************************************************************************/
+UINT  _nx_tcp_syncache_accept(NX_TCP_SOCKET *socket_ptr)
+{
+
+NX_PACKET *packet_ptr;
+NX_PACKET *next_ptr;
+ULONG      count;
+
+
+    if (_nx_tcp_syncache_awaiting_accept(socket_ptr) != NX_TRUE)
+    {
+        return(NX_FALSE);
+    }
+
+    packet_ptr = socket_ptr -> nx_tcp_socket_receive_queue_head;
+    count = socket_ptr -> nx_tcp_socket_receive_queue_count;
+    socket_ptr -> nx_tcp_socket_receive_queue_head = NX_NULL;
+    socket_ptr -> nx_tcp_socket_receive_queue_tail = NX_NULL;
+    socket_ptr -> nx_tcp_socket_receive_queue_count = 0;
+
+    socket_ptr -> nx_tcp_socket_state = NX_TCP_SYN_RECEIVED;
+    _nx_tcp_syncache_establish(socket_ptr);
+
+    /* The peer may have been told a window of zero before a socket took the
+       connection (_nx_tcp_syncache_send_ack).  Open it.  If this
+       update is lost the peer's next persist probe reaches the socket, which
+       answers it with the same window.  */
+    _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+
+    while (count--)
+    {
+        next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+
+        /*lint -e{923} suppress cast of ULONG to pointer.  */
+        packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next = (NX_PACKET *)NX_PACKET_ALLOCATED;
+
+        _nx_tcp_socket_packet_process(socket_ptr, packet_ptr);
+        packet_ptr = next_ptr;
+    }
+
+    return(NX_TRUE);
+}
+
+
+/* RFC 9293 3.10.7.4, first check, for a segment to a handshake in
+   SYN-RECEIVED: RCV.NXT is irs + 1 and RCV.WND the window the SYN-ACK
+   offered.  The four cases of its table, on the segment's length with a FIN
+   counted, in sequence space modulo 2^32.  */
+static UINT  _nx_tcp_syncache_acceptable(NX_TCP_SYNCACHE_ENTRY *entry, NX_PACKET *packet_ptr,
+                                         NX_TCP_HEADER *tcp_header_ptr)
+{
+
+ULONG header_length;
+ULONG length;
+ULONG window = entry -> nx_tcp_syncache_rx_window;
+ULONG start;
+
+
+    header_length = (tcp_header_ptr -> nx_tcp_header_word_3 >> NX_TCP_HEADER_SHIFT) << 2;
+    length = (packet_ptr -> nx_packet_length > header_length) ? (packet_ptr -> nx_packet_length - header_length) : 0;
+    if (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_FIN_BIT)
+    {
+        length++;
+    }
+
+    start = NX_TCP_SYNCACHE_U32(tcp_header_ptr -> nx_tcp_sequence_number - (entry -> nx_tcp_syncache_irs + 1));
+
+    if (length == 0)
+    {
+        return(((window == 0) ? (start == 0) : (start < window)) ? NX_TRUE : NX_FALSE);
+    }
+
+    if (window == 0)
+    {
+        return(NX_FALSE);
+    }
+
+    return(((start < window) || (NX_TCP_SYNCACHE_U32(start + length - 1) < window)) ? NX_TRUE : NX_FALSE);
+}
+
+
+/* A segment to a handshake in SYN-RECEIVED that does not finish it.  The
+   entry is left as it is: time, retries and window.  */
+static VOID  _nx_tcp_syncache_unacceptable(NX_IP *ip_ptr, NX_TCP_SYNCACHE_ENTRY *entry,
+                                           NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr)
+{
+
+    if (_nx_tcp_syncache_acceptable(entry, packet_ptr, tcp_header_ptr) != NX_TRUE)
+    {
+
+        /* <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>.  */
+        _nx_tcp_syncache_send_ack(ip_ptr, entry, entry -> nx_tcp_syncache_rx_window);
+    }
+    else if (tcp_header_ptr -> nx_tcp_acknowledgment_number != (entry -> nx_tcp_syncache_iss + 1))
+    {
+
+        /* SND.UNA is iss and SND.NXT iss + 1, so iss + 1 is the one
+           acceptable acknowledgment.  <SEQ=SEG.ACK><CTL=RST>.  */
+        _nx_tcp_syncache_send_rst(ip_ptr, entry, tcp_header_ptr);
+    }
+
+    /* An acceptable segment that acknowledges the SYN-ACK but does not start
+       at irs + 1 is left unanswered, as before: the cache completes a
+       handshake only on its first segment.  */
+}
+
+
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -1607,12 +2275,9 @@ NX_TCP_HEADER synthetic;
 /*    the connection.  Either it finishes a handshake this end recorded,   */
 /*    or it echoes a cookie, or it is neither and is not ours.             */
 /*                                                                        */
-/*    A segment that is not ours is DROPPED and not reset.  RFC 793 would  */
-/*    reset it, and this stack did before the cache existed too -- but a   */
-/*    reset per unmatched ACK is a packet an attacker gets this machine to */
-/*    send for free, which is the thing being defended against.  A peer    */
-/*    that really is holding a connection this end has forgotten finds     */
-/*    that out from its own retransmit timer.                              */
+/*    A segment that is not ours is the caller's to answer, as an         */
+/*    acknowledgment on a port in LISTEN always was: with a reset          */
+/*    (RFC 9293 3.10.7.2).                                                */
 /*                                                                        */
 /*  OUTPUT                                                                */
 /*                                                                        */
@@ -1641,10 +2306,16 @@ UINT                   local_port;
 UINT                   bucket;
 
 
-    if ((cache -> nx_tcp_syncache_initialized != NX_TRUE) ||
-        (_nx_tcp_syncache_arrival_live(packet_ptr, interface_ptr, dest_ip) != NX_TRUE))
+    if (cache -> nx_tcp_syncache_initialized != NX_TRUE)
     {
         return(NX_FALSE);
+    }
+
+    /* Arrived on an interface or address that has gone since: dropped, with
+       nothing to answer from.  */
+    if (_nx_tcp_syncache_arrival_live(packet_ptr, interface_ptr, dest_ip) != NX_TRUE)
+    {
+        return(NX_TRUE);
     }
 
     local_port = listen_ptr -> nx_tcp_listen_port;
@@ -1658,8 +2329,15 @@ UINT                   bucket;
         if (entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_ESTABLISHED)
         {
 
-            /* Already finished and waiting for the application to take it.
-               Nothing to do with this segment; the peer will send it again.  */
+            /* Already finished and waiting for the application to take it.  */
+            _nx_tcp_syncache_queued_segment(ip_ptr, entry, packet_ptr, tcp_header_ptr);
+            return(NX_TRUE);
+        }
+
+        if (entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_DEFERRED)
+        {
+
+            /* Nothing was sent for this SYN, so nothing can be acknowledged.  */
             return(NX_TRUE);
         }
 
@@ -1668,8 +2346,15 @@ UINT                   bucket;
         {
 
             /* Wrong numbers for the handshake this entry is holding.  Not a
-               reason to drop the entry: an off-path segment must not be able
-               to cancel a connection somebody else is making.  */
+               reason to change the entry: an off-path segment must not be
+               able to cancel or complete a connection somebody else is
+               making.  It is answered as RFC 9293 3.10.7.4 answers it in
+               SYN-RECEIVED, sequence number first: outside the window the
+               SYN-ACK offered, an ACK of what this end expects; inside it,
+               an acknowledgment of something other than the SYN-ACK, a
+               reset from that acknowledgment.  A RST never reaches here
+               (_nx_tcp_syncache_reset_received).  */
+            _nx_tcp_syncache_unacceptable(ip_ptr, entry, packet_ptr, tcp_header_ptr);
             return(NX_TRUE);
         }
 
@@ -1741,6 +2426,12 @@ UINT                   bucket;
         final.nx_tcp_syncache_rx_window_maximum = _nx_tcp_syncache_window_maximum(listen_ptr);
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+        /* A cookie has no room for the listening socket's terms, so they are
+           read off the listen request again, as the window is: the MSS cap
+           has to bound the rebuilt segment size the way it bounded the
+           SYN-ACK's.  */
+        _nx_tcp_syncache_terms(listen_ptr, &final);
+
         /* The segment size and the window scale this end announced in the
            SYN-ACK are not carried in the cookie: they are what this machine's
            own interface and window produced, and they reproduce.  Rebuilding
@@ -1778,7 +2469,7 @@ UINT                   bucket;
         /* Past the backlog the application asked for.  Reset it: the peer
            believes it is established, and silence would leave it
            retransmitting into a connection that will never be accepted.  */
-        _nx_tcp_syncache_send_rst(ip_ptr, &final);
+        _nx_tcp_syncache_send_rst(ip_ptr, &final, NX_NULL);
         return(NX_TRUE);
     }
 
@@ -1853,6 +2544,8 @@ VOID  _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, NX_TCP_HEADER *tcp_header_p
 {
 
 NX_TCP_SYNCACHE_ENTRY *entry;
+NX_TCP_LISTEN         *listen_ptr;
+UINT                   answered;
 
 
     if (ip_ptr -> nx_ip_tcp_syncache.nx_tcp_syncache_initialized != NX_TRUE)
@@ -1876,7 +2569,20 @@ NX_TCP_SYNCACHE_ENTRY *entry;
         return;
     }
 
+    answered = (entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_SYN_RECEIVED) ? NX_TRUE : NX_FALSE;
+
     _nx_tcp_syncache_release(ip_ptr, entry);
+
+    /* An answered SYN the peer has abandoned was due to take the parked
+       socket; the oldest unanswered one can have it instead.  */
+    if (answered == NX_TRUE)
+    {
+        listen_ptr = _nx_tcp_syncache_listen_find(ip_ptr, local_port);
+        if (listen_ptr)
+        {
+            _nx_tcp_syncache_answer_deferred(ip_ptr, listen_ptr);
+        }
+    }
 }
 
 
@@ -1891,7 +2597,8 @@ NX_TCP_SYNCACHE_ENTRY *entry;
 /*    Give the oldest finished handshake for this port to a socket the     */
 /*    application has just supplied.  This is what makes a connection that */
 /*    completed while the listen request had no socket reach the           */
-/*    application at all.                                                 */
+/*    application at all.  The socket waits for accept, as a socket an    */
+/*    upstream relisten gives a queued SYN does.                          */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -1932,16 +2639,64 @@ NX_TCP_SYNCACHE_ENTRY  taken;
         return(NX_FALSE);
     }
 
-    /* The socket has to be on the port before the state machine runs, and
-       putting it there frees the entry, so take a copy first.  */
+    /* Putting the socket on the port frees the entry, so take a copy first.  */
     taken = *entry;
     _nx_tcp_syncache_release(ip_ptr, entry);
 
-    /* The listen request's own slot is what hand_over clears; relisten has
-       not filled it in with this socket yet.  */
+    /* relisten takes a socket in CLOSED, so it waits for accept, as an
+       upstream relisten leaves a socket it gives a queued SYN.  The listen
+       request's own slot is what hand_over clears; relisten has not filled it
+       in with this socket yet.  */
     _nx_tcp_syncache_hand_over(ip_ptr, listen_ptr, socket_ptr, &taken, NX_NULL);
 
     return(NX_TRUE);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_syncache_answer_deferred                    PORTABLE C      */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    A socket has just been parked on a listen request: answer the oldest */
+/*    SYN that arrived while there was none.  One, because one socket is   */
+/*    what there is to take it.  A finished handshake waiting for the port */
+/*    goes first, and deliver() has already given it this socket if there  */
+/*    was one; a SYN already answered and not yet finished is still due to */
+/*    take it, so nothing is answered then either.  Caller holds the IP   */
+/*    mutex.                                                              */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_server_socket_relisten                                      */
+/*    _nx_tcp_syncache_reset_received                                     */
+/*    _nx_tcp_syncache_periodic                                           */
+/*                                                                        */
+/**************************************************************************/
+VOID  _nx_tcp_syncache_answer_deferred(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr)
+{
+
+NX_TCP_SYNCACHE       *cache = &(ip_ptr -> nx_ip_tcp_syncache);
+NX_TCP_SYNCACHE_ENTRY *entry;
+
+
+    if ((cache -> nx_tcp_syncache_initialized != NX_TRUE) ||
+        (_nx_tcp_syncache_socket_ready(listen_ptr -> nx_tcp_listen_socket_ptr) != NX_TRUE) ||
+        (_nx_tcp_syncache_accept_queued(cache, listen_ptr -> nx_tcp_listen_port) != 0) ||
+        (_nx_tcp_syncache_answered(cache, listen_ptr -> nx_tcp_listen_port) == NX_TRUE))
+    {
+        return;
+    }
+
+    entry = _nx_tcp_syncache_oldest_deferred(cache, listen_ptr -> nx_tcp_listen_port);
+
+    if (entry)
+    {
+        _nx_tcp_syncache_answer(ip_ptr, listen_ptr, entry);
+    }
 }
 
 
@@ -1981,7 +2736,7 @@ NX_TCP_SYNCACHE_ENTRY *next;
         next = entry -> nx_tcp_syncache_age_next;
         if (entry -> nx_tcp_syncache_local_port == port)
         {
-            _nx_tcp_syncache_send_rst(ip_ptr, entry);
+            _nx_tcp_syncache_send_rst(ip_ptr, entry, NX_NULL);
             _nx_tcp_syncache_release(ip_ptr, entry);
         }
         entry = next;
@@ -2076,8 +2831,11 @@ VOID  _nx_tcp_syncache_periodic(NX_IP *ip_ptr)
 NX_TCP_SYNCACHE       *cache = &(ip_ptr -> nx_ip_tcp_syncache);
 NX_TCP_SYNCACHE_ENTRY *entry;
 NX_TCP_SYNCACHE_ENTRY *next;
+NX_TCP_LISTEN         *listen_ptr;
 ULONG                  now;
 ULONG                  age;
+UINT                   port;
+UINT                   answered;
 
 
     if (cache -> nx_tcp_syncache_initialized != NX_TRUE)
@@ -2101,9 +2859,23 @@ ULONG                  age;
                carries on anyway rather than breaking, because the retransmit
                below has to see the rest of the list.  */
             cache -> nx_tcp_syncache_expired++;
+            port = entry -> nx_tcp_syncache_local_port;
+            answered = (entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_SYN_RECEIVED) ? NX_TRUE : NX_FALSE;
             _nx_tcp_syncache_release(ip_ptr, entry);
+
+            /* An answered SYN never finished: the parked socket it was due to
+               take can go to the oldest unanswered one.  */
+            if (answered == NX_TRUE)
+            {
+                listen_ptr = _nx_tcp_syncache_listen_find(ip_ptr, port);
+                if (listen_ptr)
+                {
+                    _nx_tcp_syncache_answer_deferred(ip_ptr, listen_ptr);
+                }
+            }
         }
-        else if ((entry -> nx_tcp_syncache_retries < NX_TCP_SYNCACHE_RETRIES) &&
+        else if ((entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_SYN_RECEIVED) &&
+                 (entry -> nx_tcp_syncache_retries < NX_TCP_SYNCACHE_RETRIES) &&
                  (age >= ((ULONG)_nx_tcp_syncache_retry_ladder[entry -> nx_tcp_syncache_retries] *
                           (ULONG)NX_IP_PERIODIC_RATE)))
         {
@@ -2127,7 +2899,7 @@ ULONG                  age;
         if ((now - entry -> nx_tcp_syncache_time) >= (ULONG)NX_TCP_SYNCACHE_ACCEPT_TIMEOUT)
         {
             cache -> nx_tcp_syncache_expired++;
-            _nx_tcp_syncache_send_rst(ip_ptr, entry);
+            _nx_tcp_syncache_send_rst(ip_ptr, entry, NX_NULL);
             _nx_tcp_syncache_release(ip_ptr, entry);
         }
 

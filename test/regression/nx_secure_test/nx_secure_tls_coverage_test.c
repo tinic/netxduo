@@ -934,7 +934,9 @@ UCHAR test_iv[16];
     server_tls_session.nx_secure_tls_credentials.nx_secure_tls_certificate_store.nx_secure_x509_free_certificates = &test_cert;
     /* Not enougn buffer. */
     receive_buffer[4] = 0xf;
-    status = _nx_secure_tls_process_remote_certificate(&server_tls_session, receive_buffer, 0x100000, 0);
+    /* The 0x1000-byte list is the whole rest of the message, which 4ff7e4a4
+       (N-116) requires before reading any entry: 0x1003 bytes, not 0x100000.  */
+    status = _nx_secure_tls_process_remote_certificate(&server_tls_session, receive_buffer, 0x1003, 0);
     EXPECT_EQ(NX_SECURE_TLS_INSUFFICIENT_CERT_SPACE, status);
 
     /* Certificate exists. */
@@ -943,7 +945,8 @@ UCHAR test_iv[16];
     receive_buffer[5] = 1;
     /* Invalid tlv type, certificate_parse failed. */
     receive_buffer[6] = 0xff;
-    status = _nx_secure_tls_process_remote_certificate(&server_tls_session, receive_buffer, 0x100000, 0);
+    /* As above: the list fills the message (N-116).  */
+    status = _nx_secure_tls_process_remote_certificate(&server_tls_session, receive_buffer, 0x1003, 0);
     EXPECT_EQ(NX_SECURE_X509_MULTIBYTE_TAG_UNSUPPORTED, status);
 #endif
 

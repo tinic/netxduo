@@ -23,6 +23,12 @@ if(NOT "-DNXD_MQTT_REQUIRE_TLS" IN_LIST ${CMAKE_BUILD_TYPE})
       ${SOURCE_DIR}/linux_mqtt_subscriber_test_server.c
       ${SOURCE_DIR}/linux_mqtt_subscriber_empty_message_test_publisher.c
       ${SOURCE_DIR}/netx_mqtt_subscriber_empty_message_test.c)
+  list(APPEND mqtt_test_cases mqtt_publish_test)
+  set(mqtt_publish_test_file_list
+      ${SOURCE_DIR}/linux_mqtt_subscriber_test_entry.c
+      ${SOURCE_DIR}/linux_mqtt_subscriber_test_server.c
+      ${SOURCE_DIR}/linux_mqtt_publish_test_peer.c
+      ${SOURCE_DIR}/netx_mqtt_publish_test.c)
 endif()
 
 if("-DNX_SECURE_ENABLE" IN_LIST ${CMAKE_BUILD_TYPE})

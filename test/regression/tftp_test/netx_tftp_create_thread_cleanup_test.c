@@ -14,7 +14,10 @@
 
 extern void test_control_return(UINT status);
 
-#if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
+/* The failure is injected through ThreadX's error-checking service (_txe_event_flags_create).
+   With TX_DISABLE_ERROR_CHECKING the service maps to the core one, which
+   cannot fail, so the path under test does not exist there.  */
+#if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4) && !defined(TX_DISABLE_ERROR_CHECKING)
 #include "nxd_tftp_server.h"
 
 #define DEMO_STACK_SIZE 2048

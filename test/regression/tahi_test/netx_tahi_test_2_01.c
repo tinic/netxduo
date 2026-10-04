@@ -432,6 +432,95 @@ static void build_test_suite(void)
     test_suite[125].test_case = &tahi_02_126[0]; test_suite[125].test_case_size = tahi_02_126_size;
 }
 
+/* RFC 4862 5.4 has an address formed from a router advertisement probed with
+   DupAddrDetectTransmits solicitations.  The captures were taken when that
+   path armed one fewer (NX_IPV6_DAD_TRANSMITS - 1), so where one expects
+   exactly two DAD solicitations for such an address and then none, this
+   stack (dba0e2e2) sends a third a second later.  Each such run gets a third
+   CHECK for the same solicitation before the N_CHECK; every other step is
+   the capture's.  A link-local target, which is probed the full count in the
+   captures too, and a capture of any other shape run as they are.  */
+static TAHI_TEST_SEQ tahi_rfc4862_seq[4096];
+
+static int tahi_slaac_dad_ns(TAHI_TEST_SEQ *step)
+{
+int i;
+const unsigned char *pkt = (const unsigned char *)step -> pkt_data;
+
+    if ((step -> command != CHECK) || (step -> pkt_size != 14 + 40 + 24) ||
+        (pkt[14 + 6] != 58) || (pkt[14 + 40] != 0x87))
+    {
+        return(0);
+    }
+
+    /* Source :: (RFC 4862 5.4.2), target not link-local. */
+    for (i = 14 + 8; i < 14 + 24; i++)
+    {
+        if (pkt[i] != 0)
+        {
+            return(0);
+        }
+    }
+    if ((pkt[14 + 48] == 0xfe) && ((pkt[14 + 49] & 0xc0) == 0x80))
+    {
+        return(0);
+    }
+    return(1);
+}
+
+static int tahi_same_step(TAHI_TEST_SEQ *a, TAHI_TEST_SEQ *b)
+{
+    return((a -> pkt_size == b -> pkt_size) && (memcmp(a -> pkt_data, b -> pkt_data, (size_t)a -> pkt_size) == 0));
+}
+
+static void rfc4862_dad_probes(void)
+{
+int suite;
+int i;
+int used = 0;
+int start;
+int inserted;
+
+    for (suite = 0; suite < (int)(sizeof(test_suite) / sizeof(TAHI_TEST_SUITE)); suite++)
+    {
+        TAHI_TEST_SEQ *seq = test_suite[suite].test_case;
+        int size = test_suite[suite].test_case_size;
+
+        if ((seq == NX_NULL) || ((used + (2 * size)) > (int)(sizeof(tahi_rfc4862_seq) / sizeof(TAHI_TEST_SEQ))))
+        {
+            continue;
+        }
+
+        start = used;
+        inserted = 0;
+        for (i = 0; i < size; i++)
+        {
+            tahi_rfc4862_seq[used++] = seq[i];
+
+            /* Exactly two identical SLAAC DAD CHECKs, then N_CHECK NS. */
+            if ((i >= 1) && ((i + 1) < size) &&
+                tahi_slaac_dad_ns(&seq[i]) && tahi_slaac_dad_ns(&seq[i - 1]) &&
+                tahi_same_step(&seq[i], &seq[i - 1]) &&
+                ((i < 2) || !tahi_slaac_dad_ns(&seq[i - 2]) || !tahi_same_step(&seq[i - 2], &seq[i])) &&
+                (seq[i + 1].command == N_CHECK) && ((ALIGN_TYPE)seq[i + 1].pkt_data == (ALIGN_TYPE)NS))
+            {
+                tahi_rfc4862_seq[used++] = seq[i];
+                inserted++;
+            }
+        }
+
+        if (inserted)
+        {
+            test_suite[suite].test_case = &tahi_rfc4862_seq[start];
+            test_suite[suite].test_case_size = used - start;
+        }
+        else
+        {
+            used = start;
+        }
+    }
+}
+
 
 /* Define what the initial system looks like.  */
 
@@ -451,6 +540,7 @@ void           netx_tahi_test_2_1_define(void *first_unused_memory)
     memset(&test_suite, 0, sizeof(test_suite));
 
     build_test_suite();
+    rfc4862_dad_probes();
 
     /* Create the main thread.  */
     tx_thread_create(&thread_0, "thread 0", thread_0_entry, 0,  

@@ -351,6 +351,24 @@
      (ULONG)((s) -> nx_tcp_socket_connect_mss) :                        \
      (((s) -> nx_tcp_socket_rx_window_default) >> 1))
 
+/* The receive window to advertise, in bytes.  At or above the floor, the free
+   space.  Below it the right edge is not moved (RFC 1122 4.2.3.3) and not
+   pulled back (RFC 9293 3.8.6.2.2): what is left of the window last put on
+   the wire, rx_window_last_sent, or the free space if that is less.  */
+#define NX_TCP_RX_WINDOW_ADVERTISED(s)                                  \
+    ((((s) -> nx_tcp_socket_rx_window_current >= NX_TCP_SWS_FLOOR(s)) || \
+      ((s) -> nx_tcp_socket_rx_window_current <=                        \
+       (s) -> nx_tcp_socket_rx_window_last_sent)) ?                     \
+     (s) -> nx_tcp_socket_rx_window_current :                           \
+     (s) -> nx_tcp_socket_rx_window_last_sent)
+
+/* The bytes a window field put on the wire stands for (not a SYN's).  */
+#ifdef NX_ENABLE_TCP_WINDOW_SCALING
+#define NX_TCP_RX_WINDOW_ON_WIRE(s, w) ((ULONG)(w) << (s) -> nx_tcp_rcv_win_scale_value)
+#else
+#define NX_TCP_RX_WINDOW_ON_WIRE(s, w) ((ULONG)(w))
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
+
 
 /* Define Basic TCP packet header data type.  This will be used to
    build new TCP packets and to examine incoming packets into NetX.  */
@@ -524,6 +542,8 @@ VOID _nx_tcp_queue_process(NX_IP *ip_ptr);
 /* SYN defence, RFC 4987.  nx_tcp_syncache.c; the shape is described where
    NX_TCP_SYNCACHE is declared in nx_api.h.  */
 VOID _nx_tcp_syncache_initialize(NX_IP *ip_ptr);
+VOID _nx_tcp_syncache_listen_record(NX_TCP_LISTEN *listen_ptr, NX_TCP_SOCKET *socket_ptr);
+VOID _nx_tcp_syncache_answer_deferred(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr);
 VOID _nx_tcp_syncache_syn_received(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                                    NX_PACKET *packet_ptr, NX_TCP_HEADER *tcp_header_ptr,
                                    ULONG *source_ip, ULONG *dest_ip, UINT source_port,
@@ -540,6 +560,8 @@ VOID _nx_tcp_syncache_reset_received(NX_IP *ip_ptr, NX_TCP_HEADER *tcp_header_pt
                                      UINT local_port, UINT source_port);
 UINT _nx_tcp_syncache_deliver(NX_IP *ip_ptr, NX_TCP_LISTEN *listen_ptr,
                               NX_TCP_SOCKET *socket_ptr);
+UINT _nx_tcp_syncache_hold(NX_TCP_SOCKET *socket_ptr, NX_PACKET *packet_ptr);
+UINT _nx_tcp_syncache_accept(NX_TCP_SOCKET *socket_ptr);
 VOID _nx_tcp_syncache_flush(NX_IP *ip_ptr, UINT port);
 VOID _nx_tcp_syncache_interface_flush(NX_IP *ip_ptr, NX_INTERFACE *interface_ptr,
                                       NXD_IPV6_ADDRESS *ipv6_address);

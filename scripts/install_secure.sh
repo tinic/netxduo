@@ -40,7 +40,8 @@ sudo apt install -y \
     tofrodos \
     gcovr \
     libpcap-dev:i386 libgcc-s1:i386 \
-    ethtool
+    ethtool \
+    gdb
 
 sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 140
 sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 140

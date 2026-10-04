@@ -23,6 +23,9 @@
 #define NX_SECURE_SOURCE_CODE
 
 #include "nx_secure_tls.h"
+#ifdef NX_SECURE_ENABLE_DTLS
+#include "nx_secure_dtls.h"
+#endif /* NX_SECURE_ENABLE_DTLS */
 
 
 /**************************************************************************/

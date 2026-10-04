@@ -98,9 +98,7 @@ static VOID         _nx_mdns_long_to_network_convert(UCHAR *ptr, ULONG value);
 #ifndef NX_MDNS_DISABLE_SERVER
 static VOID         _nx_mdns_address_change_process(NX_MDNS *mdns_ptr);
 static UINT         _nx_mdns_host_name_register(NX_MDNS *mdns_ptr, UCHAR type, UINT interface_index);
-#ifdef NX_MDNS_ENABLE_IPV6
 static VOID         _nx_mdns_host_address_records_delete(NX_MDNS *mdns_ptr, UINT interface_index);
-#endif /* NX_MDNS_ENABLE_IPV6  */
 static UINT         _nx_mdns_service_interface_delete(NX_MDNS *mdns_ptr, UCHAR *name, UCHAR *type, UCHAR *sub_type, UINT interface_index);
 #if !defined NX_DISABLE_IPV4 || defined NX_MDNS_ENABLE_IPV6
 static UINT         _nx_mdns_rr_a_aaaa_add(NX_MDNS *mdns_ptr, UCHAR *name, ULONG *address, UINT addr_length, UCHAR type, UINT interface_index);
@@ -433,29 +431,6 @@ UINT    host_name_size;
     /* Set the mDNS announcing max time.  */
     mdns_ptr -> nx_mdns_announcing_max_time = (UCHAR)NX_MDNS_ANNOUNCING_MAX_TIME;
 
-    /* Protect callback registration and instance publication from delete.  */
-    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
-
-#ifndef NX_MDNS_DISABLE_SERVER
-
-#ifndef NX_DISABLE_IPV4
-    /* Setup the IP address change callback function. */
-    ip_ptr -> nx_ip_address_change_notify_internal = _nx_mdns_ip_address_change_notify;
-#endif /* NX_DISABLE_IPV4 */
-
-#ifdef NX_MDNS_ENABLE_IPV6
-
-    /* Setup the IPv6 address change callback function. */
-    ip_ptr -> nx_ipv6_address_change_notify_internal =  _nx_mdns_ipv6_address_change_notify;
-#endif /* NX_MDNS_ENABLE_IPV6  */
-#endif /* NX_MDNS_DISABLE_SERVER */
-
-    /* Set the pointer of global variable mDNS.  */
-    _nx_mdns_created_ptr = mdns_ptr;
-
-    /* Release the IP protection.  */
-    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-
     /* Create the Socket and check the status */
     status = nx_udp_socket_create(mdns_ptr -> nx_mdns_ip_ptr, &(mdns_ptr -> nx_mdns_socket), "Multicast DNS",
                                   NX_MDNS_UDP_TYPE_OF_SERVICE, NX_MDNS_UDP_FRAGMENT_OPTION, 
@@ -622,6 +597,9 @@ UINT    host_name_size;
     /* The random delay of first probing for RR. */
     mdns_ptr -> nx_mdns_first_probing_delay = (ULONG)(1 + (((ULONG)NX_RAND()) % NX_MDNS_PROBING_TIMER_COUNT));
 
+    /* Protect callback registration and instance publication from delete.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
 #ifndef NX_MDNS_DISABLE_SERVER
 
 #ifndef NX_DISABLE_IPV4
@@ -638,6 +616,9 @@ UINT    host_name_size;
 
     /* Publish the instance only after every resource is ready.  */
     _nx_mdns_created_ptr = mdns_ptr;
+
+    /* Release the IP protection.  */
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     /* Return a successful status.  */
     return(NX_SUCCESS);
@@ -1394,7 +1375,6 @@ UINT _nx_mdns_service_notify_clear(NX_MDNS *mdns_ptr)
 
 
 #ifndef NX_MDNS_DISABLE_SERVER
-#ifdef NX_MDNS_ENABLE_IPV6
 /**************************************************************************/
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
@@ -1458,7 +1438,6 @@ NX_MDNS_RR  *p;
         }
     }
 }
-#endif /* NX_MDNS_ENABLE_IPV6  */
 
 
 /**************************************************************************/ 
@@ -1787,20 +1766,10 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     if (status)
     {
 
-#ifndef NX_MDNS_DISABLE_SERVER
-        /* Host registration can add an A record before a later address
-           exhausts the local cache.  Remove those partial records so an
-           already-running interface cannot advertise them.  */
-        _nx_mdns_host_address_records_delete(mdns_ptr, interface_index);
-#endif /* NX_MDNS_DISABLE_SERVER  */
-
-#ifdef NX_MDNS_ENABLE_IPV6
-        /* Undo the IPv6 group membership acquired above.  */
-        nxd_ipv6_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, &NX_MDNS_IPV6_MULTICAST_ADDRESS, interface_index);
-#endif /* NX_MDNS_ENABLE_IPV6  */
-
+#ifndef NX_DISABLE_IPV4
         /* Undo the IPv4 group membership acquired above.  */
         nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_DISABLE_IPV4  */
 
         /* Release the mDNS mutex.  */
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
@@ -1822,6 +1791,21 @@ NXD_IPV6_ADDRESS    *ipv6_address;
     /* Check status.  */
     if (status)
     {
+
+        /* Host registration can add an A record before a later address
+           exhausts the local cache.  Remove those partial records so an
+           already-running interface cannot advertise them.  */
+        _nx_mdns_host_address_records_delete(mdns_ptr, interface_index);
+
+#ifdef NX_MDNS_ENABLE_IPV6
+        /* Undo the IPv6 group membership acquired above.  */
+        nxd_ipv6_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, &NX_MDNS_IPV6_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_MDNS_ENABLE_IPV6  */
+
+#ifndef NX_DISABLE_IPV4
+        /* Undo the IPv4 group membership acquired above.  */
+        nx_ipv4_multicast_interface_leave(mdns_ptr -> nx_mdns_ip_ptr, NX_MDNS_IPV4_MULTICAST_ADDRESS, interface_index);
+#endif /* NX_DISABLE_IPV4  */
 
         /* Release the mDNS mutex.  */
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
@@ -5745,17 +5729,27 @@ NX_MDNS_RR  *p;
     /* _services._dns-sd._udp is shared by every local service of one type.
        A caller deleting one reference must not withdraw the record while
        another service still owns it.  Keep this rule in the common deletion
-       path so service-add rollback cannot bypass the reference count. */
+       path so service-add rollback cannot bypass the reference count.
+       The last owner deletes it directly, as the service delete did before
+       this path owned it: a DNS-SD PTR sends no Goodbye, and disable
+       suspends it, so a pending Goodbye would be undone by the next
+       enable and the record would come back. */
     if ((drop_all_owners == NX_FALSE) &&
         !(record_rr -> nx_mdns_rr_word & NX_MDNS_RR_FLAG_PEER) &&
         (record_rr -> nx_mdns_rr_type == NX_MDNS_RR_TYPE_PTR) &&
-        (record_rr -> nx_mdns_rr_count != 0) &&
         (!_nx_utility_string_length_check((CHAR *)(record_rr -> nx_mdns_rr_name),
                                           &rr_name_length, NX_MDNS_NAME_MAX)) &&
         (!_nx_mdns_name_match(record_rr -> nx_mdns_rr_name,
                               (UCHAR *)_nx_mdns_dns_sd, rr_name_length)))
     {
-        record_rr -> nx_mdns_rr_count --;
+        if (record_rr -> nx_mdns_rr_count != 0)
+        {
+            record_rr -> nx_mdns_rr_count --;
+        }
+        else
+        {
+            _nx_mdns_cache_delete_resource_record(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, record_rr);
+        }
         tx_mutex_put(&(mdns_ptr -> nx_mdns_mutex));
         return(NX_MDNS_SUCCESS);
     }
@@ -7763,71 +7757,6 @@ static VOID _nx_mdns_yield(NX_MDNS *mdns_ptr)
 /*    _nx_mdns_thread_entry                 Processing thread for mDNS    */ 
 /*                                                                        */ 
 /**************************************************************************/
-/* AMINETXDUO: two questions asked of a received response before its records
-   are worked on, because on a busy LAN the answer to both is nearly always
-   "no" and the work is the single most expensive thing this thread does.
-   Measured on a 25 MHz 68030 (A3000, X-Surf 100): the mDNS thread took 9%
-   of the CPU during an unrelated TCP transfer, all of it decoding, interning
-   and caching other machines' announcements that nothing here had asked for.
-
-   Is anything waiting for peer records?  A one-shot lookup and a continuous
-   (browse) query both park a record in NX_MDNS_RR_STATE_QUERY in the peer
-   cache for as long as they are open, so an empty scan means no reader: a
-   record cached now would only age out unread.  A lookup made later sends
-   its own query and reads the answer to that, which is what a resolver
-   without a passive cache does.  */
-static UINT _nx_mdns_peer_query_pending(NX_MDNS *mdns_ptr)
-{
-NX_MDNS_RR *p;
-ULONG      *head;
-
-    if ((mdns_ptr -> nx_mdns_peer_service_cache == NX_NULL) ||
-        (mdns_ptr -> nx_mdns_peer_service_cache_size == 0))
-    {
-        return(NX_FALSE);
-    }
-
-    head = (ULONG *)mdns_ptr -> nx_mdns_peer_service_cache;
-    head = (ULONG *)(*head);
-    for (p = (NX_MDNS_RR *)((UCHAR *)mdns_ptr -> nx_mdns_peer_service_cache + sizeof(ULONG)); (ULONG *)p < head; p++)
-    {
-        if (p -> nx_mdns_rr_state == NX_MDNS_RR_STATE_QUERY)
-        {
-            return(NX_TRUE);
-        }
-    }
-
-    return(NX_FALSE);
-}
-
-/* Does this record's name belong to one of our own records?  Conflict
-   detection and duplicate-answer suppression (the server steps below) can
-   only ever act on a name that is in the local cache, and the local string
-   table is where every local name is interned, so a name that is not in it
-   has nothing to conflict with.  One decode and one walk of a table holding
-   a handful of strings, against the two decodes and the peer-cache insert
-   the record would otherwise cost.  */
-static UINT _nx_mdns_rr_name_is_local(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UCHAR *data_ptr)
-{
-UINT  length;
-VOID *found;
-
-    if (!_nx_mdns_name_string_decode(packet_ptr -> nx_packet_prepend_ptr,
-                                     (UINT)(data_ptr - packet_ptr -> nx_packet_prepend_ptr),
-                                     packet_ptr -> nx_packet_length,
-                                     temp_string_buffer, NX_MDNS_NAME_MAX))
-    {
-        return(NX_FALSE);
-    }
-    if (_nx_utility_string_length_check((CHAR *)temp_string_buffer, &length, NX_MDNS_NAME_MAX))
-    {
-        return(NX_FALSE);
-    }
-
-    return(_nx_mdns_cache_add_string(mdns_ptr, NX_MDNS_CACHE_TYPE_LOCAL, temp_string_buffer, length,
-                                     &found, NX_TRUE, NX_TRUE) == NX_MDNS_SUCCESS);
-}
-
 static UINT _nx_mdns_packet_process(NX_MDNS *mdns_ptr, NX_PACKET *packet_ptr, UINT interface_index)
 {
     
@@ -7848,7 +7777,6 @@ ULONG               match_count;
 NX_MDNS_RR         *nsec_rr;
 #endif /* NX_MDNS_ENABLE_SERVER_NEGATIVE_RESPONSES  */
 #endif /* NX_MDNS_DISABLE_SERVER  */
-UINT                peer_wanted = NX_FALSE;
 
 
 #ifdef NX_MDNS_ENABLE_ADDRESS_CHECK
@@ -8123,13 +8051,6 @@ UINT                peer_wanted = NX_FALSE;
         }
     }
     
-    /* AMINETXDUO: asked once per packet, not once per record; the peer
-       cache does not change underneath this thread.  */
-    if ((mdns_flags & NX_MDNS_RESPONSE_FLAG) == NX_MDNS_RESPONSE_FLAG)
-    {
-        peer_wanted = _nx_mdns_peer_query_pending(mdns_ptr);
-    }
-
     /* Process all the Known-Answer records.  */
     for (index = 0; index < answer_count; index++)
     {
@@ -8150,14 +8071,6 @@ UINT                peer_wanted = NX_FALSE;
 
         if ((mdns_flags & NX_MDNS_RESPONSE_FLAG) == NX_MDNS_RESPONSE_FLAG)
         {
-            /* AMINETXDUO: a record about a name that is not ours, with no
-               lookup or browse open, is skipped whole (see the two helpers
-               above _nx_mdns_packet_process).  */
-            if (!peer_wanted && !_nx_mdns_rr_name_is_local(mdns_ptr, packet_ptr, data_ptr))
-            {
-                data_ptr += _nx_mdns_rr_size_get(data_ptr, packet_ptr);
-                continue;
-            }
 
 #ifndef NX_MDNS_DISABLE_SERVER
             /* Step1, Cooperating Multicast DNS Responders, RFC6762, Section6.6, Page21. */
@@ -8249,11 +8162,7 @@ UINT                peer_wanted = NX_FALSE;
 
 #ifndef NX_MDNS_DISABLE_CLIENT
             /* Step2. Add the response resource records in remote buffer.  */  
-            /* AMINETXDUO: only while something is waiting to read it.  */
-            if (peer_wanted)
-            {
-                _nx_mdns_packet_rr_process(mdns_ptr, packet_ptr, data_ptr, interface_index);
-            }
+            _nx_mdns_packet_rr_process(mdns_ptr, packet_ptr, data_ptr, interface_index);
 #endif /* NX_MDNS_DISABLE_CLIENT */
         }
         else
@@ -9123,6 +9032,7 @@ NXD_ADDRESS         src_address;
         status = nx_udp_socket_source_send(&mdns_ptr -> nx_mdns_socket, response_ptr,
                                            ipv4_header -> nx_ip_header_source_ip, src_port, interface_index);
 #else
+        NX_PARAMETER_NOT_USED(src_port);
         status = NX_MDNS_ERROR;
 #endif /* NX_DISABLE_IPV4  */
     }

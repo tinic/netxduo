@@ -108,6 +108,16 @@ NX_IP_DRIVER  driver_request;
     /* Set nx_interface.  */
     nx_interface = &(ip_ptr -> nx_ip_interface[interface_index]);
 
+    /* AmiNetXDuo: announcing the address claims it (RFC 5227 2.3), so a probe
+       for it is no longer outstanding.  nx_arp_packet_receive.c holds off its
+       defence while the probe address names the configured one (fb94cc17); a
+       prober that does not clear it afterwards, as AutoIP does not, would
+       otherwise leave the address undefended for as long as it is held.  */
+    if (nx_interface -> nx_interface_ip_probe_address == nx_interface -> nx_interface_ip_address)
+    {
+        nx_interface -> nx_interface_ip_probe_address = 0;
+    }
+
     /* Stamp the packet with the outgoing interface information. */
     /*lint -e{644} suppress variable might not be initialized, since "request_ptr" was initialized in _nx_packet_allocate. */
     request_ptr -> nx_packet_address.nx_packet_interface_ptr = nx_interface;

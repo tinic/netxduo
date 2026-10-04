@@ -14,6 +14,11 @@
 set -e
 
 cd $(dirname $0)
+
+if [ "$1" = "--merge" ]; then
+    exec ../../../scripts/coverage_merge.sh "$PWD" ../../../common/src
+fi
+
 mkdir -p coverage_report/$1
-gcovr --object-directory=build/$1/netxduo/CMakeFiles/netxduo.dir/common/src -r ../../../common/src --xml-pretty --output coverage_report/$1.xml
+gcovr --object-directory=build/$1/netxduo/CMakeFiles/netxduo.dir/common/src -r ../../../common/src --json coverage_report/$1.json --xml-pretty --output coverage_report/$1.xml
 gcovr --object-directory=build/$1/netxduo/CMakeFiles/netxduo.dir/common/src -r ../../../common/src --html --html-details --output coverage_report/$1/index.html

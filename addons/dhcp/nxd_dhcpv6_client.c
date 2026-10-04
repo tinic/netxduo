@@ -53,6 +53,8 @@ static NXD_ADDRESS  All_DHCPv6_Relay_Servers_Address;
 /* Keep the DHCPv6 instance for DAD callback notify.  */
 static NX_DHCPV6    *_nx_dhcpv6_DAD_ptr;
 
+static VOID  _nx_dhcpv6_rebind_setup(NX_DHCPV6 *dhcpv6_ptr);
+
 
 /**************************************************************************/ 
 /*                                                                        */ 
@@ -3795,7 +3797,23 @@ UCHAR     original_state;
                 {
 
                     /* Update the retransmission information. */
-                    if (_nx_dhcpv6_update_retransmit_info(dhcpv6_ptr))
+                    status = _nx_dhcpv6_update_retransmit_info(dhcpv6_ptr);
+
+                    if ((status == NX_DHCPV6_REACHED_MAX_RETRANSMISSION_TIMEOUT) &&
+                        (dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 != 0) &&
+                        (dhcpv6_ptr -> nx_dhcpv6_iana.nx_T2 != NX_DHCPV6_INFINITE_LEASE))
+                    {
+
+                        /* The duration bound on Renew is what was left of T2, so T2 has been
+                           reached.  RFC 8415 Section 18.2.4: the Renew exchange ends there, and
+                           Section 18.2.5: the Client begins the Rebind exchange.  The addresses
+                           stay until their valid lifetimes end, which bounds Rebind.  A new
+                           exchange, so a new transaction ID.  */
+                        _nx_dhcpv6_rebind_setup(dhcpv6_ptr);
+                        dhcpv6_ptr -> nx_dhcpv6_message_hdr.nx_message_xid = 0;
+                        dhcpv6_ptr -> nx_dhcpv6_state = NX_DHCPV6_STATE_SENDING_REBIND;
+                    }
+                    else if (status)
                     {
 
                         /* Clear the assigned IP address.  */
@@ -7164,8 +7182,6 @@ UINT  _nx_dhcpv6_request_rebind(NX_DHCPV6 *dhcpv6_ptr)
 {
 
 UINT    status;
-UINT    ia_index;
-UINT    max_valid_lifetime = 0;
 
 
     /* Is the Client state set to REBIND yet? */
@@ -7176,6 +7192,26 @@ UINT    max_valid_lifetime = 0;
            Also must not zero out retry count or reset timeout back to starting value. */
         return NX_SUCCESS;
     }
+
+    _nx_dhcpv6_rebind_setup(dhcpv6_ptr);
+
+    /* Call the internal function and return completion status. */
+    status = _nx_dhcpv6_request(dhcpv6_ptr, NX_DHCPV6_STATE_SENDING_REBIND);
+
+    /* Return the actual completion status. */
+    return status;
+}
+
+
+/* The retransmission parameters and the duration bound of a Rebind exchange, and
+   the session timer that measures it.  The caller moves the Client to
+   NX_DHCPV6_STATE_SENDING_REBIND: _nx_dhcpv6_request_rebind from outside the
+   Client thread, the Renew exchange from inside it when T2 ends it.  */
+static VOID  _nx_dhcpv6_rebind_setup(NX_DHCPV6 *dhcpv6_ptr)
+{
+
+UINT    ia_index;
+UINT    max_valid_lifetime = 0;
 
 
     /* Set the initial and max retransmission timeouts and max number of retries. */
@@ -7210,12 +7246,6 @@ UINT    max_valid_lifetime = 0;
 
     /* Activate the session timer to update the elapsed time.  */
     tx_timer_activate(&dhcpv6_ptr -> nx_dhcpv6_session_timer);
-
-    /* Call the internal function and return completion status. */
-    status = _nx_dhcpv6_request(dhcpv6_ptr, NX_DHCPV6_STATE_SENDING_REBIND);
-
-    /* Return the actual completion status. */
-    return status;
 }
 
 

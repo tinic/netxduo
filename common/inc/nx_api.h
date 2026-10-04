@@ -2437,6 +2437,21 @@ typedef struct NX_TCP_LISTEN_STRUCT
     ULONG       nx_tcp_listen_rx_window_maximum;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
+    /* The sending terms of the socket put on the request -- its MSS cap
+       (nx_tcp_socket_mss_set), time to live, type of service and fragment
+       flag, and its VLAN priority -- for a SYN that arrives while no socket
+       is parked here.  A SYN that finds a socket parked takes them from that
+       socket instead, so a setting changed after the listen still applies.
+       Either way the SYN cache copies them into its entry at SYN time and
+       never keeps a pointer to the socket.  */
+    ULONG       nx_tcp_listen_mss;
+    ULONG       nx_tcp_listen_type_of_service;
+    ULONG       nx_tcp_listen_fragment_enable;
+    UINT        nx_tcp_listen_time_to_live;
+#ifdef NX_ENABLE_VLAN
+    UCHAR       nx_tcp_listen_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
+
 #ifndef NX_DISABLE_EXTENDED_NOTIFY_SUPPORT
     /* Define the callback function for notifying the host application of
        a new connect request in the listen queue. */
@@ -2537,6 +2552,11 @@ typedef struct NX_TCP_LISTEN_STRUCT
 #define NX_TCP_SYNCACHE_SYN_RECEIVED            1
 #define NX_TCP_SYNCACHE_ESTABLISHED             2
 
+/* A SYN that arrived while its listen request had no socket parked: recorded
+   but not answered until one is, as the listen queue this cache replaced
+   held such a SYN unanswered until relisten.  */
+#define NX_TCP_SYNCACHE_DEFERRED                3
+
 /* What the peer's SYN offered, held as bits so a cookie can carry them.  */
 #define NX_TCP_SYNCACHE_OPT_SACK                0x01u
 #define NX_TCP_SYNCACHE_OPT_TIMESTAMP           0x02u
@@ -2601,6 +2621,12 @@ typedef struct NX_TCP_SYNCACHE_ENTRY_STRUCT
     USHORT       nx_tcp_syncache_peer_mss;
     USHORT       nx_tcp_syncache_connect_mss;
 
+    /* The listening socket's sending terms, copied at SYN time so the
+       SYN-ACK and every retransmission of it carry them: its MSS cap (0 for
+       none, at most 0xFFFF), time to live, type of service byte, fragment
+       flag and VLAN priority.  */
+    USHORT       nx_tcp_syncache_mss;
+
     /* The peer's window scale and ours, as shifts.  */
     UCHAR        nx_tcp_syncache_snd_win_scale;
     UCHAR        nx_tcp_syncache_rcv_win_scale;
@@ -2608,7 +2634,12 @@ typedef struct NX_TCP_SYNCACHE_ENTRY_STRUCT
     UCHAR        nx_tcp_syncache_options;
     UCHAR        nx_tcp_syncache_state;
     UCHAR        nx_tcp_syncache_retries;
-    UCHAR        nx_tcp_syncache_reserved;
+    UCHAR        nx_tcp_syncache_time_to_live;
+    UCHAR        nx_tcp_syncache_type_of_service;
+    UCHAR        nx_tcp_syncache_dont_fragment;
+#ifdef NX_ENABLE_VLAN
+    UCHAR        nx_tcp_syncache_vlan_priority;
+#endif /* NX_ENABLE_VLAN */
 } NX_TCP_SYNCACHE_ENTRY;
 
 typedef struct NX_TCP_SYNCACHE_STRUCT

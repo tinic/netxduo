@@ -71,9 +71,15 @@ UINT    status;
     /* Initialize the NetX system.  */
     nx_system_initialize();
 
-    /* Create a packet pool.  */
-    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 256, pointer, 4096);
-    pointer = pointer + 4096;
+    /* Create a packet pool.  pool_0 is shared by ip_0 and ip_1, so reassembly
+       may take it only while more than NX_IP_FRAGMENT_POOL_RESERVE (half) is
+       free (016daf76, NX_IP_FRAGMENT_ADMIT); the 257-byte ping below is
+       fragmented on the 256-byte driver.  4608 is the least that passes in
+       every 32-bit v6 build, in 512-byte steps (4096 fails); the refusal on a
+       smaller pool is netx_ip_fragment_reserve_test.  It stays within the 20
+       packets packet_ptr[] holds.  */
+    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 256, pointer, 4608);
+    pointer = pointer + 4608;
 
     if (status)
         error_counter++;

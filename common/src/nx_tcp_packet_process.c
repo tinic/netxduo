@@ -498,6 +498,12 @@ ULONG                        timestamp_echo = 0;
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
                     }
 
+                    /* A connection waiting for accept keeps what arrives until then.  */
+                    if (_nx_tcp_syncache_hold(socket_ptr, packet_ptr) == NX_TRUE)
+                    {
+                        return;
+                    }
+
                     /* Process the packet within an existing TCP connection.  */
                     _nx_tcp_socket_packet_process(socket_ptr, packet_ptr);
 
@@ -755,23 +761,25 @@ ULONG                        timestamp_echo = 0;
 #else
                                                       NX_FALSE, 0
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
-                                                      ) != NX_TRUE)
+                                                      ) == NX_TRUE)
                     {
+                        _nx_packet_release(packet_ptr);
 
-#ifndef NX_DISABLE_TCP_INFO
-                        /* Not a handshake this end started.  Dropped rather
-                           than reset: a reset per unmatched acknowledgment is
-                           a segment an attacker gets this machine to send for
-                           nothing, and a peer holding a connection this end
-                           has forgotten learns that from its own retransmit
-                           timer.  */
-                        ip_ptr -> nx_ip_tcp_receive_packets_dropped++;
-#endif
+                        return;
                     }
 
-                    _nx_packet_release(packet_ptr);
-
-                    return;
+                    /* Neither a handshake the cache is holding nor a cookie it
+                       minted: an acknowledgment on a port in LISTEN, which is
+                       answered with a reset whose sequence number is the
+                       acknowledgment's (RFC 9293 3.10.7.2), by the
+                       no-connection path below, as upstream answered every
+                       acknowledgment that reached a listening port.  It
+                       creates no state, the cache's included, it is one
+                       segment no larger than the one that drew it, sent only
+                       to a source the checks above have already refused to
+                       answer if it is broadcast, multicast or this host's
+                       own, and never in answer to a reset.  */
+                    break;
                 }
 
 #ifndef NX_DISABLE_TCP_INFO

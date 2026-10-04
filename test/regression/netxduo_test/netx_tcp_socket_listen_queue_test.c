@@ -61,7 +61,56 @@ static NX_PACKET               *copy_packet[20];
 
 static void    thread_0_entry(ULONG thread_input);
 static void    thread_1_entry(ULONG thread_input);
-extern void    _nx_ram_network_driver_256(struct NX_IP_DRIVER_STRUCT *driver_req);      
+extern void    _nx_ram_network_driver_256(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
+
+/* Since 6b586f93 a SYN for a listen request with no socket is not a packet
+   held on nx_tcp_listen_queue but an entry in the SYN cache, in state
+   NX_TCP_SYNCACHE_DEFERRED, holding no packet and bounded by the same listen
+   backlog (96502647).  deferred_syns() counts those for SERVER_PORT_1, where
+   the listen-queue count was read.  What the server sends meanwhile is
+   counted on the wire: nothing, since a deferred SYN is not answered and a
+   RST is not.  */
+static ULONG                   server_tcp_segments;
+
+static UINT    count_server_tcp(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
+{
+
+UCHAR  *ip_header = packet_ptr -> nx_packet_prepend_ptr;
+
+
+    NX_PARAMETER_NOT_USED(operation_ptr);
+    NX_PARAMETER_NOT_USED(delay_ptr);
+
+    if ((ip_ptr == &ip_1) &&
+        ((((ip_header[0] >> 4) == 4) && (ip_header[9] == NX_PROTOCOL_TCP)) ||
+         (((ip_header[0] >> 4) == 6) && (ip_header[6] == NX_PROTOCOL_TCP))))
+    {
+        server_tcp_segments++;
+    }
+    return(NX_TRUE);
+}
+
+static ULONG   deferred_syns(void)
+{
+
+UINT    i;
+ULONG   count = 0;
+
+
+    tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
+    for (i = 0; i < NX_TCP_SYNCACHE_SIZE; i++)
+    {
+        if ((ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i].nx_tcp_syncache_state == NX_TCP_SYNCACHE_DEFERRED) &&
+            (ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_entries[i].nx_tcp_syncache_local_port == SERVER_PORT_1))
+        {
+            count++;
+        }
+    }
+    tx_mutex_put(&(ip_1.nx_ip_protection));
+
+    return(count);
+}      
 static void    my_tcp_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 static void    tcp_checksum_compute(NX_PACKET *packet_ptr);
 
@@ -412,6 +461,8 @@ NX_IPV6_HEADER  *ip_header_ptr;
     /* Sleep 0.5 second to receive the IPV4 SYN packet.  */
     tx_thread_sleep(NX_IP_PERIODIC_RATE/2);
 
+    advanced_packet_process_callback = count_server_tcp;
+
     /* Copy the IP header.  */
     v4_syn_packet -> nx_packet_prepend_ptr -= 20;    
     v4_syn_packet -> nx_packet_length += 20;
@@ -441,7 +492,7 @@ NX_IPV6_HEADER  *ip_header_ptr;
     }
             
     /* Check the listen queue current count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_next -> nx_tcp_listen_queue_current != 1)
+    if (deferred_syns() != 1)
         error_counter ++;
                          
     /* Copy the IP header.  */
@@ -473,7 +524,7 @@ NX_IPV6_HEADER  *ip_header_ptr;
     }
               
     /* Check the listen queue current count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_next -> nx_tcp_listen_queue_current != 0)
+    if (deferred_syns() != 0)
         error_counter ++;
                         
     /* Copy the IP header.  */
@@ -505,7 +556,7 @@ NX_IPV6_HEADER  *ip_header_ptr;
     }
               
     /* Check the listen queue current count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_next -> nx_tcp_listen_queue_current != 1)
+    if (deferred_syns() != 1)
         error_counter ++;
                        
     /* Copy the IP header.  */
@@ -537,7 +588,7 @@ NX_IPV6_HEADER  *ip_header_ptr;
     }  
 
     /* Check the listen queue current count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_next -> nx_tcp_listen_queue_current != 0)
+    if (deferred_syns() != 0)
         error_counter ++;
 
     /* Loop to recieve the SYN packet with different source address.  */
@@ -581,7 +632,7 @@ NX_IPV6_HEADER  *ip_header_ptr;
     }
 
     /* Check the listen queue current count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_next -> nx_tcp_listen_queue_current != 5)
+    if (deferred_syns() != 5)
         error_counter ++;
 
     /* Loop to recieve the RST packet with different source address.  */
@@ -625,7 +676,12 @@ NX_IPV6_HEADER  *ip_header_ptr;
     }
 
     /* Check the listen queue current count.  */
-    if (ip_1.nx_ip_tcp_active_listen_requests -> nx_tcp_listen_next -> nx_tcp_listen_queue_current != 0)
+    if (deferred_syns() != 0)
+        error_counter ++;
+
+    /* None of them was answered.  */
+    advanced_packet_process_callback = NX_NULL;
+    if (server_tcp_segments != 0)
         error_counter ++;
 }         
      
@@ -710,6 +766,15 @@ ULONG           tcp_header_word_3;
                     /* Clear the SYN bit and set the RST bit.  */   
                     tcp_header_ptr -> nx_tcp_header_word_3 = (tcp_header_ptr -> nx_tcp_header_word_3 & (~NX_TCP_SYN_BIT)) | NX_TCP_RST_BIT;      
 
+                    /* From the sequence number after the SYN's, as a client
+                       aborting its own connect sends it.  The SYN cache
+                       (6b586f93) ends a half-open connection only on that
+                       number (RFC 5961 section 3, nx_tcp_syncache.c); the
+                       listen queue it replaced matched the four-tuple only.  */
+                    NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
+                    tcp_header_ptr -> nx_tcp_sequence_number++;
+                    NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
+
                     /* Swap the endianess.  */
                     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);   
                 }
@@ -793,6 +858,15 @@ ULONG           tcp_header_word_3;
 
                     /* Clear the SYN bit and set the RST bit.  */   
                     tcp_header_ptr -> nx_tcp_header_word_3 = (tcp_header_ptr -> nx_tcp_header_word_3 & (~NX_TCP_SYN_BIT)) | NX_TCP_RST_BIT;      
+
+                    /* From the sequence number after the SYN's, as a client
+                       aborting its own connect sends it.  The SYN cache
+                       (6b586f93) ends a half-open connection only on that
+                       number (RFC 5961 section 3, nx_tcp_syncache.c); the
+                       listen queue it replaced matched the four-tuple only.  */
+                    NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
+                    tcp_header_ptr -> nx_tcp_sequence_number++;
+                    NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
 
                     /* Swap the endianess.  */
                     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);   

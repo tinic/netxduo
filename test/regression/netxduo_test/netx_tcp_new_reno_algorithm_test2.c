@@ -227,6 +227,18 @@ NX_PACKET      *my_packet[10];
         }
     }
 
+#ifdef NX_TCP_SWS_FLOOR
+    /* The third duplicate ACK.  Upstream it was the window update the server
+       sent when its application read the first 20 bytes (180 -> 200), and
+       the client counted it.  Receiver silly-window avoidance (9b9b4f52)
+       does not announce a 20-byte reopening, RFC 5681 2 (e) does not count
+       an ACK that changes the window as a duplicate, and b5d0ca86 folds the
+       first segment's ACK into the out-of-order one, so segments 5, 9 and
+       10 give one normal ACK and two duplicates.  This is a true duplicate:
+       same acknowledgment number, same window.  */
+    _nx_tcp_packet_send_ack(&server_socket, server_socket.nx_tcp_socket_tx_sequence);
+#endif /* NX_TCP_SWS_FLOOR */
+
     /* Disable timeout retransmit.  */
     client_socket.nx_tcp_socket_timeout = 60 * 60 * _nx_tcp_fast_timer_rate;
              

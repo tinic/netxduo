@@ -100,16 +100,42 @@
    pool packet for NX_IPV4_MAX_REASSEMBLY_TIME or NX_IPV6_MAX_REASSEMBLY_TIME
    however few bytes it carried.  On a small pool a handful of them therefore
    empties it and stops the stack, which a lossy link does by accident and an
-   attacker does for the cost of one packet per pool slot.  A fragment
-   arriving when the pool is already at or below the reserve is dropped, so
-   what is left is always enough for ARP, ND and the TCP that is running.
+   attacker does for the cost of one packet per pool slot.
 
-   NX_ENABLE_LOW_WATERMARK is the same guard applied more widely -- it also
-   tail-drops TCP receive queues and UDP -- and remains available on top of
-   this one.  */
+   What is bounded, and what is not:
+   - What one IP instance's datagrams being reassembled hold across passes
+     of its IP thread: a fragment is dropped when, for any pool that owns a
+     buffer of it, that list already holds the pool less this reserve
+     (_nx_ip_fragment_assembly).  It is what that list holds that is counted,
+     not what is free.
+   - Fragments on the receive queue and in the batch the IP thread has
+     detached are not counted there.  While this is the only IP instance,
+     only the deferred receive queue bounds them, as upstream.
+   - Another instance's list is not seen.  While any other IP instance exists,
+     a fragment is also admitted at enqueue only while its pool's free count
+     is above this reserve (NX_IP_FRAGMENT_ADMIT below), 016daf76's gate.
+   Neither leaves a guaranteed amount free for ARP, ND or TCP.
+
+   NX_ENABLE_LOW_WATERMARK is a separate, application-set guard (the
+   watermark is zero until nx_packet_pool_low_watermark_set() is called): it
+   tail-drops TCP and UDP receive queues and, on the IPv4 receive path,
+   fragments, and is checked independently of this one.  */
 #ifndef NX_IP_FRAGMENT_POOL_RESERVE
 #define NX_IP_FRAGMENT_POOL_RESERVE(pool_ptr) ((pool_ptr) -> nx_packet_pool_total >> 1)
 #endif /* NX_IP_FRAGMENT_POOL_RESERVE */
+
+/* Admission of a fragment at enqueue.  _nx_ip_fragment_assembly() bounds what
+   one IP instance's assembly list holds of each pool; it cannot see another
+   instance's list, and a pool's owners are not known (a driver may hand up a
+   pool of its own, or one an instance used before).  So while any other IP
+   instance exists, the receive path also keeps 016daf76's pool-wide gate: a
+   fragment is admitted only while the pool's free count is above the reserve.
+   _nx_ip_created_count is one word, changed under TX_DISABLE by create and
+   delete.  */
+#define NX_IP_FRAGMENT_ADMIT(packet_ptr)                                        \
+    ((_nx_ip_created_count <= 1) ||                                             \
+     ((packet_ptr) -> nx_packet_pool_owner -> nx_packet_pool_available >        \
+      NX_IP_FRAGMENT_POOL_RESERVE((packet_ptr) -> nx_packet_pool_owner)))
 
 #include "nx_ipv4.h"
 

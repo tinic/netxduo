@@ -274,9 +274,9 @@ ULONG         *ip_src_addr = NX_NULL, *ip_dest_addr = NX_NULL;
 #ifndef NX_DISABLE_IPV4
 ULONG          next_hop_address = 0;
 #endif /* !NX_DISABLE_IPV4  */
-#if !defined(NX_DISABLE_IPV4) || (defined(FEATURE_NX_IPV6) && defined(NX_ENABLE_INTERFACE_CAPABILITY))
+#if !defined(NX_DISABLE_IPV4) || (defined(FEATURE_NX_IPV6) && defined(NX_ENABLE_TCPIP_OFFLOAD))
 NX_INTERFACE  *interface_ptr = NX_NULL;
-#endif /* !NX_DISABLE_IPV4 || (FEATURE_NX_IPV6 && NX_ENABLE_INTERFACE_CAPABILITY) */
+#endif /* !NX_DISABLE_IPV4 || (FEATURE_NX_IPV6 && NX_ENABLE_TCPIP_OFFLOAD) */
 #ifdef FEATURE_NX_IPV6
 UINT           status;
 /* AmiNetXDuo (audit N-039): the IPv6 source as it was under the mutex.  */
@@ -451,10 +451,10 @@ UINT           compute_checksum = 1;
         ip_dest_addr = &ip_address -> nxd_ip_address.v6[0];
         ip_src_addr = ipv6_src_snapshot;
 
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
-        /* Get the packet interface information. */
+#ifdef NX_ENABLE_TCPIP_OFFLOAD
+        /* Get the packet interface information for the offload check below. */
         interface_ptr = ipv6_attached;
-#endif /* NX_ENABLE_INTERFACE_CAPABILITY  */
+#endif /* NX_ENABLE_TCPIP_OFFLOAD  */
 
 #ifdef NX_ENABLE_TCPIP_OFFLOAD
         ip_src_address.nxd_ip_version = NX_IP_VERSION_V6;

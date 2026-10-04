@@ -157,17 +157,18 @@ UINT           compute_checksum = 1;
     /* Convert to network byte order for checksum */
     NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_acknowledgment_number);
 
-    /* Set window size. */
+    /* Set window size, in bytes before the shift, as from the other two
+       senders (nx_tcp.h).  */
+    window_size = NX_TCP_RX_WINDOW_ADVERTISED(socket_ptr);
+
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
-    window_size = socket_ptr -> nx_tcp_socket_rx_window_current >> socket_ptr -> nx_tcp_rcv_win_scale_value;
+    window_size = window_size >> socket_ptr -> nx_tcp_rcv_win_scale_value;
 
     /* Make sure the window_size is less than 0xFFFF. */
     if (window_size > 0xFFFF)
     {
         window_size = 0xFFFF;
     }
-#else
-    window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP
@@ -205,7 +206,7 @@ UINT           compute_checksum = 1;
 
     /* Remember the last ACKed sequence and the last reported window size.  */
     socket_ptr -> nx_tcp_socket_rx_sequence_acked =    socket_ptr -> nx_tcp_socket_rx_sequence;
-    socket_ptr -> nx_tcp_socket_rx_window_last_sent =  socket_ptr -> nx_tcp_socket_rx_window_current;
+    socket_ptr -> nx_tcp_socket_rx_window_last_sent =  NX_TCP_RX_WINDOW_ON_WIRE(socket_ptr, window_size);
 
     /* Zero out existing checksum before computing new one. */
     header_ptr -> nx_tcp_header_word_4 = header_ptr -> nx_tcp_header_word_4 & 0x0000FFFF;

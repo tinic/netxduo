@@ -329,10 +329,13 @@ ULONG           source_ip, dest_ip;
     {
         if(ack_counter == 1 && otw_seq_counter == 0)
         {
-            /* OTW SEQ.  */
+            /* OTW SEQ, ahead of the window.  Behind it, a segment with no
+               payload is an old acknowledgment, which this stack answers only
+               when the acknowledgment it would send carries something new
+               (f7ca23ec, 6a960ccb); ahead of it the answer is unconditional.  */
             NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
 
-            tcp_header_ptr-> nx_tcp_sequence_number -= 100;
+            tcp_header_ptr-> nx_tcp_sequence_number += server_socket.nx_tcp_socket_rx_window_current + 100;
 
             NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
 
