@@ -39,11 +39,6 @@ on:
         required: false
         default: true
         type: boolean
-      tx_coverage:
-        description: Instrument and collect coverage for every requested profile (TX_COVERAGE), not only *_coverage ones
-        required: false
-        default: false
-        type: boolean
       install_timeout_minutes:
         description: Maximum dependency-install duration
         required: false
@@ -132,7 +127,6 @@ jobs:
         env:
           PROFILES: ${{ inputs.profiles }}
           SUITE: ${{ inputs.suite }}
-          TX_COVERAGE: ${{ inputs.tx_coverage && 'ON' || 'OFF' }}
         run: |
           set -euo pipefail
           read -r -a requested_profiles <<< "${PROFILES}"
@@ -144,7 +138,6 @@ jobs:
           CTEST_REPEAT_FAIL: 2
           PROFILES: ${{ inputs.profiles }}
           SUITE: ${{ inputs.suite }}
-          TX_COVERAGE: ${{ inputs.tx_coverage && 'ON' || 'OFF' }}
         run: |
           set -euo pipefail
           read -r -a requested_profiles <<< "${PROFILES}"

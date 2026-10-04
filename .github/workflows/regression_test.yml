@@ -56,17 +56,23 @@ jobs:
       profiles: ${{ matrix.profiles }}
       result_name: ${{ matrix.result_name }}
       upload_coverage: true
-      # Every configuration instrumented, as the single job had it, so the
-      # union below is the same coverage figure.
-      tx_coverage: true
+      # TX_COVERAGE stays OFF in the shards.  NetX instruments only the
+      # *_coverage profiles (test/cmake/netxduo/CMakeLists.txt, "# Coverage"),
+      # whatever TX_COVERAGE says, so ON only made the bootstrap run gcovr
+      # on uninstrumented profiles and union them, which is empty in a shard
+      # with no *_coverage profile.  OFF collects exactly the instrumented
+      # profiles and reaches neither merge in such a shard; the union is
+      # made once, below.
       # Four profiles at the slow rate: 4 x 360 s = 24 minutes.
       test_timeout_minutes: 45
 
   # The aggregate, and the check that stands for the suite under the name the
   # single job had.  It fails on a failed, cancelled or skipped shard, on a
-  # plan that is not the one BUILD_CONFIGURATIONS gives, and on any profile
-  # that did not come back exactly once with its CTest summary, JUnit report
-  # and coverage tracefile.  The coverage floor applies to the union.
+  # plan that is not the one BUILD_CONFIGURATIONS gives, on any profile that
+  # did not come back exactly once with its CTest summary and JUnit report,
+  # and on a coverage profile without a non-empty tracefile.  The union of
+  # those tracefiles has to be non-empty (coverage_merge.sh) and meet the
+  # floor.
   NetXDuo:
     name: NetXDuo / run_tests
     needs:
