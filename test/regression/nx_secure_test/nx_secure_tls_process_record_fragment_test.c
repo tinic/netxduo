@@ -78,6 +78,8 @@ typedef struct
     ULONG       saved;                  /* expected saved offset == bytes_processed after the NX_CONTINUE */
     ULONG       total;                  /* expected bytes_processed with NX_SUCCESS */
     UINT        sequence;               /* expected remote sequence number at the end */
+    UINT        mid_records;            /* records handled before the NX_CONTINUE */
+    UINT        mid_copied;             /* message bytes reassembled by then */
 } LEG;
 
 #define CUT_NONE        (-1000)
@@ -93,18 +95,18 @@ typedef struct
 
 static const LEG_ROW legs[] =
 {
-    /* name                                        kind         fragments     cut       calls status                          saved total seq   first */
-    {{ "P1 plaintext, one packet",                 KIND_PLAIN, {40, 32, 24}, CUT_NONE, 1, {NX_SUCCESS, 0},                   0,    111,  0 }, 0 },
-    {{ "P2 plaintext, middle ends the packet",     KIND_PLAIN, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         82,   111,  0 }, 0 },
-    {{ "P3 plaintext, first ends the packet",      KIND_PLAIN, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         45,   111,  0 }, 1 },
-    {{ "P4 plaintext, packet ends inside a header",KIND_PLAIN, {40, 32, 24}, 3,        2, {NX_CONTINUE, NX_SUCCESS},         82,   111,  0 }, 0 },
+    /* name                                        kind         fragments     cut       calls status                          saved total seq mid  copied   first */
+    {{ "P1 plaintext, one packet",                 KIND_PLAIN, {40, 32, 24}, CUT_NONE, 1, {NX_SUCCESS, 0},                   0,    111,  0,  0,   0 }, 0 },
+    {{ "P2 plaintext, middle ends the packet",     KIND_PLAIN, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         82,   111,  0,  2,  72 }, 0 },
+    {{ "P3 plaintext, first ends the packet",      KIND_PLAIN, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         45,   111,  0,  1,  40 }, 1 },
+    {{ "P4 plaintext, packet ends inside a header",KIND_PLAIN, {40, 32, 24}, 3,        2, {NX_CONTINUE, NX_SUCCESS},         82,   111,  0,  2,  72 }, 0 },
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
-    {{ "E1 TLS 1.3, one packet",                   KIND_TLS13, {40, 32, 24}, CUT_NONE, 1, {NX_SUCCESS, 0},                   0,    162,  3 }, 0 },
-    {{ "E2 TLS 1.3, middle ends the packet",       KIND_TLS13, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         116,  162,  3 }, 0 },
+    {{ "E1 TLS 1.3, one packet",                   KIND_TLS13, {40, 32, 24}, CUT_NONE, 1, {NX_SUCCESS, 0},                   0,    162,  3,  0,   0 }, 0 },
+    {{ "E2 TLS 1.3, middle ends the packet",       KIND_TLS13, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         116,  162,  3,  2,  72 }, 0 },
 #endif
-    {{ "E3 TLS 1.2 encrypted, middle ends packet", KIND_TLS12, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         130,  183,  3 }, 0 },
+    {{ "E3 TLS 1.2 encrypted, middle ends packet", KIND_TLS12, {40, 32, 24}, 0,        2, {NX_CONTINUE, NX_SUCCESS},         130,  183,  3,  2,  72 }, 0 },
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
-    {{ "E4 TLS 1.3, two records (control)",        KIND_TLS13, {40, 56, 0},  CUT_NONE, 1, {NX_SUCCESS, 0},                   0,    140,  2 }, 0 },
+    {{ "E4 TLS 1.3, two records (control)",        KIND_TLS13, {40, 56, 0},  CUT_NONE, 1, {NX_SUCCESS, 0},                   0,    140,  2,  0,   0 }, 0 },
 #endif
 };
 
@@ -335,6 +337,8 @@ UINT           ok = NX_TRUE;
 ULONG          bytes_processed;
 ULONG          available;
 ULONG          invalid;
+UINT           mid_protected;
+UINT           end_protected;
 
     if (nx_packet_pool_create(pool, "leg pool", PACKET_SIZE, leg_pool_area[index], sizeof(leg_pool_area[index])))
     {
@@ -365,6 +369,10 @@ ULONG          invalid;
         cut = records[0] + records[1] + (UINT)leg -> cut;
     }
     pieces = (cut < length) ? 2 : 1;
+
+    /* Decrypt calls and remote sequence count protected records only. */
+    mid_protected = (leg -> kind == KIND_PLAIN) ? 0 : leg -> mid_records;
+    end_protected = (leg -> kind == KIND_PLAIN) ? 0 : count;
 
     /* A fresh session state for this leg. */
     session.nx_secure_tls_socket_type = NX_SECURE_TLS_SESSION_TYPE_CLIENT;
@@ -435,6 +443,22 @@ ULONG          invalid;
             printf("    call %u: expected saved offset and bytes %lu\n", call + 1, leg -> saved);
             ok = NX_FALSE;
         }
+        else if ((status == NX_CONTINUE) &&
+                 ((session.nx_secure_tls_packet_buffer_bytes_copied != leg -> mid_copied) ||
+                  (session.nx_secure_tls_handshake_record_fragment_state != NX_SECURE_TLS_HANDSHAKE_RECEIVED_FRAGMENT) ||
+                  (session.nx_secure_tls_handshake_record_expected_length != MESSAGE_LENGTH) ||
+                  (machine_armed != 1) || (machine_calls != 1) ||
+                  (decrypt_calls != mid_protected) ||
+                  (session.nx_secure_tls_remote_sequence_number[0] != mid_protected) ||
+                  (session.nx_secure_tls_remote_sequence_number[1] != 0)))
+        {
+            printf("    call %u: expected copied %u, fragment state %u, expected length %u, armed 1, machine 1,"
+                   " decrypt and sequence %u (got expected length %lu, sequence high %lu)\n",
+                   call + 1, leg -> mid_copied, (UINT)NX_SECURE_TLS_HANDSHAKE_RECEIVED_FRAGMENT, MESSAGE_LENGTH,
+                   mid_protected, session.nx_secure_tls_handshake_record_expected_length,
+                   session.nx_secure_tls_remote_sequence_number[1]);
+            ok = NX_FALSE;
+        }
 
         /* Only NX_CONTINUE asks for the next TCP packet. */
         if (status != NX_CONTINUE)
@@ -451,11 +475,18 @@ ULONG          invalid;
             (session.nx_secure_tls_handshake_record_fragment_state != NX_SECURE_TLS_HANDSHAKE_NO_FRAGMENT) ||
             (machine_armed != 1) || (delivered_length != MESSAGE_LENGTH) ||
             memcmp(delivered, message, MESSAGE_LENGTH) ||
-            (session.nx_secure_tls_remote_sequence_number[0] != leg -> sequence))
+            (session.nx_secure_tls_remote_sequence_number[0] != leg -> sequence) ||
+            (session.nx_secure_tls_remote_sequence_number[1] != 0) ||
+            (session.nx_secure_tls_packet_buffer_bytes_copied != MESSAGE_LENGTH) ||
+            (session.nx_secure_tls_handshake_record_expected_length != 0) ||
+            (machine_calls != 2) || (decrypt_calls != end_protected))
         {
             printf("    end: expected bytes_processed %lu, saved offset 0, no fragment, armed 1, message %u bytes"
-                   " (got %u, %s), sequence %u\n", leg -> total, MESSAGE_LENGTH, delivered_length,
-                   memcmp(delivered, message, MESSAGE_LENGTH) ? "differs" : "same", leg -> sequence);
+                   " (got %u, %s), sequence %u high 0, copied %u, expected length 0, machine 2, decrypt %u"
+                   " (got expected length %lu, sequence high %lu)\n", leg -> total, MESSAGE_LENGTH, delivered_length,
+                   memcmp(delivered, message, MESSAGE_LENGTH) ? "differs" : "same", leg -> sequence,
+                   MESSAGE_LENGTH, end_protected, session.nx_secure_tls_handshake_record_expected_length,
+                   session.nx_secure_tls_remote_sequence_number[1]);
             ok = NX_FALSE;
         }
     }
