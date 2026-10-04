@@ -355,8 +355,11 @@ static void signal_handler_wait_all( int signum)
     /* Wait for all processes in current process group. */
     while ( -1 != wait(NULL));
 
-    /* Raise the same signal to kill itself. */
-    raise( signum);
+    /* Send the same signal to the whole process, now with its default
+       action.  raise() would direct it at this thread alone, which cannot
+       act on it until this handler returns; a ThreadX port thread can be
+       suspended inside the handler and never return.  */
+    kill( getpid(), signum);
 }
 
 static void signal_handler_kill_process_group( int signum)
@@ -364,7 +367,7 @@ static void signal_handler_kill_process_group( int signum)
     /* Install an one shot signal handler. */
     struct sigaction sig_act;
     memset( &sig_act, 0, sizeof(sig_act));
-    sigemptyset( &sig_act.sa_mask);
+    sigfillset( &sig_act.sa_mask);
     sig_act.sa_handler = signal_handler_wait_all;
     sig_act.sa_flags = SA_RESETHAND;
     sigaction( signum, &sig_act, NULL);
@@ -431,8 +434,10 @@ int err = 0;
 
             /* Install signal handler for SIGALRM and SIGTERM. */
             struct sigaction sig_act;
+            /* Block every other signal while a handler runs, so that the
+               ThreadX port's suspend signal cannot park it.  */
             memset( &sig_act, 0, sizeof(sig_act));
-            status = sigemptyset( &sig_act.sa_mask);
+            status = sigfillset( &sig_act.sa_mask);
             return_value_if_fail( -1 != status, TLS_TEST_SYSTEM_CALL_FAILED);
             sig_act.sa_handler = signal_handler_kill_process_group;    /* Specify signal handler. */
             sig_act.sa_flags = SA_RESETHAND;                /* Set the signal handler as a one shot handler. */
