@@ -32,6 +32,43 @@
 
 extern void    test_control_return(UINT status);
 #if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
+
+/* The test ends connections with a disconnect that does not wait, which
+   aborts them with a RST where reset-disconnect is built.  Built without it
+   (NX_DISABLE_RESET_DISCONNECT), the same call starts a graceful close and
+   returns, and the checks that follow it (unbind, the RST a held handshake
+   is ended by) have nothing to see.  There the abort is made here the way
+   the reset-disconnect path makes it: a RST from the connection's numbers,
+   then the control block cleaned up.  Every other call is the library's.  */
+#ifdef NX_DISABLE_RESET_DISCONNECT
+static UINT    test_disconnect(NX_TCP_SOCKET *socket_ptr, ULONG wait_option)
+{
+
+NX_IP         *ip_ptr = socket_ptr -> nx_tcp_socket_ip_ptr;
+NX_TCP_HEADER  header;
+
+
+    if ((wait_option != NX_NO_WAIT) ||
+        ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) &&
+         (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT)))
+    {
+        return(nx_tcp_socket_disconnect(socket_ptr, wait_option));
+    }
+
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+    memset(&header, 0, sizeof(header));
+    header.nx_tcp_header_word_3 = NX_TCP_ACK_BIT;
+    header.nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_tx_sequence;
+    header.nx_tcp_sequence_number = socket_ptr -> nx_tcp_socket_rx_sequence;
+    _nx_tcp_packet_send_rst(socket_ptr, &header);
+    _nx_tcp_socket_block_cleanup(socket_ptr);
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+    return(NX_IN_PROGRESS);
+}
+#else
+#define test_disconnect     nx_tcp_socket_disconnect
+#endif /* NX_DISABLE_RESET_DISCONNECT */
 #define     DEMO_STACK_SIZE         4096
 
 #define PORT_V4                0x130
@@ -334,10 +371,10 @@ UINT                   syn_acks_before;
     check(nx_tcp_server_socket_accept(&server, NX_IP_PERIODIC_RATE) == NX_SUCCESS);
     check(server.nx_tcp_socket_state == NX_TCP_ESTABLISHED);
 
-    nx_tcp_socket_disconnect(&client, NX_NO_WAIT);
+    test_disconnect(&client, NX_NO_WAIT);
     check(nx_tcp_client_socket_unbind(&client) == NX_SUCCESS);
     check(nx_tcp_socket_delete(&client) == NX_SUCCESS);
-    nx_tcp_socket_disconnect(&server, NX_NO_WAIT);
+    test_disconnect(&server, NX_NO_WAIT);
     check(nx_tcp_server_socket_unaccept(&server) == NX_SUCCESS);
     check(nx_tcp_server_socket_unlisten(&ip_1, port) == NX_SUCCESS);
     check(nx_tcp_socket_delete(&server) == NX_SUCCESS);

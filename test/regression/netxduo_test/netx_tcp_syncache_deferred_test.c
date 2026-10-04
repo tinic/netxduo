@@ -44,6 +44,43 @@
 
 extern void    test_control_return(UINT status);
 #if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
+
+/* The test ends connections with a disconnect that does not wait, which
+   aborts them with a RST where reset-disconnect is built.  Built without it
+   (NX_DISABLE_RESET_DISCONNECT), the same call starts a graceful close and
+   returns, and the checks that follow it (unbind, the RST a held handshake
+   is ended by) have nothing to see.  There the abort is made here the way
+   the reset-disconnect path makes it: a RST from the connection's numbers,
+   then the control block cleaned up.  Every other call is the library's.  */
+#ifdef NX_DISABLE_RESET_DISCONNECT
+static UINT    test_disconnect(NX_TCP_SOCKET *socket_ptr, ULONG wait_option)
+{
+
+NX_IP         *ip_ptr = socket_ptr -> nx_tcp_socket_ip_ptr;
+NX_TCP_HEADER  header;
+
+
+    if ((wait_option != NX_NO_WAIT) ||
+        ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) &&
+         (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT)))
+    {
+        return(nx_tcp_socket_disconnect(socket_ptr, wait_option));
+    }
+
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+    memset(&header, 0, sizeof(header));
+    header.nx_tcp_header_word_3 = NX_TCP_ACK_BIT;
+    header.nx_tcp_acknowledgment_number = socket_ptr -> nx_tcp_socket_tx_sequence;
+    header.nx_tcp_sequence_number = socket_ptr -> nx_tcp_socket_rx_sequence;
+    _nx_tcp_packet_send_rst(socket_ptr, &header);
+    _nx_tcp_socket_block_cleanup(socket_ptr);
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+    return(NX_IN_PROGRESS);
+}
+#else
+#define test_disconnect     nx_tcp_socket_disconnect
+#endif /* NX_DISABLE_RESET_DISCONNECT */
 #define     DEMO_STACK_SIZE         4096
 
 #define PORT_DEFER             0x100
@@ -400,7 +437,7 @@ UCHAR                  buffer[8];
     tx_thread_sleep(2 * NX_IP_PERIODIC_RATE);
     check((entry_state(PORT_DEFER, C_B) == NX_TCP_SYNCACHE_FREE) && (synack_seen[C_B] == 0) &&
           (server_rsts[C_B] == 0));
-    nx_tcp_socket_disconnect(&client[C_B], NX_NO_WAIT);
+    test_disconnect(&client[C_B], NX_NO_WAIT);
     nx_tcp_client_socket_unbind(&client[C_B]);
 
     /* C: backlog of two.  The third unanswered SYN takes the oldest's place.  */
@@ -552,7 +589,7 @@ UCHAR                  buffer[8];
     check(server[7].nx_tcp_socket_state == NX_TCP_CLOSE_WAIT);
 
     /* The server closes its side and the client's disconnect completes.  */
-    check(nx_tcp_socket_disconnect(&server[7], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
+    check(test_disconnect(&server[7], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
     s = 0;
     while ((fin_status == 0xFFFF) && (s < 10 * NX_IP_PERIODIC_RATE))
     {
@@ -575,7 +612,7 @@ UCHAR                  buffer[8];
     check(entry_state(PORT_FIN, queued) == NX_TCP_SYNCACHE_ESTABLISHED);
     zero_window_acks[queued] = 0;
     server_rsts[queued] = 0;
-    nx_tcp_socket_disconnect(&client[queued], NX_NO_WAIT);
+    test_disconnect(&client[queued], NX_NO_WAIT);
     tx_thread_sleep(NX_IP_PERIODIC_RATE / 4);
     check((entry_state(PORT_FIN, queued) == NX_TCP_SYNCACHE_FREE) &&
           (zero_window_acks[queued] == 0) && (server_rsts[queued] == 0));
@@ -641,7 +678,7 @@ UCHAR                  buffer[8];
     check((synack_seen[C_H2] == 1) && (server_rsts[C_H1] == 0));
     check(nx_tcp_server_socket_accept(&server[13], 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
     check(server[13].nx_tcp_socket_connect_port == CPORT_BASE + C_H2);
-    nx_tcp_socket_disconnect(&client[C_H1], NX_NO_WAIT);
+    test_disconnect(&client[C_H1], NX_NO_WAIT);
     nx_tcp_client_socket_unbind(&client[C_H1]);
 
 #ifdef FEATURE_NX_IPV6
@@ -693,7 +730,7 @@ static void    thread_fin_entry(ULONG thread_input)
 {
 
     NX_PARAMETER_NOT_USED(thread_input);
-    fin_status = nx_tcp_socket_disconnect(&client[fin_client], 30 * NX_IP_PERIODIC_RATE);
+    fin_status = test_disconnect(&client[fin_client], 30 * NX_IP_PERIODIC_RATE);
 }
 
 
