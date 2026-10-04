@@ -428,6 +428,8 @@ const K_CALL   *e;
         {
             CHECK(csession.nx_secure_tls_record_offset == 0, "saved offset %lu, expected 0",
                   csession.nx_secure_tls_record_offset);
+            CHECK(csession.nx_secure_tls_bytes_processed == e -> bytes, "session bytes_processed %lu, expected %lu",
+                  csession.nx_secure_tls_bytes_processed, e -> bytes);
         }
         CHECK(csession.nx_secure_tls_packet_buffer_bytes_copied == e -> copied, "copied %lu, expected %lu",
               csession.nx_secure_tls_packet_buffer_bytes_copied, e -> copied);
