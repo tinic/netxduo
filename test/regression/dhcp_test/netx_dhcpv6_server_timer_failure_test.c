@@ -20,7 +20,10 @@
 
 extern void test_control_return(UINT status);
 
-#if defined(FEATURE_NX_IPV6)
+/* The failure is injected through ThreadX's error-checking service (_txe_timer_create and _txe_timer_delete).
+   With TX_DISABLE_ERROR_CHECKING the service maps to the core one, which
+   cannot fail, so the path under test does not exist there.  */
+#if defined(FEATURE_NX_IPV6) && !defined(TX_DISABLE_ERROR_CHECKING)
 #include "nxd_dhcpv6_server.h"
 
 #define DEMO_STACK_SIZE 2048

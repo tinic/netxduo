@@ -68,9 +68,16 @@
  * receive our SYN-ACK cannot produce that number, so the flood costs the
  * machine one packet and nothing else.
  *
- * The sequence number a cached entry carries is the same cookie.  It costs
- * one more hash per SYN and it means a connection whose entry aged out
- * between the SYN and the ACK still completes.
+ * The sequence number a cached entry carries is built the same way, with
+ * NX_TCP_SYNCACHE_DATA_MAX added to its option field, so it can never
+ * decode as a cookie: the check refuses any option value at or above it.
+ * The cache's ISS stays unpredictable, and an ACK that matches no entry is
+ * read as a cookie only if this end sent it statelessly.  Without that, the
+ * ACK of a connection this end has since aborted still acknowledges the ISS
+ * the cache minted and would rebuild the connection, instead of drawing the
+ * reset RFC 9293 3.10.7.2 forms for an ACK in LISTEN.  The cost: a cached
+ * handshake whose entry expires or is pushed out before its ACK arrives
+ * does not complete; the peer starts again.
  *
  * OPTIONS SURVIVE THE COOKIE
  *
@@ -1562,14 +1569,16 @@ UINT                   ready;
 #endif /* NX_ENABLE_TCP_WINDOW_SCALING */
     _nx_tcp_syncache_terms(listen_ptr, entry);
 
-    /* The sequence number is a cookie here too.  It costs one hash and it
-       means an entry that aged out between the SYN and the ACK is not a lost
-       connection: the ACK still carries everything needed to rebuild it.  */
+    /* The cookie construction, keyed and unpredictable, with the marker
+       NX_TCP_SYNCACHE_DATA_MAX in the option field before it is hashed in:
+       the check recovers the field and refuses it, so this number never
+       rebuilds a connection once the entry is gone.  */
     entry -> nx_tcp_syncache_iss =
         _nx_tcp_syncache_cookie_build(cache -> nx_tcp_syncache_key, tuple, tuple_words, irs,
                                       _nx_tcp_syncache_counter(),
                                       _nx_tcp_syncache_options_encode(peer_mss, window_scale,
-                                                                      options));
+                                                                      options) |
+                                      NX_TCP_SYNCACHE_DATA_MAX);
 
     entry -> nx_tcp_syncache_state = NX_TCP_SYNCACHE_DEFERRED;
 
