@@ -410,7 +410,7 @@ foreach(test_case ${nx_secure_test_cases})
        exit_code=$?
        sleep 1;
        kill -TERM $pid;
-       [[ $exit_code = 0 ]] || [[ $exit_code = 233 ]] || { echo Exit code: $exit_code; exit $exit_code; };"
+       [[ $exit_code = 0 ]] || [[ $exit_code = 233 ]] || { echo Exit code: $exit_code; echo netxduo $(git -c safe.directory='*' -C ${SOURCE_DIR} rev-parse HEAD 2>/dev/null) threadx $(git -c safe.directory='*' -C ${CMAKE_CURRENT_LIST_DIR}/../../threadx rev-parse HEAD 2>/dev/null); openssl version 2>/dev/null; exit $exit_code; };"
     WORKING_DIRECTORY ${SOURCE_DIR})
   # Prevent a recovered interoperability hang from consuming the suite timeout.
   set_tests_properties(${CMAKE_BUILD_TYPE}::${test_case} PROPERTIES TIMEOUT 180)
