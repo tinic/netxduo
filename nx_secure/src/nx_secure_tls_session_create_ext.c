@@ -877,15 +877,6 @@ ULONG metadata_size_sha256 = 0;
     /* Now allocate cipher metadata space from our calculated numbers above. */
     offset = 0;
 
-#ifndef NX_SECURE_DISABLE_X509
-
-    /* CertificateVerify signature working buffers. Placed first because the scratch size is a
-       multiple of four, which keeps the alignment of every region that follows unchanged. */
-    tls_session -> nx_secure_tls_certificate_verify_scratch = &metadata_area[offset];
-    tls_session -> nx_secure_tls_certificate_verify_scratch_size = NX_SECURE_TLS_CERTIFICATE_VERIFY_SCRATCH_SIZE;
-    offset += NX_SECURE_TLS_CERTIFICATE_VERIFY_SCRATCH_SIZE;
-#endif
-
     /* Handshake hash metadata. */
 #if (NX_SECURE_TLS_TLS_1_0_ENABLED || NX_SECURE_TLS_TLS_1_1_ENABLED)
     if (tls_session -> nx_secure_tls_supported_versions & (USHORT)(NX_SECURE_TLS_BITFIELD_VERSION_1_0 | NX_SECURE_TLS_BITFIELD_VERSION_1_1))
@@ -936,6 +927,15 @@ ULONG metadata_size_sha256 = 0;
     /* TLS PRF metadata. */
     tls_session -> nx_secure_tls_prf_metadata_area = &metadata_area[offset];
     tls_session -> nx_secure_tls_prf_metadata_size = max_tls_prf_metadata_size;
+    offset += max_tls_prf_metadata_size;
+
+#ifndef NX_SECURE_DISABLE_X509
+
+    /* CertificateVerify signature working buffers, carved last so that every crypto region above
+       keeps the offset it had before these buffers were per-session. */
+    tls_session -> nx_secure_tls_certificate_verify_scratch = &metadata_area[offset];
+    tls_session -> nx_secure_tls_certificate_verify_scratch_size = NX_SECURE_TLS_CERTIFICATE_VERIFY_SCRATCH_SIZE;
+#endif
 
     /* Place the new TLS control block on the list of created TLS. */
     if (_nx_secure_tls_created_ptr)
