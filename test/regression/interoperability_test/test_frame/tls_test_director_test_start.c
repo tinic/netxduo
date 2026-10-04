@@ -32,6 +32,50 @@
 /* Set when an instance did not end on SIGTERM within the bound.  */
 static INT tls_test_director_stalled;
 
+/* An instance ended by a signal the director did not send it: a crash.  */
+#define TLS_TEST_DIRECTOR_CRASH_EXIT            18
+
+/* The signals the director sent, per instance process: its own cleanup is
+   not a crash, any other signal is.  Bit 0 SIGTERM, bit 1 SIGKILL.  */
+static pid_t tls_test_director_signalled_pid[TLS_TEST_MAX_TEST_INSTANCE_NUMBER];
+static INT   tls_test_director_signalled_mask[TLS_TEST_MAX_TEST_INSTANCE_NUMBER];
+
+static void tls_test_director_record_signal(pid_t pid, INT signum)
+{
+UINT i;
+INT  bit = (signum == SIGKILL) ? 2 : 1;
+
+    for (i = 0; i < TLS_TEST_MAX_TEST_INSTANCE_NUMBER; i++)
+    {
+        if ((tls_test_director_signalled_pid[i] == pid) || (tls_test_director_signalled_pid[i] == 0))
+        {
+            tls_test_director_signalled_pid[i] = pid;
+            tls_test_director_signalled_mask[i] |= bit;
+            return;
+        }
+    }
+}
+
+static INT tls_test_director_sent(pid_t pid, INT signum)
+{
+UINT i;
+INT  bit;
+
+    if ((signum != SIGTERM) && (signum != SIGKILL))
+    {
+        return(0);
+    }
+    bit = (signum == SIGKILL) ? 2 : 1;
+    for (i = 0; i < TLS_TEST_MAX_TEST_INSTANCE_NUMBER; i++)
+    {
+        if (tls_test_director_signalled_pid[i] == pid)
+        {
+            return((tls_test_director_signalled_mask[i] & bit) ? 1 : 0);
+        }
+    }
+    return(0);
+}
+
 /* Monotonic second at which the current group dump has to stop.  */
 static time_t tls_test_director_dump_deadline;
 
@@ -278,6 +322,7 @@ pid_t           got;
 INT             waited;
 struct timespec tick = { 0, 100L * 1000L * 1000L };
 
+    tls_test_director_record_signal(pid, SIGTERM);
     if (-1 == kill(-pid, SIGTERM))
     {
         return(-1);
@@ -300,6 +345,7 @@ struct timespec tick = { 0, 100L * 1000L * 1000L };
     tls_test_director_dump_group(pid);
 
     /* Whatever the dump did.  */
+    tls_test_director_record_signal(pid, SIGKILL);
     kill(-pid, SIGKILL);
     return(tls_test_director_reap_group(pid, exit_status_ptr));
 }
@@ -463,6 +509,40 @@ int err = 0;
        skip (TLS_TEST_NOT_AVAILABLE) or a success from the other side must not
        hide it, and the callers' exit status logic would.  So it ends here,
        with a status the ctest command does not accept.  */
+    /* An instance ended by any other signal the director did not send it
+       (SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, or a SIGTERM or SIGKILL from
+       elsewhere) crashed.  That wins over a skip or a success from the other
+       instance too.  The director's own SIGTERM, and its SIGKILL after a
+       stall, are cleanup.  */
+    {
+        INT crashed = 0;
+
+        for (iter = director_ptr -> tls_test_first_instance_ptr; iter != NULL; tls_test_instance_find_next(iter, &iter))
+        {
+            INT signum;
+
+            if (!(iter -> tls_test_instance_status & TLS_TEST_INSTANCE_STATUS_SIGNALED))
+            {
+                continue;
+            }
+            signum = -(iter -> tls_test_instance_exit_status);
+            if ((signum == SIGALRM) || tls_test_director_sent(iter -> tls_test_instance_current_pid, signum))
+            {
+                continue;
+            }
+            printf("TLS_TEST_DIRECTOR: instance %s (pid %d) died from signal %d (%s), not sent by the director\n",
+                   iter -> tls_test_instance_name, (int)iter -> tls_test_instance_current_pid,
+                   signum, strsignal(signum));
+            crashed = 1;
+        }
+        if (crashed)
+        {
+            printf("TLS_TEST_DIRECTOR: FAIL, a test instance crashed (exit %d)\n", TLS_TEST_DIRECTOR_CRASH_EXIT);
+            fflush(stdout);
+            exit(TLS_TEST_DIRECTOR_CRASH_EXIT);
+        }
+    }
+
     for (iter = director_ptr -> tls_test_first_instance_ptr; iter != NULL; tls_test_instance_find_next(iter, &iter))
     {
         if ((iter -> tls_test_instance_status & TLS_TEST_INSTANCE_STATUS_SIGNALED) &&
