@@ -20,8 +20,28 @@
    process still there after this did not take the signal.  */
 #define TLS_TEST_DIRECTOR_TERMINATE_BOUND_MS    5000
 
+/* The whole dump of one stuck group, every member's stack included, ends
+   within this many seconds; members past it get no stack.  */
+#ifndef TLS_TEST_DIRECTOR_DUMP_BOUND_S
+#define TLS_TEST_DIRECTOR_DUMP_BOUND_S          30
+#endif
+
+/* How long the group has to be gone after SIGKILL.  */
+#define TLS_TEST_DIRECTOR_REAP_BOUND_MS         2000
+
 /* Set when an instance did not end on SIGTERM within the bound.  */
 static INT tls_test_director_stalled;
+
+/* Monotonic second at which the current group dump has to stop.  */
+static time_t tls_test_director_dump_deadline;
+
+static time_t tls_test_director_now(void)
+{
+struct timespec now;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return(now.tv_sec);
+}
 
 /* The state a stuck instance is in, on stdout: every process in its group,
    per thread the signal masks and the wait channel, then a stack of each
@@ -68,6 +88,8 @@ struct dirent *task;
 pid_t          gdb_pid;
 int            gdb_status;
 char           pid_string[16];
+char           seconds[16];
+time_t         left;
 
     printf("  process %d\n", (int)pid);
     snprintf(path, sizeof(path), "/proc/%d/task", (int)pid);
@@ -90,7 +112,17 @@ char           pid_string[16];
     closedir(tasks);
     fflush(stdout);
 
+    left = tls_test_director_dump_deadline - tls_test_director_now();
+    if (left <= 0)
+    {
+        printf("    (stack skipped: the %d s deadline for the whole group dump has passed)\n",
+               TLS_TEST_DIRECTOR_DUMP_BOUND_S);
+        fflush(stdout);
+        return;
+    }
+
     snprintf(pid_string, sizeof(pid_string), "%d", (int)pid);
+    snprintf(seconds, sizeof(seconds), "%ld", (long)left);
     gdb_pid = fork();
     if (gdb_pid == 0)
     {
@@ -99,7 +131,7 @@ char           pid_string[16];
            arguments and strings could carry key or credential material.
            Function names and addresses only.  gdb itself is bounded, and
            killed if it does not stop.  */
-        execlp("timeout", "timeout", "-k", "5", "30", "gdb", "-batch", "-nx", "-p", pid_string,
+        execlp("timeout", "timeout", "-k", "5", seconds, "gdb", "-batch", "-nx", "-p", pid_string,
                "-ex", "set debuginfod enabled off",
                "-ex", "set print frame-arguments none",
                "-ex", "set print entry-values no",
@@ -131,6 +163,7 @@ char           state;
 
     printf("TLS_TEST_DIRECTOR: instance group %d did not end within %d ms of SIGTERM\n",
            (int)pgid, TLS_TEST_DIRECTOR_TERMINATE_BOUND_MS);
+    tls_test_director_dump_deadline = tls_test_director_now() + TLS_TEST_DIRECTOR_DUMP_BOUND_S;
     procs = opendir("/proc");
     if (procs == NULL)
     {
@@ -160,6 +193,79 @@ char           state;
         fclose(f);
     }
     closedir(procs);
+}
+
+/* After SIGKILL: reap what of the group is the director's own (the leader),
+   within a bound, then confirm through /proc that no member is left; the
+   instance's own children are not the director's to reap.  Members still
+   there are reported.  */
+static INT tls_test_director_reap_group(pid_t pgid, INT *exit_status_ptr)
+{
+INT             status;
+INT             waited;
+INT             leader_reaped = 0;
+pid_t           got;
+struct timespec tick = { 0, 50L * 1000L * 1000L };
+DIR            *procs;
+struct dirent  *proc;
+char            path[300];
+FILE           *f;
+int             pid, ppid, group;
+char            comm[64];
+char            state;
+INT             left_over = 0;
+
+    for (waited = 0; waited < TLS_TEST_DIRECTOR_REAP_BOUND_MS; waited += 50)
+    {
+        got = waitpid(-pgid, &status, WNOHANG);
+        if (got == pgid)
+        {
+            *exit_status_ptr = status;
+            leader_reaped = 1;
+            continue;
+        }
+        if (got > 0)
+        {
+            continue;
+        }
+        if ((got == -1) && (errno == ECHILD))
+        {
+            break;
+        }
+        nanosleep(&tick, NULL);
+    }
+
+    procs = opendir("/proc");
+    if (procs != NULL)
+    {
+        while ((proc = readdir(procs)) != NULL)
+        {
+            if ((proc -> d_name[0] < '0') || (proc -> d_name[0] > '9'))
+            {
+                continue;
+            }
+            snprintf(path, sizeof(path), "/proc/%s/stat", proc -> d_name);
+            f = fopen(path, "r");
+            if (f == NULL)
+            {
+                continue;
+            }
+            if ((fscanf(f, "%d (%63[^)]) %c %d %d", &pid, comm, &state, &ppid, &group) == 5) &&
+                (group == (int)pgid) && (state != 'Z'))
+            {
+                printf("TLS_TEST_DIRECTOR: group %d member %d (%s, state %c) still there after SIGKILL\n",
+                       (int)pgid, pid, comm, state);
+                left_over++;
+            }
+            fclose(f);
+        }
+        closedir(procs);
+    }
+    printf("TLS_TEST_DIRECTOR: group %d after SIGKILL: leader %s, %d member(s) left\n",
+           (int)pgid, leader_reaped ? "reaped" : "NOT reaped", left_over);
+    fflush(stdout);
+
+    return(leader_reaped ? 0 : -1);
 }
 
 /* SIGTERM an instance's process group and reap the instance, within a
@@ -195,7 +301,7 @@ struct timespec tick = { 0, 100L * 1000L * 1000L };
 
     /* Whatever the dump did.  */
     kill(-pid, SIGKILL);
-    return((waitpid(pid, exit_status_ptr, 0) == pid) ? 0 : -1);
+    return(tls_test_director_reap_group(pid, exit_status_ptr));
 }
 
 static void signal_handler_wait_all( int signum)
