@@ -8,6 +8,7 @@
  *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
+// Portions of this file were generated with AI assistance.
 
 
 /**************************************************************************/
@@ -998,13 +999,18 @@ UINT            compute_checksum = 1;
 
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
             window_size = window_size >> socket_ptr -> nx_tcp_rcv_win_scale_value;
+#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
-            /* Make sure the window_size is less than 0xFFFF. */
-            if (window_size > 0xFFFF)
+            /* The window is ORed into the header word unmasked. A wrapped (negative)
+               window advertises zero instead of overwriting the data offset and flags.  */
+            if ((INT)socket_ptr -> nx_tcp_socket_rx_window_current < 0)
+            {
+                window_size = 0;
+            }
+            else if (window_size > 0xFFFF)
             {
                 window_size = 0xFFFF;
             }
-#endif /* NX_ENABLE_TCP_WINDOW_SCALING */
 
 #ifdef NX_ENABLE_TCP_TIMESTAMP
             if (socket_ptr -> nx_tcp_socket_timestamp_enabled == NX_TRUE)

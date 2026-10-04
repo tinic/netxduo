@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+// Portions of this file were generated with AI assistance.
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -23,6 +25,7 @@
 #define NX_SECURE_SOURCE_CODE
 
 #include "nx_secure_x509.h"
+#include "nx_crypto_rsa.h"
 
 static UINT _nx_secure_x509_parse_cert_data(const UCHAR *buffer, ULONG length,
                                             UINT *bytes_processed, NX_SECURE_X509_CERT *cert);
@@ -366,7 +369,11 @@ NX_SECURE_EC_PUBLIC_KEY *ec_pubkey;
          * top bit set, so DER always writes it, and skipping a byte that is
          * something else reads the modulus one byte out of place. A zero-length
          * INTEGER would also take the length below through zero. */
-        if (tlv_length < 2 || tlv_data[0] != 0x00)
+        /* The modulus is used against fixed-size buffers throughout the crypto layer, all of them
+           dimensioned for NX_CRYPTO_MAX_RSA_MODULUS_SIZE. A key beyond that is refused here
+           rather than at each use site. */
+        if ((tlv_length < 2) || (tlv_data[0] != 0x00) ||
+            ((tlv_length - 1) > (NX_CRYPTO_MAX_RSA_MODULUS_SIZE >> 3)))
         {
             return(NX_SECURE_X509_INVALID_PUBLIC_KEY);
         }

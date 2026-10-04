@@ -8,6 +8,7 @@
  *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
+// Portions of this file were generated with AI assistance.
 
 
 /**************************************************************************/
@@ -1161,7 +1162,7 @@ UINT                  compare_value;
 
     NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&temp, scratch, 36);
 
-    data = (UINT *)(((ULONG)scratch + 3) & (ULONG) ~3);
+    data = (UINT *)(((ALIGN_TYPE)scratch + 3) & (ALIGN_TYPE) ~3);
 
     /* c= (c5,...,c2,c1,c0), ci is a 64-bit word */
     _nx_crypto_huge_number_extract(value, (UCHAR *)data, 48, &size);
@@ -1286,7 +1287,7 @@ UINT                  compare_value;
 
     NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&temp, scratch, 36);
 
-    data = (UINT *)(((ULONG)scratch + 3) & (ULONG) ~3);
+    data = (UINT *)(((ALIGN_TYPE)scratch + 3) & (ALIGN_TYPE) ~3);
 
     /* c= (c13,...,c2,c1,c0), ci is a 32-bit word */
     _nx_crypto_huge_number_extract(value, (UCHAR *)data, 56, &size);
@@ -1418,7 +1419,7 @@ UINT                  compare_value;
 
     NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&temp, scratch, 36);
 
-    data = (UINT *)(((ULONG)scratch + 3) & (ULONG) ~3);
+    data = (UINT *)(((ALIGN_TYPE)scratch + 3) & (ALIGN_TYPE) ~3);
 
     /* c= (c15,...,c2,c1,c0), ci is a 32-bit word */
     _nx_crypto_huge_number_extract(value, (UCHAR *)data, 64, &size);
@@ -1571,7 +1572,7 @@ UINT                  compare_value;
 
     NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&temp, scratch, 52);
 
-    data = (UINT *)(((ULONG)scratch + 3) & (ULONG) ~3);
+    data = (UINT *)(((ALIGN_TYPE)scratch + 3) & (ALIGN_TYPE) ~3);
 
     /* c= (c23,...,c2,c1,c0), ci is a 32-bit word */
     _nx_crypto_huge_number_extract(value, (UCHAR *)data, 96, &size);
@@ -1733,7 +1734,7 @@ UINT                  compare_value;
 
     NX_CRYPTO_HUGE_NUMBER_INITIALIZE(&temp, scratch, 66);
 
-    data = (UCHAR *)(((ULONG)scratch + 3) & (ULONG) ~3);
+    data = (UCHAR *)(((ALIGN_TYPE)scratch + 3) & (ALIGN_TYPE) ~3);
 
 
     /* c= (c1041,...,c2,c1,c0) */
@@ -2621,7 +2622,7 @@ UINT      i, j;
         }
     }
 
-    *naf_size = ((ULONG)ptr - (ULONG)naf_data) >> HN_SIZE_SHIFT;
+    *naf_size = (UINT)(((ALIGN_TYPE)ptr - (ALIGN_TYPE)naf_data) >> HN_SIZE_SHIFT);
     if (shift != 0)
     {
         *naf_size = *naf_size + 1;
@@ -2728,7 +2729,7 @@ UINT               bit;
         }
     }
 
-    for (; (ULONG)ptr >= (ULONG)naf_data; ptr--)
+    for (; (ALIGN_TYPE)ptr >= (ALIGN_TYPE)naf_data; ptr--)
     {
         digit = *ptr;
 

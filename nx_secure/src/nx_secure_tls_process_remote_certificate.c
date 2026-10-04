@@ -141,26 +141,34 @@ ULONG                cert_buf_size;
            the beginning of the handshake record. If the first byte is non-zero
            it means the following bytes (length given as the value of that byte)
            should be the context. */
-        /* The length byte and the context it announces must both be in the
-           message before either is skipped: a zero-length body used to make
-           message_length wrap (N-116). */
+
+        /* RFC 8446, section 4.4.2: certificate_request_context is a one-byte
+           length followed by that many bytes. Require the length byte to be
+           present before reading it: message_length is unsigned, so decrementing
+           a zero-length message wrapped it to its maximum and left every bounds
+           check below unable to fail (N-116). */
         if (message_length < 1)
         {
             return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
         }
 
-        context_length = packet_buffer[0];
-        if (context_length >= message_length)
+        context_length = (UINT)packet_buffer[0];
+
+        /* Require the context itself to be present as well. The length byte was
+           previously skipped on its own, which left the parser misaligned by the
+           size of the context whenever one was actually supplied. */
+        if (message_length < (1u + context_length))
         {
             return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
         }
 
-        packet_buffer += 1 + context_length;
-        message_length -= 1 + context_length;
+        packet_buffer += 1u + context_length;
+        message_length -= 1u + context_length;
     }
 #endif
 
-    if (message_length < 3)
+    /* The certificate list length that follows is three bytes. */
+    if (message_length < 3u)
     {
         return(NX_SECURE_TLS_INCORRECT_MESSAGE_LENGTH);
     }

@@ -48,9 +48,15 @@ RESULT_PREFIX = "NetXDuo-shard-"
 SUMMARY_LINE = re.compile(r"^\s*\d+% tests passed, (\d+) tests failed out of (\d+)")
 
 
-# The NetX CMake instruments a profile only when its name matches this, in
-# the block after "# Coverage"; TX_COVERAGE does not change that.
-COVERAGE_RULE = re.compile(r'#\s*Coverage\s*\n\s*if\s*\(\s*CMAKE_BUILD_TYPE\s+MATCHES\s+"([^"]+)"\s*\)')
+# The NetX CMake instruments a profile only when its name matches the
+# condition of the one if() block that adds -fprofile-arcs; TX_COVERAGE does
+# not change that.  Two spellings of the condition are known, the fork's and
+# upstream v6.5.2's, and any other fails closed.
+COVERAGE_BLOCK = re.compile(r'^[ \t]*if[ \t]*\((.*)\)[ \t]*\n((?:(?![ \t]*endif\b).*\n)*?)[ \t]*endif\b', re.MULTILINE)
+COVERAGE_CONDITIONS = (
+    re.compile(r'\s*CMAKE_BUILD_TYPE\s+MATCHES\s+"([^"]+)"\s*'),
+    re.compile(r'\s*NOT\s+MSVC\s+AND\s+CMAKE_BUILD_TYPE\s+MATCHES\s+"([^"]+)"\s*'),
+)
 
 
 class ShardError(Exception):
@@ -64,14 +70,25 @@ def canonical_profiles(repository_root=REPOSITORY_ROOT):
     return profiles
 
 
-def coverage_profiles(profiles, repository_root=REPOSITORY_ROOT):
+def coverage_rule(text):
+    """The build-type pattern of the one block that adds -fprofile-arcs."""
+    blocks = [condition for condition, body in COVERAGE_BLOCK.findall(text) if "-fprofile-arcs" in body]
+    if len(blocks) != 1:
+        raise ShardError(f"expected one coverage rule in the {SUITE} CMakeLists.txt, found {len(blocks)}")
+    for spelling in COVERAGE_CONDITIONS:
+        match = spelling.fullmatch(blocks[0])
+        if match:
+            return match.group(1)
+    raise ShardError(f"unsupported coverage condition in the {SUITE} CMakeLists.txt: if({blocks[0]})")
+
+
+def coverage_profiles(profiles, repository_root=REPOSITORY_ROOT, text=None):
     """The profiles the NetX CMake instruments, by its own rule."""
-    text = (repository_root / "test" / "cmake" / SUITE / "CMakeLists.txt").read_text()
-    rules = COVERAGE_RULE.findall(text)
-    if len(rules) != 1:
-        raise ShardError(f"expected one coverage rule in the {SUITE} CMakeLists.txt, found {len(rules)}")
+    if text is None:
+        text = (repository_root / "test" / "cmake" / SUITE / "CMakeLists.txt").read_text()
+    rule = coverage_rule(text)
     # CMake MATCHES is an unanchored search.
-    instrumented = [profile for profile in profiles if re.search(rules[0], profile)]
+    instrumented = [profile for profile in profiles if re.search(rule, profile)]
     if not instrumented:
         raise ShardError("no profile is instrumented for coverage, so the union would be empty")
     return instrumented
