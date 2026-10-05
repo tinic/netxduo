@@ -447,15 +447,19 @@ NX_PACKET *decrypted_packet;
             if (tls_session->nx_secure_tls_handshake_record_fragment_state == NX_SECURE_TLS_HANDSHAKE_RECEIVED_FRAGMENT)
             {
 
-                if (tls_session -> nx_secure_tls_packet_buffer_bytes_copied > tls_session->nx_secure_tls_handshake_record_expected_length)
+                if ((tls_session -> nx_secure_tls_packet_buffer_bytes_copied > tls_session->nx_secure_tls_handshake_record_expected_length) &&
+                    (tls_session->nx_secure_tls_handshake_record_expected_length < NX_SECURE_TLS_HANDSHAKE_HEADER_SIZE))
                 {
+
+                    /* No state machine arms a message shorter than its own header. */
                     return(NX_SECURE_TLS_INVALID_PACKET);
                 }
-                /* All fragments are received and copied to tls_session -> nx_secure_tls_packet_buffer. */
-                else if (tls_session -> nx_secure_tls_packet_buffer_bytes_copied == tls_session->nx_secure_tls_handshake_record_expected_length)
+                /* All fragments are received and copied to tls_session -> nx_secure_tls_packet_buffer.
+                   Bytes after the message are the next complete or partial messages of the same record. */
+                else if (tls_session -> nx_secure_tls_packet_buffer_bytes_copied >= tls_session->nx_secure_tls_handshake_record_expected_length)
                 {
                     tls_session->nx_secure_tls_handshake_record_fragment_state = NX_SECURE_TLS_HANDSHAKE_NO_FRAGMENT;
-                    message_length = tls_session->nx_secure_tls_handshake_record_expected_length;
+                    message_length = (UINT)tls_session -> nx_secure_tls_packet_buffer_bytes_copied;
                     tls_session->nx_secure_tls_handshake_record_expected_length = 0;
                 }
                 else

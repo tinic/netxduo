@@ -44,6 +44,7 @@ set(nx_secure_test_cases
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_handshake_fragmentation_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_handshake_fragmentation_ecc_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_handshake_fragmentation_coalesced_ecc_test.c
+    ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_handshake_fragmentation_trailing_ecc_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_hash_clone_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_header_test.c
     ${SOURCE_DIR}/nx_secure_test/nx_secure_tls_two_way_test.c

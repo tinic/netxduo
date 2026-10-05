@@ -20,7 +20,11 @@
    re-reads the messages in front of it.
 
    K legs drive _nx_secure_tls_process_record with the real TLS 1.3 client
-   state machine and the real EncryptedExtensions processor.  S legs call the
+   state machine and the real EncryptedExtensions processor.  T legs do the
+   same with complete messages after the last fragment of a message (and the
+   start of another): the completing record's whole run reaches the state
+   machine, which processes each message once and re-arms for a trailing
+   partial message.  S legs call the
    real server state machines the way _nx_secure_tls_process_record does (the
    record already copied into the session buffer).  G legs call a server state
    machine directly with a buffer that is not the session buffer, or with no
@@ -31,7 +35,9 @@
    them through its PLT; any other session goes to the real function):
    _nx_secure_tls_record_payload_decrypt returns the record payload without a
    16-byte tag (TLS 1.3 framing, not authentic decryption);
-   _nx_secure_tls_process_remote_certificate keeps the body it is given;
+   _nx_secure_tls_process_remote_certificate and
+   _nx_secure_tls_process_certificate_verify keep the body they are given
+   (no signature is checked);
    _nx_secure_tls_1_3_transcript_hash_save and
    _nx_secure_tls_handshake_hash_update count their calls and lengths.
    So the S legs prove the compaction and its guard in the server state
@@ -58,7 +64,7 @@ extern const NX_SECURE_TLS_CRYPTO nx_crypto_tls_ciphers;
 #define PACKET_SIZE         1536
 #define POOL_AREA           ((LEG_PACKETS * (PACKET_SIZE + sizeof(NX_PACKET))) / sizeof(ULONG))
 #define AEAD_TAG            16
-#define MAX_LEGS            8
+#define MAX_LEGS            12
 #define MAX_HASHES          8
 
 /* Messages.  C is a 96-byte Certificate (4-byte header + 92); EE an empty
@@ -69,11 +75,13 @@ extern const NX_SECURE_TLS_CRYPTO nx_crypto_tls_ciphers;
 #define SERVER_CERT_LENGTH  12
 #define NEXT_LENGTH         68
 #define NEXT_PART           24
+#define CV_LENGTH           72
 
 static UCHAR                   message_c[C_LENGTH];
 static const UCHAR             message_ee[EE_LENGTH] = { NX_SECURE_TLS_ENCRYPTED_EXTENSIONS, 0, 0, 2, 0, 0 };
 static UCHAR                   server_cert[SERVER_CERT_LENGTH];
 static UCHAR                   next_message[NEXT_LENGTH];
+static UCHAR                   message_cv[CV_LENGTH];
 
 static NX_SECURE_TLS_SESSION   csession;
 static NX_SECURE_TLS_SESSION   ssession;
@@ -92,6 +100,9 @@ static UINT                    decrypt_calls;
 static UINT                    cert_calls;
 static UINT                    cert_length;
 static UCHAR                   cert_body[C_LENGTH];
+static UINT                    cv_calls;
+static UINT                    cv_length;
+static UCHAR                   cv_body[CV_LENGTH];
 static UINT                    save_calls;
 static UINT                    hash_calls;
 static UINT                    hash_length[MAX_HASHES];
@@ -107,6 +118,7 @@ typedef UINT (*DECRYPT_FN)(NX_SECURE_TLS_SESSION *, NX_PACKET *, UINT, UINT, NX_
 typedef UINT (*CERT_FN)(NX_SECURE_TLS_SESSION *, UCHAR *, UINT, UINT);
 typedef UINT (*SAVE_FN)(NX_SECURE_TLS_SESSION *, UINT, UINT);
 typedef UINT (*HASH_FN)(NX_SECURE_TLS_SESSION *, UCHAR *, UINT);
+typedef UINT (*CV_FN)(NX_SECURE_TLS_SESSION *, UCHAR *, UINT);
 
 UINT _nx_secure_tls_record_payload_decrypt(NX_SECURE_TLS_SESSION *tls_session, NX_PACKET *encrypted_packet,
                                            UINT offset, UINT message_length, NX_PACKET **decrypted_packet,
@@ -175,6 +187,26 @@ static CERT_FN real_fn;
     return(NX_SUCCESS);
 }
 
+/* The real processor sets no handshake state either. */
+UINT _nx_secure_tls_process_certificate_verify(NX_SECURE_TLS_SESSION *tls_session, UCHAR *packet_buffer,
+                                               UINT message_length)
+{
+static CV_FN real_fn;
+
+    if (!ours(tls_session))
+    {
+        if (real_fn == NX_NULL)
+        {
+            real_fn = (CV_FN)dlsym(RTLD_NEXT, "_nx_secure_tls_process_certificate_verify");
+        }
+        return(real_fn(tls_session, packet_buffer, message_length));
+    }
+    cv_calls++;
+    cv_length = message_length;
+    memcpy(cv_body, packet_buffer, (message_length < sizeof(cv_body)) ? message_length : sizeof(cv_body));
+    return(NX_SUCCESS);
+}
+
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED)
 UINT _nx_secure_tls_1_3_transcript_hash_save(NX_SECURE_TLS_SESSION *tls_session, UINT hash_index, UINT need_copy)
 {
@@ -225,12 +257,15 @@ static VOID counters_reset(VOID)
     cert_calls = 0;
     cert_length = 0;
     memset(cert_body, 0, sizeof(cert_body));
+    cv_calls = 0;
+    cv_length = 0;
+    memset(cv_body, 0, sizeof(cv_body));
     save_calls = 0;
     hash_calls = 0;
     memset(hash_length, 0, sizeof(hash_length));
 }
 
-static VOID hashes_check(UINT count, UINT first, UINT second)
+static VOID hashes_check(UINT count, UINT first, UINT second, UINT third)
 {
     CHECK(hash_calls == count, "hash calls %u, expected %u", hash_calls, count);
     if (count > 0)
@@ -240,6 +275,10 @@ static VOID hashes_check(UINT count, UINT first, UINT second)
     if (count > 1)
     {
         CHECK(hash_length[1] == second, "hash 2 length %u, expected %u", hash_length[1], second);
+    }
+    if (count > 2)
+    {
+        CHECK(hash_length[2] == third, "hash 3 length %u, expected %u", hash_length[2], third);
     }
 }
 
@@ -260,32 +299,41 @@ static VOID leg_end(const CHAR *name, NX_PACKET_POOL *pool, ULONG available, ULO
     }
 }
 
-/* -----===== K legs: process_record with the real TLS 1.3 client =====----- */
+/* -----===== K and T legs: process_record with the real TLS 1.3 client =====----- */
 
 #if (NX_SECURE_TLS_TLS_1_3_ENABLED) && !defined(NX_SECURE_TLS_CLIENT_DISABLED)
+
+/* The server's flight is EE (optional), C and CV (optional), back to back;
+   each record carries the next slice of it, up to a cut point. */
+#define FLIGHT_EE   1
+#define FLIGHT_CV   2
+
+#define PENDING_C   0
+#define PENDING_CV  1
 
 typedef struct
 {
     UINT            status;             /* expected status of this call */
-    ULONG           bytes;              /* bytes_processed returned (and saved on NX_CONTINUE) */
+    ULONG           bytes;              /* bytes_processed returned (and the saved pair or session bytes) */
     ULONG           copied;             /* packet_buffer_bytes_copied after the call */
     ULONG           expected;           /* handshake_record_expected_length after the call */
     UINT            fragment;           /* fragment state after the call */
     UINT            client_state;
     UINT            certs;              /* certificate processor calls so far */
-    UINT            hashes;             /* hash calls so far, and the first two lengths */
-    UINT            hash1;
-    UINT            hash2;
+    UINT            cvs;                /* CertificateVerify processor calls so far */
+    UINT            hashes;             /* hash calls so far, and their lengths */
+    UINT            hash[3];
     UINT            sequence;
-    UINT            dead_from;          /* KEY_CLEAR: buffer[dead_from..dead_to) must be zero */
+    UINT            pending;            /* on NX_CONTINUE, the message the buffer starts with */
+    UINT            dead_from;          /* KEY_CLEAR: buffer[dead_from..dead_to) zero after the call */
     UINT            dead_to;
 } K_CALL;
 
 typedef struct
 {
     const CHAR *name;
-    UINT        prefix_ee;              /* the first record starts with EE */
-    UINT        cuts[3];                /* C split points (0 ends): record i carries C[cut i-1 .. cut i) */
+    UINT        flight;                 /* FLIGHT_EE | FLIGHT_CV */
+    UINT        cuts[3];                /* record i carries flight[cut i-1 .. cut i) */
     UINT        records;
     K_CALL      call[3];
 } K_LEG;
@@ -296,21 +344,31 @@ typedef struct
 #define RX      NX_SECURE_TLS_HANDSHAKE_RECEIVED_FRAGMENT
 #define NF      NX_SECURE_TLS_HANDSHAKE_NO_FRAGMENT
 
-/* Wire lengths: record = 5 + plaintext + 1 inner type + 16 tag.
-   K1/K2 record 1: 6 + 40 = 46 -> 68; K1 record 2: 56 -> 78;
-   K2 records 2, 3: 50 -> 72, 6 -> 28; K5: 60 -> 82, 36 -> 58. */
+/* A record on the wire is 5 + plaintext + 1 inner type + 16 tag.
+   K legs: flight EE + C (102) or C (96).  T legs: C + CV (168) or EE + C + CV (174);
+   CV is 72 (4 + 68).  bytes_processed is the wire total so far. */
 static const K_LEG k_legs[] =
 {
-    { "K1 EE + Certificate start, rest",          1, { 40, 96, 0 }, 2,
-      { { NX_CONTINUE, 68,  40, 96, RX, ST_EE,   0, 1, 6, 0,  1, 40, 46 },
-        { NX_SUCCESS,  146, 96, 0,  NF, ST_CERT, 1, 2, 6, 96, 2, 0,  0 } } },
-    { "K2 EE + Certificate start, middle, end",   1, { 40, 90, 96 }, 3,
-      { { NX_CONTINUE, 68,  40, 96, RX, ST_EE,   0, 1, 6, 0,  1, 40, 46 },
-        { NX_CONTINUE, 140, 90, 96, RX, ST_EE,   0, 1, 6, 0,  2, 0,  0 },
-        { NX_SUCCESS,  168, 96, 0,  NF, ST_CERT, 1, 2, 6, 96, 3, 0,  0 } } },
-    { "K5 Certificate in two pure fragments",     0, { 60, 96, 0 }, 2,
-      { { NX_CONTINUE, 82,  60, 96, RX, ST_SH,   0, 0, 0, 0,  1, 0,  0 },
-        { NX_SUCCESS,  140, 96, 0,  NF, ST_CERT, 1, 1, 96, 0, 2, 0,  0 } } },
+    { "K1 EE + Certificate start, rest",              FLIGHT_EE, { 46, 102, 0 }, 2,
+      { { NX_CONTINUE, 68,  40,  96, RX, ST_EE,   0, 0, 1, { 6, 0, 0 },   1, PENDING_C, 40, 46 },
+        { NX_SUCCESS,  146, 96,  0,  NF, ST_CERT, 1, 0, 2, { 6, 96, 0 },  2, 0, 0, 0 } } },
+    { "K2 EE + Certificate start, middle, end",       FLIGHT_EE, { 46, 96, 102 }, 3,
+      { { NX_CONTINUE, 68,  40,  96, RX, ST_EE,   0, 0, 1, { 6, 0, 0 },   1, PENDING_C, 40, 46 },
+        { NX_CONTINUE, 140, 90,  96, RX, ST_EE,   0, 0, 1, { 6, 0, 0 },   2, PENDING_C, 0, 0 },
+        { NX_SUCCESS,  168, 96,  0,  NF, ST_CERT, 1, 0, 2, { 6, 96, 0 },  3, 0, 0, 0 } } },
+    { "K5 Certificate in two pure fragments",         0,         { 60, 96, 0 }, 2,
+      { { NX_CONTINUE, 82,  60,  96, RX, ST_SH,   0, 0, 0, { 0, 0, 0 },   1, PENDING_C, 0, 0 },
+        { NX_SUCCESS,  140, 96,  0,  NF, ST_CERT, 1, 0, 1, { 96, 0, 0 },  2, 0, 0, 0 } } },
+    { "T1 Certificate start, tail + CertificateVerify", FLIGHT_CV, { 60, 168, 0 }, 2,
+      { { NX_CONTINUE, 82,  60,  96, RX, ST_SH,   0, 0, 0, { 0, 0, 0 },   1, PENDING_C, 0, 0 },
+        { NX_SUCCESS,  212, 168, 0,  NF, ST_CERT, 1, 1, 2, { 96, 72, 0 }, 2, 0, 0, 0 } } },
+    { "T2 EE + Certificate start, tail + CV",         FLIGHT_EE | FLIGHT_CV, { 46, 174, 0 }, 2,
+      { { NX_CONTINUE, 68,  40,  96, RX, ST_EE,   0, 0, 1, { 6, 0, 0 },   1, PENDING_C, 40, 46 },
+        { NX_SUCCESS,  218, 168, 0,  NF, ST_CERT, 1, 1, 3, { 6, 96, 72 }, 2, 0, 0, 0 } } },
+    { "T3 EE + Certificate start, tail + CV start, CV rest", FLIGHT_EE | FLIGHT_CV, { 46, 112, 174 }, 3,
+      { { NX_CONTINUE, 68,  40,  96, RX, ST_EE,   0, 0, 1, { 6, 0, 0 },   1, PENDING_C, 40, 46 },
+        { NX_CONTINUE, 156, 10,  72, RX, ST_CERT, 1, 0, 2, { 6, 96, 0 },  2, PENDING_CV, 10, 106 },
+        { NX_SUCCESS,  240, 72,  0,  NF, ST_CERT, 1, 1, 3, { 6, 96, 72 }, 3, 0, 0, 0 } } },
 };
 
 static UINT k_record(UCHAR *out, const UCHAR *plain, UINT length)
@@ -332,8 +390,9 @@ static VOID k_leg_run(const K_LEG *leg)
 {
 NX_PACKET_POOL *pool = &leg_pool[legs_run];
 NX_PACKET      *packet;
-UCHAR           plain[200];
+UCHAR           flight[EE_LENGTH + C_LENGTH + CV_LENGTH];
 UCHAR           record[260];
+UINT            flight_length = 0;
 UINT            plain_length;
 UINT            record_length;
 UINT            from = 0;
@@ -344,6 +403,7 @@ ULONG           bytes_processed;
 ULONG           available;
 ULONG           invalid;
 const K_CALL   *e;
+const UCHAR    *pending;
 
     leg_ok = NX_TRUE;
     printf("  %s\n", leg -> name);
@@ -355,6 +415,19 @@ const K_CALL   *e;
     }
     available = pool -> nx_packet_pool_available;
     invalid = pool -> nx_packet_pool_invalid_releases;
+
+    if (leg -> flight & FLIGHT_EE)
+    {
+        memcpy(&flight[flight_length], message_ee, EE_LENGTH);
+        flight_length += EE_LENGTH;
+    }
+    memcpy(&flight[flight_length], message_c, C_LENGTH);
+    flight_length += C_LENGTH;
+    if (leg -> flight & FLIGHT_CV)
+    {
+        memcpy(&flight[flight_length], message_cv, CV_LENGTH);
+        flight_length += CV_LENGTH;
+    }
 
     csession.nx_secure_tls_socket_type = NX_SECURE_TLS_SESSION_TYPE_CLIENT;
     csession.nx_secure_tls_client_state = NX_SECURE_TLS_CLIENT_STATE_SERVERHELLO;
@@ -381,17 +454,9 @@ const K_CALL   *e;
     {
         e = &leg -> call[i];
 
-        /* Record i: [EE] + C[from .. cut i). */
-        plain_length = 0;
-        if ((i == 0) && leg -> prefix_ee)
-        {
-            memcpy(plain, message_ee, EE_LENGTH);
-            plain_length = EE_LENGTH;
-        }
-        memcpy(&plain[plain_length], &message_c[from], leg -> cuts[i] - from);
-        plain_length += leg -> cuts[i] - from;
+        plain_length = leg -> cuts[i] - from;
+        record_length = k_record(record, &flight[from], plain_length);
         from = leg -> cuts[i];
-        record_length = k_record(record, plain, plain_length);
 
         status = nx_packet_allocate(pool, &packet, NX_IPv4_TCP_PACKET, NX_NO_WAIT);
         if (status == NX_SUCCESS)
@@ -407,12 +472,13 @@ const K_CALL   *e;
         bytes_processed = 0xDEADBEEF;
         status = _nx_secure_tls_process_record(&csession, packet, &bytes_processed, NX_NO_WAIT);
         printf("    record %u (%u B plaintext): status 0x%x bytes_processed %lu saved %lu/%lu copied %lu expected %lu"
-               " fragment %u client_state %u cert %u hash %u [%u %u] sequence %lu/%lu\n",
+               " fragment %u client_state %u cert %u cv %u hash %u [%u %u %u] sequence %lu/%lu\n",
                i + 1, plain_length, status, bytes_processed, csession.nx_secure_tls_record_offset,
                csession.nx_secure_tls_bytes_processed, csession.nx_secure_tls_packet_buffer_bytes_copied,
                csession.nx_secure_tls_handshake_record_expected_length,
                (UINT)csession.nx_secure_tls_handshake_record_fragment_state,
-               (UINT)csession.nx_secure_tls_client_state, cert_calls, hash_calls, hash_length[0], hash_length[1],
+               (UINT)csession.nx_secure_tls_client_state, cert_calls, cv_calls, hash_calls,
+               hash_length[0], hash_length[1], hash_length[2],
                csession.nx_secure_tls_remote_sequence_number[1], csession.nx_secure_tls_remote_sequence_number[0]);
 
         CHECK(status == e -> status, "status 0x%x, expected 0x%x", status, e -> status);
@@ -440,7 +506,8 @@ const K_CALL   *e;
         CHECK(csession.nx_secure_tls_client_state == e -> client_state, "client state %u, expected %u",
               (UINT)csession.nx_secure_tls_client_state, e -> client_state);
         CHECK(cert_calls == e -> certs, "certificate calls %u, expected %u", cert_calls, e -> certs);
-        hashes_check(e -> hashes, e -> hash1, e -> hash2);
+        CHECK(cv_calls == e -> cvs, "CertificateVerify calls %u, expected %u", cv_calls, e -> cvs);
+        hashes_check(e -> hashes, e -> hash[0], e -> hash[1], e -> hash[2]);
         CHECK((csession.nx_secure_tls_remote_sequence_number[0] == e -> sequence) &&
               (csession.nx_secure_tls_remote_sequence_number[1] == 0),
               "sequence %lu/%lu, expected 0/%u", csession.nx_secure_tls_remote_sequence_number[1],
@@ -449,13 +516,28 @@ const K_CALL   *e;
         if (e -> status == NX_CONTINUE)
         {
 
-            /* The buffer starts with C and holds exactly C's bytes received so far. */
-            CHECK(memcmp(cbuffer, message_c, e -> copied) == 0, "buffer is not C[0..%lu)", e -> copied);
+            /* The buffer starts with the message being reassembled and holds exactly its bytes so far. */
+            pending = (e -> pending == PENDING_CV) ? message_cv : message_c;
+            CHECK(memcmp(cbuffer, pending, e -> copied) == 0, "buffer is not %s[0..%lu)",
+                  (e -> pending == PENDING_CV) ? "CV" : "C", e -> copied);
         }
 #ifdef NX_SECURE_KEY_CLEAR
         for (k = e -> dead_from; k < e -> dead_to; k++)
         {
             CHECK(cbuffer[k] == 0, "KEY_CLEAR: buffer[%u] = 0x%02x after compaction", k, cbuffer[k]);
+        }
+        if (e -> status == NX_SUCCESS)
+        {
+
+            /* Completion: the whole processed run is zeroed. */
+            for (k = 0; k < e -> copied; k++)
+            {
+                if (cbuffer[k] != 0)
+                {
+                    CHECK(0, "KEY_CLEAR: buffer[%u] = 0x%02x after completion", k, cbuffer[k]);
+                    break;
+                }
+            }
         }
 #else
         NX_PARAMETER_NOT_USED(k);
@@ -470,6 +552,11 @@ const K_CALL   *e;
     {
         CHECK(cert_length == C_LENGTH - 4, "certificate body length %u, expected %u", cert_length, C_LENGTH - 4);
         CHECK(memcmp(cert_body, &message_c[4], C_LENGTH - 4) == 0, "certificate body differs from C");
+        if (leg -> flight & FLIGHT_CV)
+        {
+            CHECK(cv_length == CV_LENGTH - 4, "CertificateVerify body length %u, expected %u", cv_length, CV_LENGTH - 4);
+            CHECK(memcmp(cv_body, &message_cv[4], CV_LENGTH - 4) == 0, "CertificateVerify body differs from CV");
+        }
     }
 
     if (csession.nx_secure_record_decrypted_packet)
@@ -554,7 +641,7 @@ UINT   compact = (where == 0);
     CHECK((cert_calls == 1) && (cert_length == SERVER_CERT_LENGTH - 4) &&
           (memcmp(cert_body, &server_cert[4], SERVER_CERT_LENGTH - 4) == 0),
           "certificate processor calls %u length %u", cert_calls, cert_length);
-    hashes_check(1, SERVER_CERT_LENGTH, 0);
+    hashes_check(1, SERVER_CERT_LENGTH, 0, 0);
     CHECK(save_calls == saves, "transcript saves %u, expected %u", save_calls, saves);
 
     if (compact)
@@ -625,6 +712,12 @@ UINT status;
     {
         server_cert[i] = (UCHAR)(0xA0 + i);
     }
+    message_cv[0] = NX_SECURE_TLS_CERTIFICATE_VERIFY;
+    message_cv[3] = CV_LENGTH - 4;
+    for (i = 4; i < CV_LENGTH; i++)
+    {
+        message_cv[i] = (UCHAR)(0x80 + (i % 53));
+    }
     next_message[3] = NEXT_LENGTH - 4;
     for (i = 4; i < NEXT_LENGTH; i++)
     {
@@ -646,7 +739,7 @@ UINT status;
 #else
     NX_PARAMETER_NOT_USED(cmetadata);
     NX_PARAMETER_NOT_USED(cbuffer);
-    printf("  K1, K2, K5: N/A, TLS 1.3 client is not compiled in\n");
+    printf("  K1, K2, K5, T1, T2, T3: N/A, TLS 1.3 client is not compiled in\n");
 #endif
 
 #if !defined(NX_SECURE_TLS_SERVER_DISABLED) && defined(NX_SECURE_ENABLE_CLIENT_CERTIFICATE_VERIFY)
