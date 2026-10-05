@@ -50,8 +50,12 @@ static UCHAR                        buffer[1024];
 #define NX_NAT_PACKET_SIZE                          1536
 
 
-/* Set the size of the NAT IP packet pool.  */
-#define NX_NAT_PACKET_POOL_SIZE                     (NX_NAT_PACKET_SIZE * 10)
+/* Set the size of the NAT IP packet pool.  nat_ip, local_ip and external_ip share it, so
+   reassembly may take a fragment only while more than NX_IP_FRAGMENT_POOL_RESERVE (half the
+   pool) is free (016daf76, NX_IP_FRAGMENT_ADMIT).  12 packet sizes is the smallest tested
+   candidate that passed on NetXDuo_Fast; the refusal on a smaller pool is
+   netx_ip_fragment_reserve_test.  */
+#define NX_NAT_PACKET_POOL_SIZE                     (NX_NAT_PACKET_SIZE * 12)
 
 /* Set NetX IP helper thread stack size. */   
 #define NX_NAT_IP_THREAD_STACK_SIZE                 2048
