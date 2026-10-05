@@ -11,8 +11,9 @@
 /* A receive pass (_nx_tcp_receive_pass_begin/_complete) acknowledges, when it
    ends, what its segments left below the acknowledgment threshold.  On an
    established connection, with the threshold held at 16 segments as a ramp
-   that reached it would hold it, runs of segments are taken in under the
-   receiver's IP mutex the way a driver's receive loop delivers them:
+   that reached it would hold it, runs of segments are taken in, one
+   segment a packet, under the receiver's IP mutex the way a driver's
+   receive loop delivers them:
 
      A  16 + 14 in one pass: an ACK at the 16, and one at the pass end for
         the 14 -- nothing is left unacknowledged
@@ -23,14 +24,17 @@
 
    The acknowledgments are counted as the receiver puts them on the wire,
    and dropped there so the sender does not see ACKs for data it never
-   sent.  */
+   sent.
+
+   A build that acknowledges every N packets (NX_TCP_ACK_EVERY_N_PACKETS)
+   has no byte threshold for a pass to complete, and is N/A.  */
 
 #include   "nx_api.h"
 #include   "nx_tcp.h"
 #include   "nx_ram_network_driver_test_1500.h"
 
 extern void    test_control_return(UINT status);
-#if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
+#if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4) && !defined(NX_TCP_ACK_EVERY_N_PACKETS)
 
 #define     DEMO_STACK_SIZE         4096
 #define     PORT                    0x150
@@ -46,9 +50,12 @@ static UINT                    counting;
 static UINT                    server_acks;
 static UCHAR                   payload[1460];
 
-/* Thirty segments are held at once; the port's memory area (64000 bytes)
-   does not take a pool that size, so the pool has its own.  */
-static ULONG                   pool_area[(1536 * 48) / sizeof(ULONG)];
+/* Thirty-two segments are held at once; the port's memory area (64000 bytes)
+   does not take a pool that size, so the pool has its own.  A packet takes
+   a whole segment behind the largest physical header a build configures
+   (NX_PHYSICAL_HEADER 48), so no segment needs a second packet.  */
+#define     PACKET_SIZE             1600
+static ULONG                   pool_area[((PACKET_SIZE + sizeof(NX_PACKET)) * 48) / sizeof(ULONG)];
 
 static void    thread_0_entry(ULONG thread_input);
 static UINT    packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
@@ -76,7 +83,7 @@ UINT    status;
 
     nx_system_initialize();
 
-    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", 1536, pool_area, sizeof(pool_area));
+    status =  nx_packet_pool_create(&pool_0, "NetX Main Packet Pool", PACKET_SIZE, pool_area, sizeof(pool_area));
     if (status)
         error_counter++;
 
@@ -115,8 +122,8 @@ static void    check(UINT condition)
 
 
 /* One run of `segs` full-sized segments at the server's next sequence,
-   taken in by data_check as a driver's receive loop would hand it up.
-   The caller holds ip_1's protection.  */
+   each its own packet, taken in by data_check as a driver's receive loop
+   would hand them up.  The caller holds ip_1's protection.  */
 static void    run(ULONG segs)
 {
 
@@ -126,22 +133,22 @@ ULONG          mss = server.nx_tcp_socket_connect_mss;
 ULONG          i;
 
 
-    check(nx_packet_allocate(&pool_0, &packet, NX_TCP_PACKET, NX_NO_WAIT) == NX_SUCCESS);
     for (i = 0; i < segs; i++)
     {
+        check(nx_packet_allocate(&pool_0, &packet, NX_TCP_PACKET, NX_NO_WAIT) == NX_SUCCESS);
         check(nx_packet_data_append(packet, payload, mss, &pool_0, NX_NO_WAIT) == NX_SUCCESS);
+
+        packet -> nx_packet_prepend_ptr -= sizeof(NX_TCP_HEADER);
+        packet -> nx_packet_length += sizeof(NX_TCP_HEADER);
+        header = (NX_TCP_HEADER *)packet -> nx_packet_prepend_ptr;
+        memset(header, 0, sizeof(NX_TCP_HEADER));
+        header -> nx_tcp_header_word_0 = ((ULONG)client.nx_tcp_socket_port << NX_SHIFT_BY_16) | PORT;
+        header -> nx_tcp_sequence_number = server.nx_tcp_socket_rx_sequence;
+        header -> nx_tcp_acknowledgment_number = server.nx_tcp_socket_tx_sequence;
+        header -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | 0xFFFF;
+
+        _nx_tcp_socket_state_data_check(&server, packet);
     }
-
-    packet -> nx_packet_prepend_ptr -= sizeof(NX_TCP_HEADER);
-    packet -> nx_packet_length += sizeof(NX_TCP_HEADER);
-    header = (NX_TCP_HEADER *)packet -> nx_packet_prepend_ptr;
-    memset(header, 0, sizeof(NX_TCP_HEADER));
-    header -> nx_tcp_header_word_0 = ((ULONG)client.nx_tcp_socket_port << NX_SHIFT_BY_16) | PORT;
-    header -> nx_tcp_sequence_number = server.nx_tcp_socket_rx_sequence;
-    header -> nx_tcp_acknowledgment_number = server.nx_tcp_socket_tx_sequence;
-    header -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | 0xFFFF;
-
-    _nx_tcp_socket_state_data_check(&server, packet);
 }
 
 
@@ -202,6 +209,10 @@ ULONG mss;
     check(nx_tcp_client_socket_connect(&client, IP_ADDRESS(1, 2, 3, 5), PORT, 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
     check(nx_tcp_server_socket_accept(&server, 5 * NX_IP_PERIODIC_RATE) == NX_SUCCESS);
     mss = server.nx_tcp_socket_connect_mss;
+#ifdef NX_ENABLE_LOW_WATERMARK
+    /* Up to thirty-two segments wait on the receive queue at once.  */
+    server.nx_tcp_socket_receive_queue_maximum = 40;
+#endif
 
     advanced_packet_process_callback = packet_process;
 
