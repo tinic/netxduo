@@ -285,11 +285,11 @@ ULONG          retry_shift;
            in between, and what gets announced is a real window.  */
         if ((socket_ptr -> nx_tcp_socket_state >= NX_TCP_ESTABLISHED) &&
             ((socket_ptr -> nx_tcp_socket_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence_acked) ||
-             ((socket_ptr -> nx_tcp_socket_rx_window_current > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
-              (((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
+             ((_nx_tcp_socket_rx_window_open(socket_ptr) > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
+              (((_nx_tcp_socket_rx_window_open(socket_ptr) - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
                 _nx_tcp_socket_window_update_step(socket_ptr)) ||
                ((socket_ptr -> nx_tcp_socket_rx_window_last_sent < (ULONG)socket_ptr -> nx_tcp_socket_connect_mss) &&
-                (socket_ptr -> nx_tcp_socket_rx_window_current >= ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1)))))))
+                (_nx_tcp_socket_rx_window_open(socket_ptr) >= ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1)))))))
         {
 
             /* Determine if the ACK has expired.  */
@@ -564,6 +564,8 @@ ULONG          retry_shift;
 ULONG  _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr)
 {
 ULONG  step;
+ULONG  window;
+ULONG  cap;
 
 #ifndef AMINETXDUO_WINDOW_UPDATE_DIVISOR
 #define AMINETXDUO_WINDOW_UPDATE_DIVISOR 2
@@ -622,8 +624,18 @@ ULONG  step;
        libraries out of one tree differing in one decision.  Default 2 is the
        shipping value, so an unset knob compiles to what was here before.
        DO NOT SWEEP THIS AGAIN. */
-    step = socket_ptr -> nx_tcp_socket_rx_window_default /
-           AMINETXDUO_WINDOW_UPDATE_DIVISOR;
+    /* AMINETXDUO: RCV.BUFF as the sender sees it -- the buffer, or the cap
+       a socket offers instead (nx_tcp_socket_rx_window_cap) -- so a capped
+       socket announces and acknowledges at the cadence of the window it
+       offers, as one whose buffer is that size does.  */
+    window = socket_ptr -> nx_tcp_socket_rx_window_default;
+    cap = _nx_tcp_socket_rx_window_cap(socket_ptr);
+    if ((cap != 0) && (window > cap))
+    {
+        window = cap;
+    }
+
+    step = window / AMINETXDUO_WINDOW_UPDATE_DIVISOR;
 
     /* AMINETXDUO: a window no larger than sixteen segments is one that was
        cut to what the network card holds from the wire
@@ -637,11 +649,11 @@ ULONG  step;
        and keeps such a window turning over; the half-buffer step above is
        untouched for every window an application's pool sizes.  */
     if ((step > ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1)) &&
-        (socket_ptr -> nx_tcp_socket_rx_window_default <=
-         ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 4)))
+        (window <= ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 4)))
     {
         step = (ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1;
     }
 
     return(step);
 }
+

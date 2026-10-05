@@ -234,8 +234,8 @@ ULONG                  trace_timestamp;
            nx_tcp_fast_periodic_processing.c instead: firing at most once per
            timer period lets the application's drain accumulate unannounced,
            so what the timer announces is a real window, not the floor.  */
-        if ((socket_ptr -> nx_tcp_socket_rx_window_current > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
-            ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= window_step) &&
+        if ((_nx_tcp_socket_rx_window_open(socket_ptr) > socket_ptr -> nx_tcp_socket_rx_window_last_sent) &&
+            ((_nx_tcp_socket_rx_window_open(socket_ptr) - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= window_step) &&
             ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) || (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_2)))
         {
 

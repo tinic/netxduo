@@ -117,9 +117,10 @@ UINT           timestamp_size = 0;
     if (control_bits & NX_TCP_SYN_BIT)
     {
 
-        /* Set header size. */
+        /* Set header size.  The window offered is the free space, or the
+           cap in force (_nx_tcp_socket_rx_window_syn).  */
         header_size = NX_TCP_SYN_HEADER;
-        window_size = socket_ptr -> nx_tcp_socket_rx_window_current;
+        window_size = _nx_tcp_socket_rx_window_syn(socket_ptr);
     }
     else
     {

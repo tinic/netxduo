@@ -1267,9 +1267,24 @@ NX_IP         *ip_ptr;
         socket_ptr -> nx_tcp_socket_receive_queue_tail =  NX_NULL;
     }
 
+    /* A receive pass is open (_nx_tcp_receive_pass_begin): this socket took
+       in-order data in it, so the pass's end looks at what is left
+       unacknowledged (_nx_tcp_receive_pass_complete).  */
+    if ((original_rx_sequence != socket_ptr -> nx_tcp_socket_rx_sequence) &&
+        (socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_rx_pass_open != 0) &&
+        (socket_ptr -> nx_tcp_socket_rx_pass != socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_rx_pass))
+    {
+        socket_ptr -> nx_tcp_socket_rx_pass = socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_rx_pass;
+        socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_rx_pass_touched++;
+    }
+
     /* Determine if an ACK should be forced out for window update, SWS avoidance algorithm.
        RFC1122, Section4.2.3.3, Page97-98. */
-    if ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= (socket_ptr -> nx_tcp_socket_rx_window_default / 2))
+    if ((_nx_tcp_socket_rx_window_open(socket_ptr) - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
+        (((_nx_tcp_socket_rx_window_cap(socket_ptr) != 0) &&
+          (_nx_tcp_socket_rx_window_cap(socket_ptr) < socket_ptr -> nx_tcp_socket_rx_window_default)) ?
+         (_nx_tcp_socket_rx_window_cap(socket_ptr) / 2) :
+         (socket_ptr -> nx_tcp_socket_rx_window_default / 2)))
     {
 
         /* Need to send ACK for window update.  */

@@ -266,7 +266,11 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_receive_notify.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_receive_queue_flush.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_receive_queue_max_set.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_receive_pass_begin.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_receive_pass_complete.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_retransmit.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_rx_window_advertised.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_rx_window_open.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_reuse_address_set.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_rtt_sample.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_tcp_socket_send.c
