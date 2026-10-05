@@ -1269,7 +1269,11 @@ NX_IP         *ip_ptr;
 
     /* Determine if an ACK should be forced out for window update, SWS avoidance algorithm.
        RFC1122, Section4.2.3.3, Page97-98. */
-    if ((socket_ptr -> nx_tcp_socket_rx_window_current - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >= (socket_ptr -> nx_tcp_socket_rx_window_default / 2))
+    if ((_nx_tcp_socket_rx_window_open(socket_ptr) - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
+        (((socket_ptr -> nx_tcp_socket_rx_window_cap != 0) &&
+          (socket_ptr -> nx_tcp_socket_rx_window_cap < socket_ptr -> nx_tcp_socket_rx_window_default)) ?
+         (socket_ptr -> nx_tcp_socket_rx_window_cap / 2) :
+         (socket_ptr -> nx_tcp_socket_rx_window_default / 2)))
     {
 
         /* Need to send ACK for window update.  */

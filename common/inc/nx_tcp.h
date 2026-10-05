@@ -351,16 +351,15 @@
      (ULONG)((s) -> nx_tcp_socket_connect_mss) :                        \
      (((s) -> nx_tcp_socket_rx_window_default) >> 1))
 
-/* The receive window to advertise, in bytes.  At or above the floor, the free
-   space.  Below it the right edge is not moved (RFC 1122 4.2.3.3) and not
-   pulled back (RFC 9293 3.8.6.2.2): what is left of the window last put on
-   the wire, rx_window_last_sent, or the free space if that is less.  */
-#define NX_TCP_RX_WINDOW_ADVERTISED(s)                                  \
-    ((((s) -> nx_tcp_socket_rx_window_current >= NX_TCP_SWS_FLOOR(s)) || \
-      ((s) -> nx_tcp_socket_rx_window_current <=                        \
-       (s) -> nx_tcp_socket_rx_window_last_sent)) ?                     \
-     (s) -> nx_tcp_socket_rx_window_current :                           \
-     (s) -> nx_tcp_socket_rx_window_last_sent)
+/* The receive window to advertise, in bytes.  At or above the floor, the
+   window open to the sender (_nx_tcp_socket_rx_window_open: the free space,
+   or the socket's cap).  Below it the right edge is not moved (RFC 1122
+   4.2.3.3) and not pulled back (RFC 9293 3.8.6.2.2): what is left of the
+   window last put on the wire, rx_window_last_sent, or the open window if
+   that is less.  A function rather than the expression it was: it is
+   evaluated at every acknowledgment and the cap made it three times
+   longer.  */
+#define NX_TCP_RX_WINDOW_ADVERTISED(s)  _nx_tcp_socket_rx_window_advertised(s)
 
 /* The bytes a window field put on the wire stands for (not a SYN's).  */
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
@@ -470,6 +469,8 @@ UINT _nx_tcp_socket_mss_peer_get(NX_TCP_SOCKET *socket_ptr, ULONG *peer_mss);
 UINT _nx_tcp_socket_mss_set(NX_TCP_SOCKET *socket_ptr, ULONG mss);
 UINT _nx_tcp_socket_receive(NX_TCP_SOCKET *socket_ptr, NX_PACKET **packet_ptr, ULONG wait_option);
 ULONG _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr);
+ULONG _nx_tcp_socket_rx_window_open(NX_TCP_SOCKET *socket_ptr);
+ULONG _nx_tcp_socket_rx_window_advertised(NX_TCP_SOCKET *socket_ptr);
 UINT _nx_tcp_socket_sws_send_permitted(NX_TCP_SOCKET *socket_ptr);
 UINT _nx_tcp_socket_receive_notify(NX_TCP_SOCKET *socket_ptr,
                                    VOID (*tcp_receive_notify)(NX_TCP_SOCKET *socket_ptr));

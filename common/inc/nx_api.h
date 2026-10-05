@@ -2049,6 +2049,12 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_rx_window_current;
     ULONG       nx_tcp_socket_rx_window_last_sent;
 
+    /* The most receive window to offer the sender, below the buffer
+       (rx_window_default); 0 offers the buffer, as upstream.  For a receiver
+       that can take only so much at once but can hold more:
+       _nx_tcp_socket_rx_window_open().  */
+    ULONG       nx_tcp_socket_rx_window_cap;
+
     /* Define the statistic and error counters for this TCP socket.  */
     ULONG       nx_tcp_socket_packets_sent;
     ULONG       nx_tcp_socket_bytes_sent;
