@@ -2050,9 +2050,11 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_rx_window_last_sent;
 
     /* The most receive window to offer the sender, below the buffer
-       (rx_window_default); 0 offers the buffer, as upstream.  For a receiver
-       that can take only so much at once but can hold more:
-       _nx_tcp_socket_rx_window_open().  */
+       (rx_window_default), for a receiver that can take only so much at once
+       but can hold more: _nx_tcp_socket_rx_window_open().  0 takes the
+       connection's interface's (nx_interface_tcp_rx_window_cap, 0 there
+       offers the buffer, as upstream); NX_TCP_RX_WINDOW_CAP_NONE offers the
+       buffer whatever the interface says.  */
     ULONG       nx_tcp_socket_rx_window_cap;
 
     /* Define the statistic and error counters for this TCP socket.  */
@@ -2861,6 +2863,11 @@ typedef struct NX_INTERFACE_STRUCT
        connections bound to this interface.  Set before bringing it online. */
     ULONG nx_interface_tcp_ack_threshold_max;
 #endif
+
+    /* The most receive window a TCP connection on this interface offers
+       until its own cap is settled (nx_tcp_socket_rx_window_cap 0); the SYN
+       and the SYN-ACK offer no more.  Zero offers the buffer.  */
+    ULONG nx_interface_tcp_rx_window_cap;
 
     /* Define the Link Driver entry point.  */
     VOID        (*nx_interface_link_driver_entry)(struct NX_IP_DRIVER_STRUCT *);

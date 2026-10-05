@@ -1715,7 +1715,10 @@ UINT index;
     socket_ptr -> nx_tcp_socket_receive_queue_tail = NX_NULL;
 
     socket_ptr -> nx_tcp_socket_rx_window_current = socket_ptr -> nx_tcp_socket_rx_window_default;
-    socket_ptr -> nx_tcp_socket_rx_window_last_sent = socket_ptr -> nx_tcp_socket_rx_window_default;
+
+    /* What the SYN-ACK offered: the cap in force, not the buffer, when the
+       connection's interface has one (_nx_tcp_socket_rx_window_syn).  */
+    socket_ptr -> nx_tcp_socket_rx_window_last_sent = _nx_tcp_socket_rx_window_syn(socket_ptr);
 
     /* There is no SYN-ACK outstanding: the handshake finished before the
        socket was committed, so the retransmit timer has nothing to do.  A

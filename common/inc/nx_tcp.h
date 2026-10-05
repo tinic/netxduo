@@ -361,6 +361,10 @@
    longer.  */
 #define NX_TCP_RX_WINDOW_ADVERTISED(s)  _nx_tcp_socket_rx_window_advertised(s)
 
+/* nx_tcp_socket_rx_window_cap: offer the buffer, whatever the interface's
+   cap.  Any cap at or above the buffer does that; this one says so.  */
+#define NX_TCP_RX_WINDOW_CAP_NONE       0xFFFFFFFFUL
+
 /* The bytes a window field put on the wire stands for (not a SYN's).  */
 #ifdef NX_ENABLE_TCP_WINDOW_SCALING
 #define NX_TCP_RX_WINDOW_ON_WIRE(s, w) ((ULONG)(w) << (s) -> nx_tcp_rcv_win_scale_value)
@@ -470,6 +474,8 @@ UINT _nx_tcp_socket_mss_set(NX_TCP_SOCKET *socket_ptr, ULONG mss);
 UINT _nx_tcp_socket_receive(NX_TCP_SOCKET *socket_ptr, NX_PACKET **packet_ptr, ULONG wait_option);
 ULONG _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr);
 ULONG _nx_tcp_socket_rx_window_open(NX_TCP_SOCKET *socket_ptr);
+ULONG _nx_tcp_socket_rx_window_cap(NX_TCP_SOCKET *socket_ptr);
+ULONG _nx_tcp_socket_rx_window_syn(NX_TCP_SOCKET *socket_ptr);
 ULONG _nx_tcp_socket_rx_window_advertised(NX_TCP_SOCKET *socket_ptr);
 UINT _nx_tcp_socket_sws_send_permitted(NX_TCP_SOCKET *socket_ptr);
 UINT _nx_tcp_socket_receive_notify(NX_TCP_SOCKET *socket_ptr,

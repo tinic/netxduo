@@ -565,6 +565,7 @@ ULONG  _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr)
 {
 ULONG  step;
 ULONG  window;
+ULONG  cap;
 
 #ifndef AMINETXDUO_WINDOW_UPDATE_DIVISOR
 #define AMINETXDUO_WINDOW_UPDATE_DIVISOR 2
@@ -628,10 +629,10 @@ ULONG  window;
        socket announces and acknowledges at the cadence of the window it
        offers, as one whose buffer is that size does.  */
     window = socket_ptr -> nx_tcp_socket_rx_window_default;
-    if ((socket_ptr -> nx_tcp_socket_rx_window_cap != 0) &&
-        (window > socket_ptr -> nx_tcp_socket_rx_window_cap))
+    cap = _nx_tcp_socket_rx_window_cap(socket_ptr);
+    if ((cap != 0) && (window > cap))
     {
-        window = socket_ptr -> nx_tcp_socket_rx_window_cap;
+        window = cap;
     }
 
     step = window / AMINETXDUO_WINDOW_UPDATE_DIVISOR;

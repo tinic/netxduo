@@ -45,7 +45,7 @@
 ULONG  _nx_tcp_socket_rx_window_open(NX_TCP_SOCKET *socket_ptr)
 {
 ULONG  open = socket_ptr -> nx_tcp_socket_rx_window_current;
-ULONG  cap = socket_ptr -> nx_tcp_socket_rx_window_cap;
+ULONG  cap = _nx_tcp_socket_rx_window_cap(socket_ptr);
 
     if ((cap != 0) && (open > cap))
     {
@@ -60,4 +60,41 @@ ULONG  cap = socket_ptr -> nx_tcp_socket_rx_window_cap;
     }
 
     return(open);
+}
+
+
+/* The cap in force (0 = none): the socket's own once it has one, until then
+   the interface's the connection is on.  A connection is capped from its
+   first segment: the SYN or SYN-ACK goes out before anything has settled a
+   cap of its own, and the handshake's own ACK on an active open precedes
+   the establish notification.  */
+ULONG  _nx_tcp_socket_rx_window_cap(NX_TCP_SOCKET *socket_ptr)
+{
+ULONG  cap = socket_ptr -> nx_tcp_socket_rx_window_cap;
+
+    if ((cap == 0) && (socket_ptr -> nx_tcp_socket_connect_interface != NX_NULL))
+    {
+        cap = socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_tcp_rx_window_cap;
+    }
+
+    return((cap == NX_TCP_RX_WINDOW_CAP_NONE) ? 0 : cap);
+}
+
+
+/* The window a SYN or SYN-ACK offers: the free space, or the cap in force
+   when that is less.  Nothing has been offered before it, so there is no
+   right edge for it to keep.  The window scale is still derived from the
+   buffer (nx_tcp_packet_send_syn.c), so the cap costs the connection none of
+   the window it may grow to.  */
+ULONG  _nx_tcp_socket_rx_window_syn(NX_TCP_SOCKET *socket_ptr)
+{
+ULONG  window = socket_ptr -> nx_tcp_socket_rx_window_current;
+ULONG  cap = _nx_tcp_socket_rx_window_cap(socket_ptr);
+
+    if ((cap != 0) && (window > cap))
+    {
+        window = cap;
+    }
+
+    return(window);
 }
