@@ -27,14 +27,16 @@
    sent.
 
    A build that acknowledges every N packets (NX_TCP_ACK_EVERY_N_PACKETS)
-   has no byte threshold for a pass to complete, and is N/A.  */
+   has no byte threshold; there the same four runs must draw an ACK at
+   every Nth segment, and the pass end one more only for a tail of two
+   segments or more.  */
 
 #include   "nx_api.h"
 #include   "nx_tcp.h"
 #include   "nx_ram_network_driver_test_1500.h"
 
 extern void    test_control_return(UINT status);
-#if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4) && !defined(NX_TCP_ACK_EVERY_N_PACKETS)
+#if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
 
 #define     DEMO_STACK_SIZE         4096
 #define     PORT                    0x150
@@ -153,8 +155,8 @@ ULONG          i;
 
 
 /* Read everything back, so each case starts with the buffer free, then
-   hold the receiver's mutex with the threshold at 16 segments and nothing
-   unacknowledged.  */
+   hold the receiver's mutex with the threshold at 16 segments (or the
+   packet count at its start) and nothing unacknowledged.  */
 static void    case_start(void)
 {
 
@@ -167,7 +169,11 @@ NX_PACKET *packet;
     }
     tx_mutex_get(&(ip_1.nx_ip_protection), TX_WAIT_FOREVER);
     server.nx_tcp_socket_rx_sequence_acked = server.nx_tcp_socket_rx_sequence;
+#ifdef NX_TCP_ACK_EVERY_N_PACKETS
+    server.nx_tcp_socket_ack_n_packet_counter = 1;
+#else
     server.nx_tcp_socket_ack_n_packet_counter = server.nx_tcp_socket_connect_mss * 16;
+#endif
     server_acks = 0;
     counting = NX_TRUE;
 }
@@ -186,6 +192,30 @@ static ULONG   unacked(void)
 
     return(server.nx_tcp_socket_rx_sequence - server.nx_tcp_socket_rx_sequence_acked);
 }
+
+
+#ifdef NX_TCP_ACK_EVERY_N_PACKETS
+/* `segs` segments in runs, in a pass or not: an ACK at every Nth, and at
+   the pass end one for a tail of two segments or more.  */
+static void    expect(ULONG segs, UINT pass)
+{
+
+ULONG tail = segs % NX_TCP_ACK_EVERY_N_PACKETS;
+ULONG mss = server.nx_tcp_socket_connect_mss;
+
+
+    if (pass && (tail >= 2))
+    {
+        check(server_acks == segs / NX_TCP_ACK_EVERY_N_PACKETS + 1);
+        check(unacked() == 0);
+    }
+    else
+    {
+        check(server_acks == segs / NX_TCP_ACK_EVERY_N_PACKETS);
+        check(unacked() == tail * mss);
+    }
+}
+#endif
 
 
 static void    thread_0_entry(ULONG thread_input)
@@ -216,6 +246,7 @@ ULONG mss;
 
     advanced_packet_process_callback = packet_process;
 
+#ifndef NX_TCP_ACK_EVERY_N_PACKETS
     /* A */
     case_start();
     _nx_tcp_receive_pass_begin(&ip_1);
@@ -254,6 +285,43 @@ ULONG mss;
     check(server_acks == 1);
     check(unacked() == 14 * mss);
     case_end();
+#else
+    NX_PARAMETER_NOT_USED(mss);
+
+    /* A */
+    case_start();
+    _nx_tcp_receive_pass_begin(&ip_1);
+    run(16);
+    run(14);
+    _nx_tcp_receive_pass_complete(&ip_1);
+    expect(30, NX_TRUE);
+    case_end();
+
+    /* B */
+    case_start();
+    _nx_tcp_receive_pass_begin(&ip_1);
+    run(16);
+    run(16);
+    _nx_tcp_receive_pass_complete(&ip_1);
+    expect(32, NX_TRUE);
+    case_end();
+
+    /* C */
+    case_start();
+    _nx_tcp_receive_pass_begin(&ip_1);
+    run(16);
+    run(1);
+    _nx_tcp_receive_pass_complete(&ip_1);
+    expect(17, NX_TRUE);
+    case_end();
+
+    /* D */
+    case_start();
+    run(16);
+    run(14);
+    expect(30, NX_FALSE);
+    case_end();
+#endif
 
     advanced_packet_process_callback = NX_NULL;
 
