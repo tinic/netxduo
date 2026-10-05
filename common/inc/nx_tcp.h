@@ -476,6 +476,8 @@ ULONG _nx_tcp_socket_window_update_step(NX_TCP_SOCKET *socket_ptr);
 ULONG _nx_tcp_socket_rx_window_open(NX_TCP_SOCKET *socket_ptr);
 ULONG _nx_tcp_socket_rx_window_cap(NX_TCP_SOCKET *socket_ptr);
 ULONG _nx_tcp_socket_rx_window_syn(NX_TCP_SOCKET *socket_ptr);
+VOID  _nx_tcp_receive_pass_begin(NX_IP *ip_ptr);
+VOID  _nx_tcp_receive_pass_complete(NX_IP *ip_ptr);
 ULONG _nx_tcp_socket_rx_window_advertised(NX_TCP_SOCKET *socket_ptr);
 UINT _nx_tcp_socket_sws_send_permitted(NX_TCP_SOCKET *socket_ptr);
 UINT _nx_tcp_socket_receive_notify(NX_TCP_SOCKET *socket_ptr,

@@ -2057,6 +2057,10 @@ typedef struct NX_TCP_SOCKET_STRUCT
        buffer whatever the interface says.  */
     ULONG       nx_tcp_socket_rx_window_cap;
 
+    /* The receive pass (nx_ip_tcp_rx_pass) that last took in-order data on
+       this socket; 0 never.  _nx_tcp_receive_pass_complete().  */
+    ULONG       nx_tcp_socket_rx_pass;
+
     /* Define the statistic and error counters for this TCP socket.  */
     ULONG       nx_tcp_socket_packets_sent;
     ULONG       nx_tcp_socket_bytes_sent;
@@ -3468,6 +3472,14 @@ typedef struct NX_IP_STRUCT
 
     /* Define the number of created TCP socket instances.  */
     ULONG       nx_ip_tcp_created_sockets_count;
+
+    /* A receive pass: a run of segments taken in under nx_ip_protection by
+       one caller, which brackets it with _nx_tcp_receive_pass_begin() and
+       _nx_tcp_receive_pass_complete().  The number of the current (or last)
+       pass, whether one is open, and how many sockets it took data on.  */
+    ULONG       nx_ip_tcp_rx_pass;
+    UINT        nx_ip_tcp_rx_pass_open;
+    UINT        nx_ip_tcp_rx_pass_touched;
 
     /* Define the TCP packet receive routine.  This also doubles as a
        mechanism to make sure TCP is enabled.  If this function is NULL, TCP
