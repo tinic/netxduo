@@ -53,7 +53,17 @@
 
    Only sockets marked with this pass's number are acted on; the created
    list is walked to find them only when the pass marked any, and never
-   further than its count.  Called with nx_ip_protection held.  */
+   further than its count.  Each mark is cleared as it is visited, so a
+   socket carries a pass's number only while that pass is open, and the
+   counter wrapping onto an old number finds no socket still holding it.
+
+   Lifetime: nothing is held but a number.  Sockets are reached only
+   through the IP instance's created list, under nx_ip_protection, which
+   the whole pass holds; nx_tcp_socket_delete() unlinks a socket from that
+   list under the same mutex, so a socket deleted inside the pass -- by a
+   callback run from it -- is simply not found, and one reused there is
+   seen in its new state, which the state test below decides on.  Called
+   with nx_ip_protection held.  */
 VOID  _nx_tcp_receive_pass_complete(NX_IP *ip_ptr)
 {
 
@@ -82,15 +92,19 @@ ULONG          pass;
 
     while ((count-- != 0) && (socket_ptr != NX_NULL))
     {
-        if ((socket_ptr -> nx_tcp_socket_rx_pass == pass) &&
-            ((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) ||
-             (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
-             (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_2)) &&
-            ((socket_ptr -> nx_tcp_socket_rx_sequence -
-              socket_ptr -> nx_tcp_socket_rx_sequence_acked) >=
-             ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1)))
+        if (socket_ptr -> nx_tcp_socket_rx_pass == pass)
         {
-            _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+            socket_ptr -> nx_tcp_socket_rx_pass = 0;
+
+            if (((socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED) ||
+                 (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
+                 (socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_2)) &&
+                ((socket_ptr -> nx_tcp_socket_rx_sequence -
+                  socket_ptr -> nx_tcp_socket_rx_sequence_acked) >=
+                 ((ULONG)socket_ptr -> nx_tcp_socket_connect_mss << 1)))
+            {
+                _nx_tcp_packet_send_ack(socket_ptr, socket_ptr -> nx_tcp_socket_tx_sequence);
+            }
         }
 
         socket_ptr = socket_ptr -> nx_tcp_socket_created_next;
