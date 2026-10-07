@@ -321,6 +321,10 @@ NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
         ipv6_address      = next_ipv6_address;
         next_ipv6_address = next_ipv6_address -> nxd_ipv6_address_next;
         memset(ipv6_address, 0, sizeof(NXD_IPV6_ADDRESS));
+
+        /* Set index of ipv6_address, as nxd_ipv6_address_delete does: a send
+           finds the source address by this index once the slot is reused.  */
+        ipv6_address -> nxd_ipv6_address_index = (UCHAR)(ipv6_address - ip_ptr -> nx_ipv6_address);
     }
 
     /* Zero out the interface. */
