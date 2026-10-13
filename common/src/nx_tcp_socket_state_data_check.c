@@ -326,6 +326,7 @@ ULONG          original_rx_sequence;
 ULONG          original_data_length;
 ULONG          trim_data_length;
 ULONG          urgent_pointer;
+ULONG          window_cap;
 TX_THREAD     *thread_ptr;
 ULONG          acked_packets = 0;
 UINT           need_ack = NX_FALSE;
@@ -1278,12 +1279,16 @@ NX_IP         *ip_ptr;
         socket_ptr -> nx_tcp_socket_ip_ptr -> nx_ip_tcp_rx_pass_touched++;
     }
 
+    /* Snapshot only for this decision: callbacks earlier in processing may
+       have changed the socket or interface cap.  */
+    window_cap = _nx_tcp_socket_rx_window_cap(socket_ptr);
+
     /* Determine if an ACK should be forced out for window update, SWS avoidance algorithm.
        RFC1122, Section4.2.3.3, Page97-98. */
     if ((_nx_tcp_socket_rx_window_open(socket_ptr) - socket_ptr -> nx_tcp_socket_rx_window_last_sent) >=
-        (((_nx_tcp_socket_rx_window_cap(socket_ptr) != 0) &&
-          (_nx_tcp_socket_rx_window_cap(socket_ptr) < socket_ptr -> nx_tcp_socket_rx_window_default)) ?
-         (_nx_tcp_socket_rx_window_cap(socket_ptr) / 2) :
+        (((window_cap != 0) &&
+          (window_cap < socket_ptr -> nx_tcp_socket_rx_window_default)) ?
+         (window_cap / 2) :
          (socket_ptr -> nx_tcp_socket_rx_window_default / 2)))
     {
 

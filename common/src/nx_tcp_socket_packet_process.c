@@ -592,7 +592,29 @@ ULONG         tcpip_offload;
 
     }
 
-    /* Process relative to the state of the socket.  */
+    /* Established connections avoid the indexed state switch.  Keep this
+       after validation and ACK processing, which can change the state.  */
+    if (socket_ptr -> nx_tcp_socket_state == NX_TCP_ESTABLISHED)
+    {
+
+        /* Check for data in the current packet.  */
+        packet_queued =  _nx_tcp_socket_state_data_check(socket_ptr, packet_ptr);
+
+#ifdef NX_ENABLE_TCPIP_OFFLOAD
+        if (!tcpip_offload)
+#endif /* NX_ENABLE_TCPIP_OFFLOAD */
+        {
+
+            /* Call the ESTABLISHED state handling function to process any state
+            changes caused by this new packet.  */
+            _nx_tcp_socket_state_established(socket_ptr);
+
+            /* Determine if any transmit suspension can be lifted.  */
+            _nx_tcp_socket_state_transmit_check(socket_ptr);
+        }
+
+    }
+    else
     switch (socket_ptr -> nx_tcp_socket_state)
     {
 
@@ -625,27 +647,6 @@ ULONG         tcpip_offload;
 
             /* Check for data in the current packet.  */
             packet_queued =  _nx_tcp_socket_state_data_check(socket_ptr, packet_ptr);
-        }
-
-        /* State processing is complete.  */
-        break;
-
-    case  NX_TCP_ESTABLISHED:
-
-        /* Check for data in the current packet.  */
-        packet_queued =  _nx_tcp_socket_state_data_check(socket_ptr, packet_ptr);
-
-#ifdef NX_ENABLE_TCPIP_OFFLOAD
-        if (!tcpip_offload)
-#endif /* NX_ENABLE_TCPIP_OFFLOAD */
-        {
-
-            /* Call the ESTABLISHED state handling function to process any state
-            changes caused by this new packet.  */
-            _nx_tcp_socket_state_established(socket_ptr);
-
-            /* Determine if any transmit suspension can be lifted.  */
-            _nx_tcp_socket_state_transmit_check(socket_ptr);
         }
 
         /* State processing is complete.  */
