@@ -154,8 +154,10 @@ NX_PACKET   *my_packet;
         test_control_return(1);
     }  
 
-    /* Sleep to test the _nx_arp_periodic_update.  */
-    tx_thread_sleep((NX_ARP_MAXIMUM_RETRIES + 1) * NX_ARP_UPDATE_RATE * NX_IP_PERIODIC_RATE);
+    /* Sleep past the second entry's lifetime: NX_ARP_UPDATE_RATE + 1 periodic
+       events to the first retry, then NX_ARP_MAXIMUM_RETRIES * NX_ARP_UPDATE_RATE
+       more.  The second ping already waited one period, which is the margin.  */
+    tx_thread_sleep(((NX_ARP_MAXIMUM_RETRIES + 1) * NX_ARP_UPDATE_RATE + 1) * NX_IP_PERIODIC_RATE);
             
     /* Check the packet count.  */
     if ((pool_0.nx_packet_pool_available != pool_0.nx_packet_pool_total))
