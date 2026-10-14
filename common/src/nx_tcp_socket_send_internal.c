@@ -1113,8 +1113,20 @@ UINT            compute_checksum = 1;
                     continue;
                 }
 
-                /* Check for the socket being in an established state.  It's possible the connection could have gone
-                   away during the TCP checksum calculation above.  */
+            }
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+            else
+            {
+                send_packet -> nx_packet_interface_capability_flag |= NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM;
+            }
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
+
+#if defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
+            if ((adjust_packet != NX_FALSE) || (compute_checksum != NX_FALSE))
+#endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
+            {
+                /* Segmentation allocation and append can also release protection.
+                   Revalidate after either those operations or a software checksum. */
                 if ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) && (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT))
                 {
 
@@ -1140,12 +1152,6 @@ UINT            compute_checksum = 1;
                     return(NX_NOT_CONNECTED);
                 }
             }
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
-            else
-            {
-                send_packet -> nx_packet_interface_capability_flag |= NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM;
-            }
-#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
 
             /* Disable interrupts.  */
             TX_DISABLE
