@@ -1121,36 +1121,32 @@ UINT            compute_checksum = 1;
             }
 #endif /* NX_ENABLE_INTERFACE_CAPABILITY */
 
-#if defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
-            if ((adjust_packet != NX_FALSE) || (compute_checksum != NX_FALSE))
-#endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
+            /* Allocation, append and continuation after a partial send can
+               release protection even without a software checksum. Retain the
+               connection-state check for every segment. */
+            if ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) && (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT))
             {
-                /* Segmentation allocation and append can also release protection.
-                   Revalidate after either those operations or a software checksum. */
-                if ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) && (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT))
+
+                /* Restore preemption? */
+                if (preempted == NX_TRUE)
                 {
-
-                    /* Restore preemption? */
-                    if (preempted == NX_TRUE)
-                    {
-                        tx_thread_preemption_change(_tx_thread_current_ptr, old_threshold, &old_threshold);
-                    }
-
-                    /* Release protection.  */
-                    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-
-                    /* Release the packet when the sequence is changed. */
-                    if (send_packet != packet_ptr)
-                    {
-                        _nx_packet_release(send_packet);
-                    }
-
-                    /* Add debug information. */
-                    NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
-
-                    /* Socket is not connected, return an error message.  */
-                    return(NX_NOT_CONNECTED);
+                    tx_thread_preemption_change(_tx_thread_current_ptr, old_threshold, &old_threshold);
                 }
+
+                /* Release protection.  */
+                tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+                /* Release the packet when the sequence is changed. */
+                if (send_packet != packet_ptr)
+                {
+                    _nx_packet_release(send_packet);
+                }
+
+                /* Add debug information. */
+                NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
+
+                /* Socket is not connected, return an error message.  */
+                return(NX_NOT_CONNECTED);
             }
 
             /* Disable interrupts.  */
