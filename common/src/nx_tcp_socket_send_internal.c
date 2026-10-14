@@ -710,8 +710,8 @@ UINT            compute_checksum = 1;
         /* Rule (2) as RFC 1122 4.2.3.4 has it with Nagle off, as it is
            here: data that is pushed and fits whole (D <= U) goes now.  Every
            write is pushed, so the rest of this one is never held back.  */
-        if ((_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE) &&
-            (packet_ptr -> nx_packet_length > tx_window_current))
+        if ((packet_ptr -> nx_packet_length > tx_window_current) &&
+            (_nx_tcp_socket_sws_send_permitted(socket_ptr) == NX_FALSE))
         {
             tx_window_current = 0;
         }
@@ -1050,10 +1050,7 @@ UINT            compute_checksum = 1;
             NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
             NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_4);
 
-            /* Release the protection.  */
-            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-
-            /* Pickup the current transmit sequence number.  */
+            /* Pickup the current transmit sequence number under protection.  */
             header_ptr -> nx_tcp_sequence_number =  socket_ptr -> nx_tcp_socket_tx_sequence;
             sequence_number =  header_ptr -> nx_tcp_sequence_number;
 
@@ -1078,11 +1075,70 @@ UINT            compute_checksum = 1;
             if (compute_checksum)
 #endif /* defined(NX_DISABLE_TCP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE) */
             {
+                /* Only the software checksum needs to run without protection.
+                   An offloaded segment keeps the socket and sequence stable.  */
+                tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
                 /* Calculate the TCP checksum without protection.  */
                 checksum =  _nx_ip_checksum_compute(send_packet, NX_PROTOCOL_TCP,
                                                     (UINT)send_packet -> nx_packet_length,
                                                     source_ip, dest_ip);
                 checksum = ~checksum & NX_LOWER_16_MASK;
+
+                /* Place protection while we check the sequence number for the new TCP packet.  */
+                tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+                /* Determine if the sequence number is the same.  */
+                if (sequence_number != socket_ptr -> nx_tcp_socket_tx_sequence)
+                {
+
+                    /* Another transmit on this socket took place and changed the sequence.  We need to
+                       recalculate the checksum with a new sequence number.  Release protection and
+                       just resume the loop.  */
+                    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+                    /* Release the packet when the sequence is changed. */
+                    if (send_packet != packet_ptr)
+                    {
+                        _nx_packet_release(send_packet);
+                    }
+                    else
+                    {
+                        send_packet -> nx_packet_prepend_ptr += NX_TCP_SEGMENT_HEADER_LENGTH;
+                        send_packet -> nx_packet_length -= NX_TCP_SEGMENT_HEADER_LENGTH;
+                    }
+
+                    /* Regain exclusive access to IP instance. */
+                    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+                    continue;
+                }
+
+                /* Check for the socket being in an established state.  It's possible the connection could have gone
+                   away during the TCP checksum calculation above.  */
+                if ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) && (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT))
+                {
+
+                    /* Restore preemption? */
+                    if (preempted == NX_TRUE)
+                    {
+                        tx_thread_preemption_change(_tx_thread_current_ptr, old_threshold, &old_threshold);
+                    }
+
+                    /* Release protection.  */
+                    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+                    /* Release the packet when the sequence is changed. */
+                    if (send_packet != packet_ptr)
+                    {
+                        _nx_packet_release(send_packet);
+                    }
+
+                    /* Add debug information. */
+                    NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
+
+                    /* Socket is not connected, return an error message.  */
+                    return(NX_NOT_CONNECTED);
+                }
             }
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
             else
@@ -1090,61 +1146,6 @@ UINT            compute_checksum = 1;
                 send_packet -> nx_packet_interface_capability_flag |= NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM;
             }
 #endif /* NX_ENABLE_INTERFACE_CAPABILITY */
-
-            /* Place protection while we check the sequence number for the new TCP packet.  */
-            tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
-
-            /* Determine if the sequence number is the same.  */
-            if (sequence_number != socket_ptr -> nx_tcp_socket_tx_sequence)
-            {
-
-                /* Another transmit on this socket took place and changed the sequence.  We need to
-                   recalculate the checksum with a new sequence number.  Release protection and
-                   just resume the loop.  */
-                tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-
-                /* Release the packet when the sequence is changed. */
-                if (send_packet != packet_ptr)
-                {
-                    _nx_packet_release(send_packet);
-                }
-                else
-                {
-                    send_packet -> nx_packet_prepend_ptr += NX_TCP_SEGMENT_HEADER_LENGTH;
-                    send_packet -> nx_packet_length -= NX_TCP_SEGMENT_HEADER_LENGTH;
-                }
-
-                /* Regain exclusive access to IP instance. */
-                tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
-                continue;
-            }
-
-            /* Check for the socket being in an established state.  It's possible the connection could have gone
-               away during the TCP checksum calculation above.  */
-            if ((socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED) && (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT))
-            {
-
-                /* Restore preemption? */
-                if (preempted == NX_TRUE)
-                {
-                    tx_thread_preemption_change(_tx_thread_current_ptr, old_threshold, &old_threshold);
-                }
-
-                /* Release protection.  */
-                tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-
-                /* Release the packet when the sequence is changed. */
-                if (send_packet != packet_ptr)
-                {
-                    _nx_packet_release(send_packet);
-                }
-
-                /* Add debug information. */
-                NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
-
-                /* Socket is not connected, return an error message.  */
-                return(NX_NOT_CONNECTED);
-            }
 
             /* Disable interrupts.  */
             TX_DISABLE
