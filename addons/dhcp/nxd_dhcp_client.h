@@ -352,6 +352,19 @@ extern   "C" {
 #endif
 
 
+/* Define why the Client last discarded a received message (nx_dhcp_last_reject).  */
+#define NX_DHCP_REJECT_NONE             0       /* Nothing discarded yet                                    */
+#define NX_DHCP_REJECT_SHORT            1       /* Shorter than the BOOTP header                            */
+#define NX_DHCP_REJECT_POOL             2       /* No packet in the Client pool to copy it into             */
+#define NX_DHCP_REJECT_SIZE             3       /* Larger than a Client pool packet                         */
+#define NX_DHCP_REJECT_CHADDR           4       /* Client hardware address is not ours                      */
+#define NX_DHCP_REJECT_XID              5       /* Transaction ID is not the current one                    */
+#define NX_DHCP_REJECT_NO_TYPE          6       /* No DHCP message type option                              */
+#define NX_DHCP_REJECT_TYPE             7       /* Message type not expected in the current state           */
+#define NX_DHCP_REJECT_OPTIONS          8       /* Options could not be extracted                           */
+#define NX_DHCP_REJECT_STATE            9       /* State takes no messages (BOUND, INIT, ...)               */
+
+
 /* Define the states of the DHCP state machine.  */
 #define NX_DHCP_STATE_NOT_STARTED       0       /* Not started                                              */
 #define NX_DHCP_STATE_BOOT              1       /* Started with a previous address                          */
@@ -462,6 +475,12 @@ typedef struct NX_DHCP_INTERFACE_RECORD_STRUCT
     ULONG           nx_dhcp_force_renewal_rec;  /* The number of Forced Renewal received by the Client      */
     ULONG           nx_dhcp_informs_sent;       /* The number of Inform (option requests) sent by the Client*/
     ULONG           nx_dhcp_inform_responses;   /* The number of Inform responses                           */
+    ULONG           nx_dhcp_replies_received;   /* The number of messages that reached this record          */
+    ULONG           nx_dhcp_replies_rejected;   /* The number of those discarded                            */
+    ULONG           nx_dhcp_offers_accepted;    /* The number of Offers answered with a Request             */
+    ULONG           nx_dhcp_last_reply_source;  /* Source IP address of the last message                    */
+    UCHAR           nx_dhcp_last_reply_type;    /* Its DHCP message type, 0 if it had none                  */
+    UCHAR           nx_dhcp_last_reject;        /* NX_DHCP_REJECT_* of the last message discarded           */
 
 } NX_DHCP_INTERFACE_RECORD;
 

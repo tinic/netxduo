@@ -4811,6 +4811,10 @@ UINT                      conflict_flag;
                     nx_packet_release(packet_ptr);
                     continue;
                 }
+
+                /* Count the message and remember who sent it.  */
+                interface_record -> nx_dhcp_replies_received++;
+                interface_record -> nx_dhcp_last_reply_source = source_ip_address;
                 
                 /* Process DHCP packet.  */
                 _nx_dhcp_packet_process(dhcp_ptr, interface_record, packet_ptr);
@@ -4922,6 +4926,7 @@ ULONG       packet_client_mac_msw, packet_client_mac_lsw;
 ULONG       dhcp_client_mac_msw, dhcp_client_mac_lsw;
 UINT        original_state;
 UCHAR       *buffer;
+UINT        reject = NX_DHCP_REJECT_NONE;
 #ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
 ULONG       probing_delay;
 #endif
@@ -4930,9 +4935,16 @@ ULONG       probing_delay;
     ip_ptr = dhcp_ptr -> nx_dhcp_ip_ptr;
     iface_index = interface_record -> nx_dhcp_interface_index;
 
+    /* The message type is not known until the message is copied.  */
+    interface_record -> nx_dhcp_last_reply_type = 0;
+
     /* Check for valid packet length.  */
     if (packet_ptr -> nx_packet_length <= NX_BOOTP_OFFSET_OPTIONS)
     {
+
+        /* Record the discard.  */
+        interface_record -> nx_dhcp_replies_rejected++;
+        interface_record -> nx_dhcp_last_reject = NX_DHCP_REJECT_SHORT;
 
         /* Release the packet. */
         nx_packet_release(packet_ptr);
@@ -4949,6 +4961,10 @@ ULONG       probing_delay;
     if (status != NX_SUCCESS)
     {
 
+        /* Record the discard.  */
+        interface_record -> nx_dhcp_replies_rejected++;
+        interface_record -> nx_dhcp_last_reject = NX_DHCP_REJECT_POOL;
+
         /* Release the original packet. */
         nx_packet_release(packet_ptr);
 
@@ -4959,6 +4975,10 @@ ULONG       probing_delay;
     /* Verify the incoming packet does not exceed our DHCP Client packet payload. */
     if ((ULONG)(new_packet_ptr -> nx_packet_data_end - new_packet_ptr -> nx_packet_prepend_ptr) < ((packet_ptr) -> nx_packet_length))
     {
+
+        /* Record the discard.  */
+        interface_record -> nx_dhcp_replies_rejected++;
+        interface_record -> nx_dhcp_last_reject = NX_DHCP_REJECT_SIZE;
 
         /* Release the newly allocated packet . */
         nx_packet_release(new_packet_ptr);
@@ -4982,6 +5002,10 @@ ULONG       probing_delay;
     /* Now we can release the original packet. */
     nx_packet_release(packet_ptr);
 
+    /* Record the message type, whatever happens to the message.  */
+    if (_nx_dhcp_get_option_value(new_packet_ptr -> nx_packet_prepend_ptr, NX_DHCP_OPTION_DHCP_TYPE, &dhcp_type, new_packet_ptr -> nx_packet_length) == NX_SUCCESS)
+        interface_record -> nx_dhcp_last_reply_type = (UCHAR)dhcp_type;
+
     /* Set the interface index and MAC address.  */
     dhcp_client_mac_msw = ip_ptr -> nx_ip_interface[iface_index].nx_interface_physical_address_msw;
     dhcp_client_mac_lsw = ip_ptr -> nx_ip_interface[iface_index].nx_interface_physical_address_lsw;
@@ -5000,6 +5024,10 @@ ULONG       probing_delay;
     if ((packet_client_mac_msw != dhcp_client_mac_msw) || (packet_client_mac_lsw != dhcp_client_mac_lsw))
     {
 
+        /* Record the discard.  */
+        interface_record -> nx_dhcp_replies_rejected++;
+        interface_record -> nx_dhcp_last_reject = NX_DHCP_REJECT_CHADDR;
+
         /* Release the allocated packet. */
         nx_packet_release(new_packet_ptr);
         return;
@@ -5008,6 +5036,10 @@ ULONG       probing_delay;
     /* Check if XIDs match.  */
     if (_nx_dhcp_get_data(new_packet_ptr -> nx_packet_prepend_ptr + NX_BOOTP_OFFSET_XID, 4) != interface_record -> nx_dhcp_xid)
     {
+
+        /* Record the discard.  */
+        interface_record -> nx_dhcp_replies_rejected++;
+        interface_record -> nx_dhcp_last_reject = NX_DHCP_REJECT_XID;
 
         /* Release the original packet . */
         nx_packet_release(new_packet_ptr);
@@ -5043,7 +5075,10 @@ ULONG       probing_delay;
 
                 /* Update the DHCP Client interface parameters (IP address, server IP, lease, renewal and rebind times */
                 if (_nx_dhcp_extract_information(dhcp_ptr, interface_record, buffer, new_packet_ptr -> nx_packet_length))
+                {
+                    reject = NX_DHCP_REJECT_OPTIONS;
                     break;
+                }
 
                 /* Send the DHCP Request to accept the offer.  */
                 _nx_dhcp_send_request_internal(dhcp_ptr, interface_record, NX_DHCP_TYPE_DHCPREQUEST);
@@ -5057,6 +5092,21 @@ ULONG       probing_delay;
 
                 /* Update the state to Requesting state.  */
                 interface_record -> nx_dhcp_state = NX_DHCP_STATE_REQUESTING;
+
+                /* The Offer is taken.  */
+                interface_record -> nx_dhcp_offers_accepted++;
+           }
+           else if (status != NX_SUCCESS)
+           {
+
+               /* No message type option.  */
+               reject = NX_DHCP_REJECT_NO_TYPE;
+           }
+           else
+           {
+
+               /* Not an Offer.  */
+               reject = NX_DHCP_REJECT_TYPE;
            }
 
            /* Let the timeout processing handle retransmissions. We're done here */
@@ -5097,7 +5147,10 @@ ULONG       probing_delay;
 
                     /* Update the parameters (IP address, server IP, lease, renewal and rebind times */
                     if (_nx_dhcp_extract_information(dhcp_ptr, interface_record, buffer, new_packet_ptr -> nx_packet_length))
+                    {
+                        reject = NX_DHCP_REJECT_OPTIONS;
                         break;
+                    }
 
                     /* Take the address.  The ARP probe, if it is compiled in, runs alongside
                        the address rather than in front of it: it is armed here and serviced
@@ -5183,6 +5236,18 @@ ULONG       probing_delay;
                     interface_record -> nx_dhcp_timeout = NX_IP_PERIODIC_RATE;
                     interface_record -> nx_dhcp_rtr_interval = 0;
                 }
+                else
+                {
+
+                    /* Neither an ACK nor a NACK.  */
+                    reject = NX_DHCP_REJECT_TYPE;
+                }
+            }
+            else
+            {
+
+                /* No message type option.  */
+                reject = NX_DHCP_REJECT_NO_TYPE;
             }
             break;
         }
@@ -5191,7 +5256,7 @@ ULONG       probing_delay;
         {
 
             /* Silently discard all received packets in the BOUND state, RFC2131, Section 4.4 Figure 5  */
-
+            reject = NX_DHCP_REJECT_STATE;
             break;
         }
 
@@ -5217,7 +5282,10 @@ ULONG       probing_delay;
 
                     /* Update the parameters (IP address, server IP, lease, renewal and rebind times */
                     if (_nx_dhcp_extract_information(dhcp_ptr, interface_record, buffer, new_packet_ptr -> nx_packet_length))
+                    {
+                        reject = NX_DHCP_REJECT_OPTIONS;
                         break;
+                    }
                     
                     /* Set the IP address and gateway address from the value extracted from the Server's DHCP response. */
                     nx_ip_interface_address_set(ip_ptr, iface_index, 
@@ -5264,6 +5332,18 @@ ULONG       probing_delay;
                     interface_record -> nx_dhcp_timeout = NX_IP_PERIODIC_RATE;
                     interface_record -> nx_dhcp_rtr_interval = 0;
                 }
+                else
+                {
+
+                    /* Neither an ACK nor a NACK.  */
+                    reject = NX_DHCP_REJECT_TYPE;
+                }
+            }
+            else
+            {
+
+                /* No message type option.  */
+                reject = NX_DHCP_REJECT_NO_TYPE;
             }
             break;
         }
@@ -5290,7 +5370,10 @@ ULONG       probing_delay;
 
                     /* Update the parameters (IP address, server IP, lease, renewal and rebind times */
                     if (_nx_dhcp_extract_information(dhcp_ptr, interface_record, buffer, new_packet_ptr -> nx_packet_length))
+                    {
+                        reject = NX_DHCP_REJECT_OPTIONS;
                         break;
+                    }
 
                     /* Set the IP address and gateway address from the value extracted from the Server's DHCP response. */
                     nx_ip_interface_address_set(ip_ptr, iface_index, 
@@ -5336,14 +5419,36 @@ ULONG       probing_delay;
                     interface_record -> nx_dhcp_timeout = NX_IP_PERIODIC_RATE;
                     interface_record -> nx_dhcp_rtr_interval = 0;
                 }
+                else
+                {
+
+                    /* Neither an ACK nor a NACK.  */
+                    reject = NX_DHCP_REJECT_TYPE;
+                }
+            }
+            else
+            {
+
+                /* No message type option.  */
+                reject = NX_DHCP_REJECT_NO_TYPE;
             }
             break;
         }
 
         default:
+
+            /* No messages are expected in this state.  */
+            reject = NX_DHCP_REJECT_STATE;
             break;
 
     } /* End of switch case */
+
+    /* Record the discard.  */
+    if (reject != NX_DHCP_REJECT_NONE)
+    {
+        interface_record -> nx_dhcp_replies_rejected++;
+        interface_record -> nx_dhcp_last_reject = (UCHAR)reject;
+    }
 
     /* Release the packet.  */
     nx_packet_release(new_packet_ptr);
