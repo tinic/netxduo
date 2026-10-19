@@ -197,6 +197,15 @@ extern   "C" {
 #endif
 
 
+/* Define how many times the Client retransmits a DHCPREQUEST in the REQUESTING state
+   before it gives up and starts again from INIT with a DHCPDISCOVER and a new
+   transaction ID (RFC 2131, Section 4.4.1).  With the RFC timeouts above this is about
+   two minutes; with an 8 second maximum, about 36 seconds.  */
+#ifndef NX_DHCP_MAX_REQUEST_RETRANS
+#define NX_DHCP_MAX_REQUEST_RETRANS     4
+#endif
+
+
 /* Define the minimum amount of time to retransmit a DHCP renew/rebind request. The
    recommended wait time is 60 seconds in RFC 2131. */ 
 #ifndef NX_DHCP_MIN_RENEW_TIMEOUT 
@@ -479,8 +488,13 @@ typedef struct NX_DHCP_INTERFACE_RECORD_STRUCT
     ULONG           nx_dhcp_replies_rejected;   /* The number of those discarded                            */
     ULONG           nx_dhcp_offers_accepted;    /* The number of Offers answered with a Request             */
     ULONG           nx_dhcp_last_reply_source;  /* Source IP address of the last message                    */
+    ULONG           nx_dhcp_offered_address;    /* Your IP address of the last Offer accepted               */
+    ULONG           nx_dhcp_request_server;     /* Server identifier the last Request carried, 0 if none    */
+    ULONG           nx_dhcp_request_restarts;   /* Times REQUESTING gave up and went back to INIT           */
     UCHAR           nx_dhcp_last_reply_type;    /* Its DHCP message type, 0 if it had none                  */
     UCHAR           nx_dhcp_last_reject;        /* NX_DHCP_REJECT_* of the last message discarded           */
+    UCHAR           nx_dhcp_last_send_status;   /* Status of the last message send, 0 for success           */
+    UCHAR           nx_dhcp_request_retrans;    /* Requests retransmitted in this REQUESTING state          */
 
 } NX_DHCP_INTERFACE_RECORD;
 
