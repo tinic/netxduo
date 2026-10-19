@@ -5095,6 +5095,8 @@ ULONG       probing_delay;
 
                 /* The Offer is taken.  */
                 interface_record -> nx_dhcp_offers_accepted++;
+                interface_record -> nx_dhcp_offered_address = interface_record -> nx_dhcp_ip_address;
+                interface_record -> nx_dhcp_request_retrans = 0;
            }
            else if (status != NX_SUCCESS)
            {
@@ -5526,6 +5528,10 @@ VOID _nx_dhcp_timeout_process(NX_DHCP *dhcp_ptr)
 
 UINT            i;
 UINT            original_state;
+#ifndef NX_DHCP_ENABLE_BOOTP
+ULONG           requested_address;
+ULONG           old_xid;
+#endif /* NX_DHCP_ENABLE_BOOTP */
 NX_DHCP_INTERFACE_RECORD *interface_record = NX_NULL;
 #ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
 ULONG            probing_delay;
@@ -5642,6 +5648,9 @@ NX_IP           *ip_ptr;
                         /* Reset the seconds field for starting the DHCP address acquistiion. */
                         interface_record -> nx_dhcp_seconds = 0;
 
+                        /* Reset the Request retransmission count.  */
+                        interface_record -> nx_dhcp_request_retrans = 0;
+
                         /* Initial state when there is no address.  Send a DHCPDISCOVER message
                            to find a DHCP server and switch to the SELECTING state.
                            Initial timeout is NX_DHCP_MIN_RETRANS_TIMEOUT seconds. */
@@ -5724,6 +5733,45 @@ NX_IP           *ip_ptr;
                     {
 
 #ifndef NX_DHCP_ENABLE_BOOTP
+                        /* Check if the server has answered none of the retransmissions.  */
+                        if (interface_record -> nx_dhcp_request_retrans >= NX_DHCP_MAX_REQUEST_RETRANS)
+                        {
+
+                            /* Give up the offer and start again with a DHCPDISCOVER, RFC2131, Section4.4.1.
+                               An address the application requested with nx_dhcp_request_client_ip
+                               stays, as the requested address in the DHCPDISCOVER.  */
+                            requested_address = (interface_record -> nx_dhcp_skip_discovery) ?
+                                                interface_record -> nx_dhcp_ip_address : NX_BOOTP_NO_ADDRESS;
+
+                            /* Reinitialize DHCP.  This clears the offered address and server identifier.  */
+                            _nx_dhcp_interface_reinitialize(dhcp_ptr, interface_record -> nx_dhcp_interface_index);
+                            interface_record -> nx_dhcp_ip_address = requested_address;
+
+                            /* A new transaction ID, so a late reply to the old one is discarded.  */
+                            old_xid = interface_record -> nx_dhcp_xid;
+                            interface_record -> nx_dhcp_xid = (ULONG)(dhcp_ptr -> nx_dhcp_ip_ptr -> nx_ip_interface[interface_record -> nx_dhcp_interface_index].nx_interface_physical_address_msw ^
+                                                                      dhcp_ptr -> nx_dhcp_ip_ptr -> nx_ip_interface[interface_record -> nx_dhcp_interface_index].nx_interface_physical_address_lsw ^
+                                                                      (ULONG)NX_RAND());
+                            if (interface_record -> nx_dhcp_xid == old_xid)
+                            {
+                                interface_record -> nx_dhcp_xid++;
+                            }
+
+                            /* Start the DHCP protocol again by setting the state back to INIT. */
+                            interface_record -> nx_dhcp_state = NX_DHCP_STATE_INIT;
+
+                            /* Use the minimum value, Wait one second to begain in INIT state and forms a DHCP Discovery message.  */
+                            interface_record -> nx_dhcp_timeout = NX_IP_PERIODIC_RATE;
+                            interface_record -> nx_dhcp_rtr_interval = 0;
+
+                            /* Count the restart.  */
+                            interface_record -> nx_dhcp_request_restarts++;
+                            break;
+                        }
+
+                        /* Count the retransmission.  */
+                        interface_record -> nx_dhcp_request_retrans++;
+
                         /* Send a DHCP request. */
                         _nx_dhcp_send_request_internal(dhcp_ptr, interface_record, NX_DHCP_TYPE_DHCPREQUEST);
 #else
@@ -6477,6 +6525,9 @@ UINT            name_length;
                                           &index);
             }
 
+            /* Record the server identifier this Request carries, none so far.  */
+            interface_record -> nx_dhcp_request_server = NX_BOOTP_NO_ADDRESS;
+
             /* Should add server ID if not renewing.  */
             if ((interface_record -> nx_dhcp_state != NX_DHCP_STATE_RENEWING) &&
                 (interface_record -> nx_dhcp_state != NX_DHCP_STATE_REBINDING) && 
@@ -6488,6 +6539,7 @@ UINT            name_length;
                 /* Add Server identifier option.  */
                 _nx_dhcp_add_option_value(buffer, NX_DHCP_OPTION_DHCP_SERVER, NX_DHCP_OPTION_DHCP_SERVER_SIZE, 
                                           interface_record -> nx_dhcp_server_ip, &index);
+                interface_record -> nx_dhcp_request_server = interface_record -> nx_dhcp_server_ip;
             }
             else if ((interface_record -> nx_dhcp_state == NX_DHCP_STATE_RENEWING) || 
                      (interface_record -> nx_dhcp_state == NX_DHCP_STATE_REBINDING))
@@ -6647,6 +6699,9 @@ UINT            name_length;
         /* Send the packet.  */
         status = nx_udp_socket_interface_send(&(dhcp_ptr -> nx_dhcp_socket), packet_ptr, targetIP, NX_DHCP_SERVER_UDP_PORT, iface_index);
     }
+
+    /* Record the send status.  */
+    interface_record -> nx_dhcp_last_send_status = (UCHAR)status;
 
     /* If an error is detected, release the packet. */
     if (status != NX_SUCCESS)
