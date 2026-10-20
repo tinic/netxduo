@@ -495,6 +495,11 @@ typedef struct NX_DHCP_INTERFACE_RECORD_STRUCT
     UCHAR           nx_dhcp_last_reject;        /* NX_DHCP_REJECT_* of the last message discarded           */
     UCHAR           nx_dhcp_last_send_status;   /* Status of the last message send, 0 for success           */
     UCHAR           nx_dhcp_request_retrans;    /* Requests retransmitted in this REQUESTING state          */
+    USHORT          nx_dhcp_request_opt54_index_before; /* Option index of the last Request's Server identifier */
+    USHORT          nx_dhcp_request_opt54_index_after;  /* Option index just after it                           */
+    UCHAR           nx_dhcp_request_opt54_valid;        /* Set when the last Request carried one                */
+    UCHAR           nx_dhcp_request_opt54_bytes[8];     /* Buffer bytes from index_before, as written           */
+    UCHAR           nx_dhcp_request_final_opts[24];     /* Buffer bytes from index_before, just before the send */
 
 } NX_DHCP_INTERFACE_RECORD;
 
