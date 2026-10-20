@@ -6527,6 +6527,7 @@ UINT            name_length;
 
             /* Record the server identifier this Request carries, none so far.  */
             interface_record -> nx_dhcp_request_server = NX_BOOTP_NO_ADDRESS;
+            interface_record -> nx_dhcp_request_opt54_valid = NX_FALSE;
 
             /* Should add server ID if not renewing.  */
             if ((interface_record -> nx_dhcp_state != NX_DHCP_STATE_RENEWING) &&
@@ -6536,9 +6537,15 @@ UINT            name_length;
                )
             {
 
-                /* Add Server identifier option.  */
+                /* Add Server identifier option, and record where it went and what was written.  */
+                interface_record -> nx_dhcp_request_opt54_index_before = (USHORT)index;
                 _nx_dhcp_add_option_value(buffer, NX_DHCP_OPTION_DHCP_SERVER, NX_DHCP_OPTION_DHCP_SERVER_SIZE, 
                                           interface_record -> nx_dhcp_server_ip, &index);
+                interface_record -> nx_dhcp_request_opt54_index_after = (USHORT)index;
+                memcpy(interface_record -> nx_dhcp_request_opt54_bytes, /* Use case of memcpy is verified. */
+                       buffer + interface_record -> nx_dhcp_request_opt54_index_before,
+                       sizeof(interface_record -> nx_dhcp_request_opt54_bytes));
+                interface_record -> nx_dhcp_request_opt54_valid = NX_TRUE;
                 interface_record -> nx_dhcp_request_server = interface_record -> nx_dhcp_server_ip;
             }
             else if ((interface_record -> nx_dhcp_state == NX_DHCP_STATE_RENEWING) || 
@@ -6681,6 +6688,17 @@ UINT            name_length;
 
         /* Set the server target IP address to broadcast.  */
         targetIP = NX_BOOTP_BC_ADDRESS;
+    }
+
+    /* Record the finished option bytes from the Server identifier on, as they go to the send.  */
+    if ((dhcp_message_type == NX_DHCP_TYPE_DHCPREQUEST) &&
+        (interface_record -> nx_dhcp_request_opt54_valid) &&
+        (buffer + interface_record -> nx_dhcp_request_opt54_index_before +
+         sizeof(interface_record -> nx_dhcp_request_final_opts) <= packet_ptr -> nx_packet_data_end))
+    {
+        memcpy(interface_record -> nx_dhcp_request_final_opts, /* Use case of memcpy is verified. */
+               buffer + interface_record -> nx_dhcp_request_opt54_index_before,
+               sizeof(interface_record -> nx_dhcp_request_final_opts));
     }
 
     /* DHCP messages broadcast by a client prior to that client obtaining
