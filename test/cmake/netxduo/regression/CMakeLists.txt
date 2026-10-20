@@ -137,6 +137,7 @@ set(dhcp_test_cases
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_server_small_packet_payload_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_skip_discover_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_request_restart_test.c
+    ${SOURCE_DIR}/dhcp_test/netx_dhcp_request_option_bytes_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcp_client_nxe_api_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_basic_test.c
     ${SOURCE_DIR}/dhcp_test/netx_dhcpv6_dad_teardown_test.c
