@@ -38,7 +38,10 @@ static NX_SECURE_X509_CERT local_certificate;
 static NX_SECURE_X509_CERT remote_certificate;
 static NX_PACKET test_packet;
 static UCHAR packet_data[PACKET_SIZE];
-static UCHAR verify_message[3] = {0, 1, 0x30};
+/* Structurally valid DER ECDSA r=1, s=1. Crypto is intercepted below so the
+   regression can inspect the exact handshake digest in both directions. */
+static const UCHAR signature_der[8] = {0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01};
+static UCHAR verify_message[10] = {0, 8, 0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01};
 static UINT sign_checks;
 static UINT verify_checks;
 
@@ -98,12 +101,12 @@ NX_CRYPTO_EXTENDED_OUTPUT signature;
             return(NX_CRYPTO_NOT_SUCCESSFUL);
         }
         memcpy(&signature, output, sizeof(signature));
-        if (signature.nx_crypto_extended_output_length_in_byte < 1)
+        if (signature.nx_crypto_extended_output_length_in_byte < sizeof(signature_der))
         {
             return(NX_CRYPTO_NOT_SUCCESSFUL);
         }
-        signature.nx_crypto_extended_output_data[0] = 0x30;
-        signature.nx_crypto_extended_output_actual_size = 1;
+        memcpy(signature.nx_crypto_extended_output_data, signature_der, sizeof(signature_der));
+        signature.nx_crypto_extended_output_actual_size = sizeof(signature_der);
         memcpy(output, &signature, sizeof(signature));
         sign_checks++;
         return(NX_CRYPTO_SUCCESS);
@@ -111,6 +114,11 @@ NX_CRYPTO_EXTENDED_OUTPUT signature;
 
     if (op == NX_CRYPTO_VERIFY)
     {
+        if ((output == NX_NULL) || (output_length_in_byte != sizeof(signature_der)) ||
+            (memcmp(output, signature_der, sizeof(signature_der)) != 0))
+        {
+            return(NX_CRYPTO_NOT_SUCCESSFUL);
+        }
         verify_checks++;
         return(NX_CRYPTO_SUCCESS);
     }
