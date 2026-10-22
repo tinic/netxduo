@@ -71,9 +71,6 @@ UINT  _nxd_ipv6_address_delete(NX_IP *ip_ptr, UINT address_index)
 #ifdef FEATURE_NX_IPV6
 UINT              result;
 NXD_IPV6_ADDRESS *ipv6_address, *address_list;
-NX_TCP_SOCKET    *socket_ptr;
-NX_TCP_SOCKET    *next_socket_ptr;
-ULONG             sockets_left;
 #ifdef NX_ENABLE_IPV6_ADDRESS_CHANGE_NOTIFY
 VOID              (*address_change_notify)(NX_IP *, UINT, UINT, UINT, ULONG *);
 UINT              if_index;
@@ -148,43 +145,6 @@ ULONG             obsoleted_address[4];
             /* Drop handshakes addressed to it, sending nothing: they point
                at the entry the memset below zeroes.  */
             _nx_tcp_syncache_interface_flush(ip_ptr, NX_NULL, ipv6_address);
-
-            /* AmiNetXDuo: and reset every connection using it, as
-               _nx_ip_interface_detach does for an interface.  An IPv6 socket
-               keeps the address as a pointer (nx_tcp_socket_ipv6_addr), and its
-               next ACK, FIN, RST or retransmission would reach the memset
-               entry below: no interface, and NX_ASSERT in
-               _nx_ipv6_packet_send sleeps forever holding this mutex.  The
-               reset sends nothing.  CLOSED and LISTEN sockets are left
-               alone: they send nothing from the pointer, and a reset would
-               re-run the cleanup of a live listener.
-
-               The walk takes the next socket before the reset and is
-               bounded by the count at entry.  The reset calls the
-               application's disconnect callbacks under this mutex; the
-               supported contract is that a callback does not delete sockets.
-               One that deletes the socket it is called for is tolerated: the
-               next pointer is already taken, and a socket met again is
-               CLOSED.  Deleting other sockets from the callback is not.  */
-            socket_ptr = ip_ptr -> nx_ip_tcp_created_sockets_ptr;
-            sockets_left = ip_ptr -> nx_ip_tcp_created_sockets_count;
-            while ((socket_ptr != NX_NULL) && (sockets_left > 0))
-            {
-                next_socket_ptr = socket_ptr -> nx_tcp_socket_created_next;
-
-                /* The pointer is not cleared when a connection ends, so a
-                   socket now connected over IPv4 can still hold it.  */
-                if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
-                    (socket_ptr -> nx_tcp_socket_ipv6_addr == ipv6_address) &&
-                    (socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSED) &&
-                    (socket_ptr -> nx_tcp_socket_state != NX_TCP_LISTEN_STATE))
-                {
-                    _nx_tcp_socket_connection_reset(socket_ptr);
-                }
-
-                socket_ptr = next_socket_ptr;
-                sockets_left--;
-            }
 
             /* At this point ipv6_address is off the interface IPv6 address list. */
             memset(ipv6_address, 0, sizeof(NXD_IPV6_ADDRESS));
