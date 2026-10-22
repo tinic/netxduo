@@ -95,6 +95,7 @@ jobs:
           INSTALLER: ${{ inputs.installer }}
         run: |
           set -euo pipefail
+          ./scripts/ci/prepare_apt.sh
           ./scripts/install.sh
           if [[ -n "${INSTALLER}" && "${INSTALLER}" != "./scripts/install.sh" ]]; then
               "${INSTALLER}"

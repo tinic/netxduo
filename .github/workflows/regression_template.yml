@@ -137,7 +137,9 @@ jobs:
     # failing and being retried.
     - name: Install softwares
       timeout-minutes: ${{ inputs.install_timeout_minutes }}
-      run: ${{ inputs.install_script }}
+      run: |
+        ./scripts/ci/prepare_apt.sh
+        ${{ inputs.install_script }}
 
     # TX_COVERAGE instruments every build configuration rather than only the one
     # whose name ends in _coverage. It has to be set for the build as well as the
