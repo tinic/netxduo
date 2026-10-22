@@ -425,6 +425,12 @@ UINT           compute_checksum = 1;
 
             ipv6_stamped_here = NX_TRUE;
         }
+        else if (packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID)
+        {
+
+            /* The packet carries the address it was received on, which is no longer valid.  */
+            return(NX_NO_INTERFACE_ADDRESS);
+        }
 
         ipv6_source = packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr;
         if ((ipv6_source -> nxd_ipv6_address_valid == NX_FALSE) ||

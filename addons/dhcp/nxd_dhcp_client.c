@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -4821,12 +4823,6 @@ UINT                      conflict_flag;
             }
         }
 
-        /* Timer event.  */
-        if (events & NX_DHCP_CLIENT_TIMER_EVENT)
-        {
-            _nx_dhcp_timeout_process(dhcp_ptr);
-        }
-
 #ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
 
         /* IP address conflict event.  */
@@ -4857,6 +4853,12 @@ UINT                      conflict_flag;
             }
         }
 #endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE  */
+
+        /* Timer event.  */
+        if (events & NX_DHCP_CLIENT_TIMER_EVENT)
+        {
+            _nx_dhcp_timeout_process(dhcp_ptr);
+        }
 
     } while (1);
 }
@@ -5787,6 +5789,84 @@ NX_IP           *ip_ptr;
 
                         /* This will modify the timeout by up to +/- 1 second as recommended by RFC 2131, Section 4.1, Page 24. */
                         interface_record -> nx_dhcp_timeout = _nx_dhcp_add_randomize(interface_record -> nx_dhcp_timeout);
+
+                        break;
+                    }
+
+                    case NX_DHCP_STATE_ADDRESS_PROBING:
+                    {
+
+#ifdef NX_DHCP_CLIENT_SEND_ARP_PROBE
+
+                        /* Send the remaining ARP probes.  */
+                        if (interface_record -> nx_dhcp_probe_count)
+                        {
+
+                            _nx_arp_probe_send(ip_ptr, interface_record -> nx_dhcp_interface_index, interface_record -> nx_dhcp_ip_address);
+                            interface_record -> nx_dhcp_probe_count--;
+
+                            /* Check the probe count.  */
+                            if (interface_record -> nx_dhcp_probe_count)
+                            {
+
+                                /* Calculate the delay time.  */
+                                probing_delay = (ULONG)NX_RAND() % (NX_DHCP_ARP_PROBE_MAX);
+
+                                /* Determine if this is less than the minimum.  */
+                                if (probing_delay < NX_DHCP_ARP_PROBE_MIN)
+                                {
+
+                                    /* Set the delay to the minimum.  */
+                                    probing_delay = NX_DHCP_ARP_PROBE_MIN;
+                                }
+
+                                /* Check the probing_delay for timer interval.  */
+                                if (probing_delay)
+                                    interface_record -> nx_dhcp_timeout = probing_delay;
+                                else
+                                    interface_record -> nx_dhcp_timeout = 1;
+                            }
+                            else
+                            {
+
+                                /* Wait for conflicts after the last probe.  */
+                                interface_record -> nx_dhcp_timeout = NX_DHCP_ARP_ANNOUNCE_WAIT;
+                            }
+                        }
+                        else
+                        {
+
+                            /* No address conflict.  */
+                            ip_ptr -> nx_ip_interface[interface_record -> nx_dhcp_interface_index].nx_interface_ip_conflict_notify_handler = NX_NULL;
+
+                            /* Set the IP address.  */
+                            nx_ip_interface_address_set(ip_ptr, interface_record -> nx_dhcp_interface_index,
+                                                        interface_record -> nx_dhcp_ip_address, interface_record -> nx_dhcp_network_mask);
+
+#ifndef NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY
+                            /* Check if the gateway address is valid.  */
+                            if (interface_record -> nx_dhcp_gateway_address)
+                            {
+
+                                /* Set the gateway address.  */
+                                nx_ip_gateway_address_set(dhcp_ptr -> nx_dhcp_ip_ptr, interface_record -> nx_dhcp_gateway_address);
+                            }
+
+#endif /* NX_DHCP_CLIENT_DISABLE_DEFAULT_GATEWAY */
+
+                            /* Change to the Bound state.  */
+                            interface_record -> nx_dhcp_state = NX_DHCP_STATE_BOUND;
+
+ #ifdef NX_DHCP_ENABLE_BOOTP
+                            /* BOOTP does not use timeouts.  For the life of this DHCP Client application, keep the same IP address. */
+                            interface_record -> nx_dhcp_timeout = NX_WAIT_FOREVER;
+#else
+                            /* Set the renewal time received from the server.  */
+                            interface_record -> nx_dhcp_timeout = interface_record -> nx_dhcp_renewal_time;
+#endif /* NX_DHCP_ENABLE_BOOTP  */
+                        }
+
+#endif /* NX_DHCP_CLIENT_SEND_ARP_PROBE */
 
                         break;
                     }

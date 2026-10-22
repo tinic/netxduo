@@ -385,6 +385,13 @@ UINT                  buffer_size = curve -> nx_crypto_ec_n.nx_crypto_huge_buffe
         return(NX_CRYPTO_SIZE_ERROR);
     }
 
+    /* The sequence header is read before the checks below can use the length it
+       encodes, so the caller must supply the octets that header occupies. */
+    if ((signature == NX_CRYPTO_NULL) || (signature_length < 2u))
+    {
+        return(NX_CRYPTO_SIZE_ERROR);
+    }
+
     /* Buffer should contain the signature data sequence. */
     if (signature_length < 2 || signature[0] != 0x30)
     {
