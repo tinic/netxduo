@@ -102,6 +102,15 @@ NXD_IPV6_ADDRESS *ipv6_address;
        holds the same mutex across the same work.  */
     tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
 
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    /* The offload driver supplies validated payload, not wire headers.
+       Mark the synthetic receive headers consistently with the interface's
+       checksum capabilities, as required by per-packet checksum validation. */
+    packet_ptr -> nx_packet_interface_capability_flag |=
+        packet_ptr -> nx_packet_ip_interface -> nx_interface_capability_flag &
+        (NX_INTERFACE_CAPABILITY_IPV4_RX_CHECKSUM | NX_INTERFACE_CAPABILITY_UDP_RX_CHECKSUM);
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
+
     /* Fake UDP and IP header.  */
     /* Prepend the UDP header to the packet.  First, make room for the UDP header.  */
     packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr - sizeof(NX_UDP_HEADER);
