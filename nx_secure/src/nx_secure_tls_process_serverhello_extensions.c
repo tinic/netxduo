@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -909,6 +911,7 @@ NX_SECURE_TLS_ECC *ecc_info;
 
     /* Check the key group. */
     key_group = (USHORT)((ULONG)key_group | NX_CRYPTO_EC_MASK);
+    key_group = _nx_secure_tls_brainpool_group_from_wire(key_group);
 
 
     /* Loop through all supported ECC curves in this session. */

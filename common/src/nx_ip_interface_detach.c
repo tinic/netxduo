@@ -8,6 +8,7 @@
  *
  * SPDX-License-Identifier: MIT
  **************************************************************************/
+// Portions of this file were generated with AI assistance.
 
 
 /**************************************************************************/
@@ -144,9 +145,8 @@ NX_IPV6_DEFAULT_ROUTER_ENTRY *rt_entry;
 #ifndef NX_DISABLE_IPV4
 #ifdef NX_ENABLE_IP_STATIC_ROUTING
     /* Remove router iterms associated with the interface that will be detached from route table. */
-    /* AmiNetXDuo: the shift stops at the last entry instead of reading one
-       past the table, and i is not advanced after a removal, so the entry
-       shifted into slot i is tested too.  */
+    /* Stop at the last entry and recheck the slot after a removal, because
+       the next route has shifted into it. */
     for (i = 0; i < ip_ptr -> nx_ip_routing_table_entry_count; )
     {
 

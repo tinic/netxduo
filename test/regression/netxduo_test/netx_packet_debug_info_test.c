@@ -8,6 +8,7 @@
 /*                                                                         */
 /* SPDX-License-Identifier: MIT                                            */
 /***************************************************************************/
+// Portions of this file were generated with AI assistance.
 
 /* This NetX test concentrates on the packet debug information.  */
 
@@ -17,7 +18,7 @@
 #include   "nx_ram_network_driver_test_1500.h"
 extern VOID    test_control_return(UINT status);
 
-#if defined(NX_ENABLE_PACKET_DEBUG_INFO) && defined(__PRODUCT_NETXDUO__) && (__NETXDUO_MINOR_VERSION__ > 8) && !defined(NX_DISABLE_IPV4)
+#if defined(NX_ENABLE_PACKET_DEBUG_INFO) && defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
 #define     DEMO_STACK_SIZE         2048
 
 #define     TEST_SIZE               1536
@@ -325,9 +326,14 @@ NX_PACKET      *packet_ptr;
     nx_tcp_client_socket_connect(&client_socket, IP_ADDRESS(1, 2, 3, 5), 12, NX_NO_WAIT);
     nx_tcp_client_socket_connect(&temp_socket, IP_ADDRESS(1, 2, 3, 5), 12, NX_NO_WAIT);
 
-    /* Verify a SYN packet is in peer's listen queue. */
+    /* The fork retains a pending handshake in the SYN cache, without a packet. */
     verify_packet(&pool_0, NX_NULL);
-    verify_packet(&pool_1, NX_PACKET_TCP_LISTEN_QUEUE);
+    verify_packet(&pool_1, NX_NULL);
+    if ((ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_count +
+         ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_accept_count) == 0)
+    {
+        error_counter++;
+    }
 
     /* Let remote accpet the connection. */
     tx_thread_resume(&ntest_1);
@@ -489,8 +495,13 @@ NX_PACKET      *packet_ptr;
     nx_tcp_socket_disconnect(&server_socket, NX_IP_PERIODIC_RATE);
     nx_tcp_server_socket_unaccept(&server_socket);
 
-    /* Verify the SYN packet is still in listen queue. */
-    verify_packet(&pool_1, NX_PACKET_TCP_LISTEN_QUEUE);
+    /* The second pending handshake remains cached without retaining a packet. */
+    verify_packet(&pool_1, NX_NULL);
+    if ((ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_count +
+         ip_1.nx_ip_tcp_syncache.nx_tcp_syncache_accept_count) == 0)
+    {
+        error_counter++;
+    }
     nx_tcp_server_socket_relisten(&ip_1, 12, &server_socket);
 
     /* Accept a client socket connection.  */

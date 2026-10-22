@@ -123,7 +123,11 @@ const CHAR client_context[] = "TLS 1.3, client CertificateVerify\0"; /* Includes
 #ifdef NX_SECURE_ENABLE_ECC_CIPHERSUITE
 const NX_CRYPTO_METHOD    *curve_method_cert;
 NX_SECURE_EC_PRIVATE_KEY  *ec_privkey;
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+UINT                       brainpool_expected_curve = 0u;
+#endif
 NX_SECURE_EC_PUBLIC_KEY   *ec_pubkey;
+UCHAR                     *ecdsa_hash;
 NX_SECURE_EC_PRIVATE_KEY  ec_hardware_privkey;
 NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
 #endif /* NX_SECURE_ENABLE_ECC_CIPHERSUITE */
@@ -209,6 +213,15 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
             signature_algorithm = NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_384;
             break;
         case NX_SECURE_TLS_SIGNATURE_ECDSA_SHA512:
+            signature_algorithm = NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_512;
+            break;
+        case NX_SECURE_TLS_SIGNATURE_ECDSA_BRAINPOOLP256R1_SHA256:
+            signature_algorithm = NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_256;
+            break;
+        case NX_SECURE_TLS_SIGNATURE_ECDSA_BRAINPOOLP384R1_SHA384:
+            signature_algorithm = NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_384;
+            break;
+        case NX_SECURE_TLS_SIGNATURE_ECDSA_BRAINPOOLP512R1_SHA512:
             signature_algorithm = NX_SECURE_TLS_X509_TYPE_ECDSA_SHA_512;
             break;
         case NX_SECURE_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256:
@@ -834,6 +847,7 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
 #ifdef NX_SECURE_ENABLE_ECC_CIPHERSUITE
     else if (local_certificate -> nx_secure_x509_public_algorithm == NX_SECURE_TLS_X509_TYPE_EC)
     {
+        ecdsa_hash = handshake_hash;
         /* Pointer to where we are going to place our data. */
         current_buffer = send_packet -> nx_packet_append_ptr;
 
@@ -858,6 +872,7 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
             {
                 data_size = handshake_hash_length;
                 current_buffer[length] = (UCHAR)((tls_session -> nx_secure_tls_signature_algorithm) >> 8);
+                current_buffer[length + 1] = (UCHAR)(tls_session -> nx_secure_tls_signature_algorithm);
             }
             else
 #endif
@@ -865,8 +880,8 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
                 /* Hash size is SHA-256 hash size (32). */
                 data_size = 32;
                 current_buffer[length] = NX_SECURE_TLS_HASH_ALGORITHM_SHA256;   /* We only support SHA-256 right now. */
+                current_buffer[length + 1] = NX_SECURE_TLS_SIGNATURE_ALGORITHM_ECDSA;
             }
-            current_buffer[length + 1] = NX_SECURE_TLS_SIGNATURE_ALGORITHM_ECDSA; /* ECDSA */
             length += 2;
         }
 #endif
@@ -883,8 +898,9 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
 #endif /* NX_SECURE_ENABLE_DTLS */
         {
 
-            /* Hash size is the size of SHA-1 (20) + MD5 (16). */
-            data_size = 36;
+            /* ECDSA signs the SHA-1 handshake hash. */
+            ecdsa_hash = &handshake_hash[16];
+            data_size = 20;
 
         }
 #endif
@@ -902,6 +918,33 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
         {
             ec_privkey = &local_certificate -> nx_secure_x509_private_key.ec_private_key;
         }
+
+#if (NX_SECURE_TLS_TLS_1_3_ENABLED)
+        if (tls_session -> nx_secure_tls_1_3)
+        {
+            switch (tls_session -> nx_secure_tls_signature_algorithm)
+            {
+            case NX_SECURE_TLS_SIGNATURE_ECDSA_BRAINPOOLP256R1_SHA256:
+                brainpool_expected_curve = NX_CRYPTO_EC_BRAINPOOLP256r1;
+                break;
+            case NX_SECURE_TLS_SIGNATURE_ECDSA_BRAINPOOLP384R1_SHA384:
+                brainpool_expected_curve = NX_CRYPTO_EC_BRAINPOOLP384r1;
+                break;
+            case NX_SECURE_TLS_SIGNATURE_ECDSA_BRAINPOOLP512R1_SHA512:
+                brainpool_expected_curve = NX_CRYPTO_EC_BRAINPOOLP512r1;
+                break;
+            default:
+                break;
+            }
+            if (((brainpool_expected_curve != 0u) ||
+                 ((ec_privkey -> nx_secure_ec_named_curve >= NX_CRYPTO_EC_BRAINPOOLP256r1) &&
+                  (ec_privkey -> nx_secure_ec_named_curve <= NX_CRYPTO_EC_BRAINPOOLP512r1))) &&
+                (brainpool_expected_curve != ec_privkey -> nx_secure_ec_named_curve))
+            {
+                return(NX_SECURE_TLS_UNSUPPORTED_CERT_SIGN_ALG);
+            }
+        }
+#endif
         ec_pubkey = &local_certificate -> nx_secure_x509_public_key.ec_public_key;
 
         /* Find out which named curve the local certificate is using. */
@@ -971,7 +1014,7 @@ NX_CRYPTO_EXTENDED_OUTPUT  extended_output;
                                                              (NX_CRYPTO_METHOD*)public_cipher_method,
                                                              (UCHAR *)ec_privkey -> nx_secure_ec_private_key,
                                                              (NX_CRYPTO_KEY_SIZE)(ec_privkey -> nx_secure_ec_private_key_length << 3),
-                                                             handshake_hash,
+                                                             ecdsa_hash,
                                                              data_size, NX_NULL,
                                                              (UCHAR *)&extended_output,
                                                              sizeof(extended_output),

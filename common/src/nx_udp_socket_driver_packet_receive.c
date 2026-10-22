@@ -81,6 +81,10 @@ VOID _nx_udp_socket_driver_packet_receive(NX_UDP_SOCKET *socket_ptr, NX_PACKET *
 
 NX_IP          *ip_ptr;
 NX_UDP_HEADER  *udp_header_ptr;
+#ifdef FEATURE_NX_IPV6
+NX_INTERFACE     *interface_ptr;
+NXD_IPV6_ADDRESS *ipv6_address;
+#endif /* FEATURE_NX_IPV6 */
 
     /* Setup the IP pointer.  */
     ip_ptr =  socket_ptr -> nx_udp_socket_ip_ptr;
@@ -91,6 +95,21 @@ NX_UDP_HEADER  *udp_header_ptr;
         /* Socket error. Just ignore.  */
         return;
     }
+
+    /* Obtain the IP internal mutex before processing the packet.  This routine
+       reads the IP instance's hop limit and walks its interface address list,
+       both of which other threads modify, and _nx_tcp_socket_driver_packet_receive
+       holds the same mutex across the same work.  */
+    tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    /* The offload driver supplies validated payload, not wire headers.
+       Mark the synthetic receive headers consistently with the interface's
+       checksum capabilities, as required by per-packet checksum validation. */
+    packet_ptr -> nx_packet_interface_capability_flag |=
+        packet_ptr -> nx_packet_ip_interface -> nx_interface_capability_flag &
+        (NX_INTERFACE_CAPABILITY_IPV4_RX_CHECKSUM | NX_INTERFACE_CAPABILITY_UDP_RX_CHECKSUM);
+#endif /* NX_ENABLE_INTERFACE_CAPABILITY */
 
     /* Fake UDP and IP header.  */
     /* Prepend the UDP header to the packet.  First, make room for the UDP header.  */
@@ -130,6 +149,31 @@ NX_UDP_HEADER  *udp_header_ptr;
 #ifdef FEATURE_NX_IPV6
     if (remote_ip -> nxd_ip_version == NX_IP_VERSION_V6)
     {
+
+        /* nx_packet_address is a union. _nx_ipv6_header_add reads
+           nx_packet_ipv6_address_ptr from it, and the deferred receive below
+           reads nx_packet_interface_ptr from the same slot, so the interface
+           the driver left there has to be saved and put back around the call.
+           Without this the header add dereferences an interface pointer as an
+           address, and setting the address pointer instead leaves the receive
+           path reading an address as an interface.  */
+        interface_ptr = packet_ptr -> nx_packet_address.nx_packet_interface_ptr;
+
+        /* Find the local address the datagram was sent to.  */
+        if (_nxd_ipv6_interface_find(ip_ptr, local_ip -> nxd_ip_address.v6,
+                                     &ipv6_address, interface_ptr) != NX_SUCCESS)
+        {
+
+            /* Not an address of this interface. Drop it.  */
+            _nx_packet_release(packet_ptr);
+
+            /* Release the IP internal mutex.  */
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+            return;
+        }
+
+        packet_ptr -> nx_packet_address.nx_packet_ipv6_address_ptr = ipv6_address;
+
         if (_nx_ipv6_header_add(ip_ptr, &packet_ptr,
                                 NX_PROTOCOL_UDP,
                                 packet_ptr -> nx_packet_length,
@@ -144,8 +188,14 @@ NX_UDP_HEADER  *udp_header_ptr;
             tx_mutex_put(&(ip_ptr -> nx_ip_protection));
             return;
         }
+
+        /* Put the interface back for the receive path.  */
+        packet_ptr -> nx_packet_address.nx_packet_interface_ptr = interface_ptr;
     }
 #endif /* FEATURE_NX_IPV6 */
+
+    /* Release the IP internal mutex.  */
+    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
 
     _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
 }
