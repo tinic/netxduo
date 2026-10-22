@@ -8,15 +8,14 @@
 /* SPDX-License-Identifier: MIT                                            */
 /***************************************************************************/
 
-/* Deleting an IPv6 address resets the TCP connections that use it (03f9ad88).
- * 1. Connect over IPv6.
- * 2. Delete the client's address.
- * 3. The client socket is CLOSED, nothing went on the wire for it, and a
- *    send is refused as not connected rather than reaching the deleted
- *    address.
- * 4. The server socket, on the other IP, is untouched. */
+/* Upstream #490 supersedes the fork's reset-on-delete workaround. Deleting
+ * the local source preserves the established TCP connection, emits no packet,
+ * and refuses a new send with NX_NO_INTERFACE_ADDRESS while the source is
+ * absent. The peer connection is untouched. The upstream address-delete and
+ * disable regressions additionally exercise retransmission and restoration. */
 
 #include   "nx_api.h"
+#include   "nx_tcp.h"
 extern void    test_control_return(UINT status);
 
 #ifdef FEATURE_NX_IPV6
@@ -47,7 +46,7 @@ static UINT    packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operat
 #ifdef CTEST
 VOID test_application_define(void *first_unused_memory)
 #else
-void    netx_tcp_ipv6_address_delete_reset_test_application_define(void *first_unused_memory)
+void    netx_tcp_ipv6_address_delete_state_test_application_define(void *first_unused_memory)
 #endif
 {
 
@@ -124,7 +123,7 @@ NX_PACKET  *my_packet;
 ULONG       sent_before;
 
 
-    printf("NetX Test:   TCP IPv6 Address Delete Reset Test........................");
+    printf("NetX Test:   TCP IPv6 Address Delete State Test........................");
 
     if (error_counter)
     {
@@ -154,14 +153,14 @@ ULONG       sent_before;
     if (status)
         error_counter++;
 
-    /* Reset, and nothing sent for it.  */
-    if ((client_socket.nx_tcp_socket_state != NX_TCP_CLOSED) || (ip_0_sent != sent_before))
+    /* The connection survives, without sending from the deleted source. */
+    if ((client_socket.nx_tcp_socket_state != NX_TCP_ESTABLISHED) || (ip_0_sent != sent_before))
     {
         printf("ERROR!\n");
         test_control_return(1);
     }
 
-    /* A send is refused as not connected.  */
+    /* The caller retains a packet refused because the source is absent. */
     status = nx_packet_allocate(&pool_0, &my_packet, NX_IPv6_TCP_PACKET, NX_WAIT_FOREVER);
     if (status)
         error_counter++;
@@ -169,7 +168,7 @@ ULONG       sent_before;
     if (status)
         error_counter++;
     status = nx_tcp_socket_send(&client_socket, my_packet, NX_NO_WAIT);
-    if (status != NX_NOT_CONNECTED)
+    if (status != NX_NO_INTERFACE_ADDRESS)
     {
         printf("ERROR!\n");
         test_control_return(1);
@@ -182,6 +181,11 @@ ULONG       sent_before;
         printf("ERROR!\n");
         test_control_return(1);
     }
+
+    /* Tear down the fixture locally: its source is deliberately still absent. */
+    tx_mutex_get(&(ip_0.nx_ip_protection), TX_WAIT_FOREVER);
+    _nx_tcp_socket_connection_reset(&client_socket);
+    tx_mutex_put(&(ip_0.nx_ip_protection));
 
     status = nx_tcp_client_socket_unbind(&client_socket);
     status += nx_tcp_socket_delete(&client_socket);
@@ -229,11 +233,11 @@ static UINT    packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operat
 #ifdef CTEST
 VOID test_application_define(void *first_unused_memory)
 #else
-void    netx_tcp_ipv6_address_delete_reset_test_application_define(void *first_unused_memory)
+void    netx_tcp_ipv6_address_delete_state_test_application_define(void *first_unused_memory)
 #endif
 {
 
-    printf("NetX Test:   TCP IPv6 Address Delete Reset Test........................N/A\n");
+    printf("NetX Test:   TCP IPv6 Address Delete State Test........................N/A\n");
 
     test_control_return(3);
 }
