@@ -10,8 +10,8 @@ if [[ "${GITHUB_ACTIONS:-}" != true ]]; then
 fi
 
 # The Azure Ubuntu mirror repeatedly stalled multiarch package downloads until
-# the install step's ten-minute limit. Keep the same signed Ubuntu repositories
-# and transport, using their standard archive instead of that mirror.
+# the install step's ten-minute limit. Use the same signed Ubuntu repositories
+# through the standard HTTPS archive. Hosted images also use mirror+file URIs.
 sudo python3 - <<'PY'
 from pathlib import Path
 
@@ -22,8 +22,12 @@ for source in sources:
     if not source.is_file():
         continue
     original = source.read_text()
-    updated = original.replace('://azure.archive.ubuntu.com/ubuntu',
-                               '://archive.ubuntu.com/ubuntu')
+    updated = original.replace('mirror+file:/etc/apt/apt-mirrors.txt',
+                               'https://archive.ubuntu.com/ubuntu/')
+    updated = updated.replace('http://azure.archive.ubuntu.com/ubuntu',
+                              'https://archive.ubuntu.com/ubuntu')
+    updated = updated.replace('https://azure.archive.ubuntu.com/ubuntu',
+                              'https://archive.ubuntu.com/ubuntu')
     if updated != original:
         source.write_text(updated)
         print('Using standard Ubuntu archive in ' + str(source))
