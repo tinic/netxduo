@@ -385,23 +385,55 @@ class ClassifierTests(unittest.TestCase):
             None,
             classify_changes.changed_files_from_git("1" * 40, "2" * 40),
         )
-        base_revision = subprocess.run(
-            ["git", "rev-parse", "HEAD~1"],
-            check=True,
-            stdout=subprocess.PIPE,
-            text=True,
-        ).stdout.strip()
-        head_revision = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            stdout=subprocess.PIPE,
-            text=True,
-        ).stdout.strip()
-        changed_paths = classify_changes.changed_files_from_git(
-            base_revision, head_revision
-        )
-        self.assertIsInstance(changed_paths, list)
-        self.assertTrue(changed_paths)
+
+    def test_git_ranges_report_exact_paths_and_allow_unchanged_trees(self):
+        """Real Git ranges handle changed paths and history-only commits."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory)
+
+            def git(*arguments):
+                return subprocess.run(
+                    [
+                        "git", "-c", "user.name=CI test",
+                        "-c", "user.email=ci-test@example.invalid",
+                        "-c", "commit.gpgsign=false", *arguments,
+                    ],
+                    cwd=repository,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                ).stdout.strip()
+
+            git("init", "--quiet")
+            git("commit", "--quiet", "--allow-empty", "-m", "Base")
+            base_revision = git("rev-parse", "HEAD")
+            changed_path = "path with spaces\nand newline.txt"
+            (repository / changed_path).write_text("changed\n", encoding="utf-8")
+            git("add", "--", changed_path)
+            git("commit", "--quiet", "-m", "Changed a file")
+            changed_revision = git("rev-parse", "HEAD")
+            self.assertEqual(
+                [changed_path],
+                classify_changes.changed_files_from_git(
+                    base_revision, changed_revision, repository
+                ),
+            )
+
+            git("commit", "--quiet", "--allow-empty", "-m", "History only")
+            empty_revision = git("rev-parse", "HEAD")
+            self.assertEqual(
+                [],
+                classify_changes.changed_files_from_git(
+                    changed_revision, empty_revision, repository
+                ),
+            )
+            self.assertEqual(
+                [changed_path],
+                classify_changes.changed_files_from_git(
+                    base_revision, empty_revision, repository
+                ),
+            )
 
     def test_outputs_and_summary_are_written_for_github(self):
         """GitHub output and summary files contain stable routing information."""
