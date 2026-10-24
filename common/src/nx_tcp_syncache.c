@@ -1336,6 +1336,42 @@ NX_TCP_SYNCACHE_ENTRY *entry;
 }
 
 
+#ifdef NX_TCP_SYNCACHE_DEFERRED_MAXIMUM
+/* The unanswered SYN a parked socket goes to: the oldest whose client sent
+   it again within the last second, else the oldest.  A queue this deep
+   outlives its clients -- one that gave up leaves its entry for
+   NX_TCP_SYNCACHE_TIMEOUT -- and the oldest is then a client that is gone:
+   its SYN-ACK draws a reset, the next oldest is no better, and the clients
+   still trying time out behind them.  */
+static NX_TCP_SYNCACHE_ENTRY  *_nx_tcp_syncache_next_deferred(NX_TCP_SYNCACHE *cache, UINT port)
+{
+
+NX_TCP_SYNCACHE_ENTRY *entry;
+NX_TCP_SYNCACHE_ENTRY *oldest = NX_NULL;
+ULONG                  now = (ULONG)tx_time_get();
+
+
+    for (entry = cache -> nx_tcp_syncache_age_head; entry; entry = entry -> nx_tcp_syncache_age_next)
+    {
+        if ((entry -> nx_tcp_syncache_state == NX_TCP_SYNCACHE_DEFERRED) &&
+            (entry -> nx_tcp_syncache_local_port == port))
+        {
+            if ((now - entry -> nx_tcp_syncache_time) < (ULONG)NX_IP_PERIODIC_RATE)
+            {
+                return(entry);
+            }
+            if (oldest == NX_NULL)
+            {
+                oldest = entry;
+            }
+        }
+    }
+
+    return(oldest);
+}
+#endif /* NX_TCP_SYNCACHE_DEFERRED_MAXIMUM */
+
+
 /* Answer a deferred SYN now that a socket is parked.  The window and the
    sending terms are read again, off the listen request and the socket now on
    it, because that socket is the one the connection will land on.  */
@@ -1499,13 +1535,21 @@ UINT                   ready;
        take.  The listen backlog bounds how many wait, finished handshakes
        included; past it the oldest unanswered one makes room, which is the
        rule the listen queue had, and if every slot is a finished handshake
-       this SYN is dropped.  */
+       this SYN is dropped.  With NX_TCP_SYNCACHE_DEFERRED_MAXIMUM defined,
+       unanswered SYNs are bounded by it instead, on their own: a forgotten
+       SYN is a client waiting out its retransmit timer, and a port with more
+       clients than its backlog then sits idle between their retries.  */
     ready = _nx_tcp_syncache_socket_ready(listen_ptr -> nx_tcp_listen_socket_ptr);
 
     if ((ready == NX_FALSE) && (cache -> nx_tcp_syncache_free != NX_NULL) &&
+#ifdef NX_TCP_SYNCACHE_DEFERRED_MAXIMUM
+        (_nx_tcp_syncache_deferred_count(cache, local_port) >=
+         (ULONG)NX_TCP_SYNCACHE_DEFERRED_MAXIMUM))
+#else
         ((_nx_tcp_syncache_deferred_count(cache, local_port) +
           _nx_tcp_syncache_accept_queued(cache, local_port)) >=
          listen_ptr -> nx_tcp_listen_queue_maximum))
+#endif /* NX_TCP_SYNCACHE_DEFERRED_MAXIMUM */
     {
 
         entry = _nx_tcp_syncache_oldest_deferred(cache, local_port);
@@ -2694,7 +2738,11 @@ NX_TCP_SYNCACHE_ENTRY *entry;
         return;
     }
 
+#ifdef NX_TCP_SYNCACHE_DEFERRED_MAXIMUM
+    entry = _nx_tcp_syncache_next_deferred(cache, listen_ptr -> nx_tcp_listen_port);
+#else
     entry = _nx_tcp_syncache_oldest_deferred(cache, listen_ptr -> nx_tcp_listen_port);
+#endif /* NX_TCP_SYNCACHE_DEFERRED_MAXIMUM */
 
     if (entry)
     {
