@@ -189,6 +189,14 @@ UINT  j;
        unacknowledged is the only place they can mean anything.  */
     snd_nxt = socket_ptr -> nx_tcp_socket_tx_sequence;
     snd_una = snd_nxt - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
+    /* The FIN sequence byte is not part of the outstanding DATA range. */
+    if ((socket_ptr -> nx_tcp_socket_fin_acked == NX_FALSE) &&
+        ((socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
+         (socket_ptr -> nx_tcp_socket_state == NX_TCP_CLOSING) ||
+         (socket_ptr -> nx_tcp_socket_state == NX_TCP_LAST_ACK)))
+    {
+        snd_una--;
+    }
 
     /* The option replaces what was recorded before it, so the count goes to
        zero first and nothing reads a half written entry.  */

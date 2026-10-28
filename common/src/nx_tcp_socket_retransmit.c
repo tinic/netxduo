@@ -622,6 +622,14 @@ UINT       sack_index;
        dropped here rather than trusted, so a block can never outlive the data
        it described.  */
     unacked = socket_ptr -> nx_tcp_socket_tx_sequence - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
+    /* Match ACK processing's DATA sequence base while a FIN is pending. */
+    if ((socket_ptr -> nx_tcp_socket_fin_acked == NX_FALSE) &&
+        ((socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
+         (socket_ptr -> nx_tcp_socket_state == NX_TCP_CLOSING) ||
+         (socket_ptr -> nx_tcp_socket_state == NX_TCP_LAST_ACK)))
+    {
+        unacked--;
+    }
     sack_high = unacked;
     sacked_bytes = 0;
     sack_blocks = 0;

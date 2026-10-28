@@ -114,6 +114,17 @@ UINT           dupack_threshold;
         }
         starting_tx_sequence = socket_ptr -> nx_tcp_socket_tx_sequence - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
 
+        /* A pending FIN consumes sequence space without adding an outstanding
+           DATA byte.  Keep SND.UNA at the first unacknowledged DATA byte so
+           duplicate ACKs and congestion credit use the same sequence base. */
+        if ((socket_ptr -> nx_tcp_socket_fin_acked == NX_FALSE) &&
+            ((socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
+             (socket_ptr -> nx_tcp_socket_state == NX_TCP_CLOSING) ||
+             (socket_ptr -> nx_tcp_socket_state == NX_TCP_LAST_ACK)))
+        {
+            starting_tx_sequence--;
+        }
+
         /* Initialize ending rx sequence. */
         if (socket_ptr -> nx_tcp_socket_receive_queue_tail)
         {
@@ -580,6 +591,13 @@ UINT           dupack_threshold;
 
             /* Calculate ACKed length. */
             acked_bytes = tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence;
+
+            /* An ACK can cover the FIN as well as the remaining DATA.  The
+               FIN sequence byte must not earn DATA congestion credit. */
+            if (acked_bytes > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes)
+            {
+                acked_bytes = socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
+            }
 
             if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE)
             {
