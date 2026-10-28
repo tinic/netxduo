@@ -344,7 +344,7 @@ UINT           dupack_threshold;
                         }
                         else if ((socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
                                  ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - (socket_ptr -> nx_tcp_socket_previous_highest_ack +
-                                                                                          (socket_ptr -> nx_tcp_socket_connect_mss << 2))) < 0))
+                                                                                          (socket_ptr -> nx_tcp_socket_connect_mss << 2))) <= 0))
                         {
 
                             /* Congestion window is greater than SMSS bytes and

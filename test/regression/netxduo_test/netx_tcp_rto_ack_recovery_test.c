@@ -172,6 +172,54 @@ static void ack(UINT segments, ULONG window)
     ack_bytes(segments * MSS, window);
 }
 
+/* RFC 6582 section 4.1 says at most four SMSS, including the boundary.
+   Keep the greater-than-four control conservative without new SACK evidence. */
+static void recovery_ack_heuristic(ULONG start)
+{
+UINT i;
+UINT distance;
+
+    for (distance = 3; distance <= 5; distance++)
+    {
+        fixture(start);
+        socket_0.nx_tcp_socket_rx_window_current = 64000;
+        socket_0.nx_tcp_socket_previous_highest_ack = start - distance * MSS;
+        socket_0.nx_tcp_socket_tx_window_congestion = 2 * MSS;
+        for (i = 0; i < NX_TCP_FAST_RETRANSMIT_THRESHOLD; i++)
+            ack(0, 64000);
+        check(socket_0.nx_tcp_socket_duplicated_ack_received == NX_TCP_FAST_RETRANSMIT_THRESHOLD,
+              "ACK heuristic receives three duplicate ACKs");
+        if (distance <= 4)
+            check(sent == 1 && socket_0.nx_tcp_socket_fast_recovery == NX_TRUE,
+                  "ACK heuristic permits advancement of at most four MSS");
+        else
+            check(sent == 0 && socket_0.nx_tcp_socket_fast_recovery == NX_FALSE,
+                  "ACK heuristic rejects advancement greater than four MSS");
+    }
+}
+
+static void fast_retransmit_timer(ULONG start)
+{
+    fixture(start);
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_socket_retransmit(&ip, &socket_0, NX_TRUE);
+    check(sent == 1 && socket_0.nx_tcp_socket_fast_recovery == NX_TRUE,
+          "fast retransmit sends the lost head");
+    check(socket_0.nx_tcp_socket_timeout_retries == 0 &&
+          socket_0.nx_tcp_socket_timeout == socket_0.nx_tcp_socket_timeout_rate,
+          "fast retransmit restarts current RTO without timeout backoff");
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(socket_0.nx_tcp_socket_timeout_retries == 1 &&
+          socket_0.nx_tcp_socket_timeout == (socket_0.nx_tcp_socket_timeout_rate << 1),
+          "lost fast retransmit backs off on the first actual timeout");
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(socket_0.nx_tcp_socket_timeout_retries == 2 &&
+          socket_0.nx_tcp_socket_timeout == (socket_0.nx_tcp_socket_timeout_rate << 2),
+          "repeated actual timeouts retain exponential backoff");
+}
+
 /* FIN consumes sequence space, but it is not an outstanding DATA byte. */
 static void fin_ack_sequence(ULONG start)
 {
@@ -452,6 +500,11 @@ NX_TCP_HEADER *header;
 
     NX_PARAMETER_NOT_USED(input);
     printf("NetX Test:   TCP RTO ACK Recovery Test................................");
+    recovery_ack_heuristic(1000);
+    recovery_ack_heuristic(0xFFFFFE00UL);
+    recovery_ack_heuristic(0);
+    fast_retransmit_timer(1000);
+    fast_retransmit_timer(0xFFFFFE00UL);
     run_recovery(1000);
     run_recovery(0xFFFFFE00UL);
     fin_ack_sequence(1000);
