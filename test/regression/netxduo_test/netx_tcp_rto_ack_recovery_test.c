@@ -308,7 +308,7 @@ ULONG right;
 
     for (state = 0; state < sizeof(states) / sizeof(states[0]); state++)
     {
-        for (mode = 0; mode < 11; mode++)
+        for (mode = 0; mode < 15; mode++)
         {
             fixture(start);
             socket_0.nx_tcp_socket_rx_window_current = 64000;
@@ -329,11 +329,21 @@ ULONG right;
                 option[2 + i] = (UCHAR)(left >> (24 - i * 8));
                 option[6 + i] = (UCHAR)(right >> (24 - i * 8));
             }
-            if (mode == 10)
+            if (mode >= 10)
             {
-                /* A SACK cannot acknowledge a queued FIN as DATA. */
+                /* Real receiver traces SACK a tail DATA segment and its FIN
+                   together.  The FIN may extend a DATA block, but cannot
+                   supply DATA evidence by itself or cover unsent sequence. */
                 left = start + SEGMENTS * MSS - 1;
                 right = start + SEGMENTS * MSS + 1;
+                if (mode == 11)
+                    left = start + SEGMENTS * MSS;       /* FIN only. */
+                else if (mode == 12)
+                    right = socket_0.nx_tcp_socket_tx_sequence + 1; /* Unsent. */
+                else if (mode == 13)
+                    right = start + SEGMENTS * MSS;      /* Last DATA byte. */
+                else if (mode == 14)
+                    left = start + (SEGMENTS - 2) * MSS;  /* DATA tail + FIN. */
                 for (i = 0; i < 4; i++)
                 {
                     option[2 + i] = (UCHAR)(left >> (24 - i * 8));
@@ -362,7 +372,8 @@ ULONG right;
                 socket_0.nx_tcp_socket_sack_right[0] = start + (SEGMENTS + 1) * MSS;
             for (i = 0; i < NX_TCP_FAST_RETRANSMIT_THRESHOLD; i++)
                 ack(0, 64000);
-            if ((mode == 0) || (mode == 9))
+            if ((mode == 0) || (mode == 9) || (mode == 13) ||
+                (((mode == 10) || (mode == 14)) && (states[state] >= NX_TCP_FIN_WAIT_1)))
                 check(sent != 0 && log_sequence[0] == start &&
                       socket_0.nx_tcp_socket_fast_recovery == NX_TRUE,
                       "valid new-flight SACK permits recovery after a large full ACK");
