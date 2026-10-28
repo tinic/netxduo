@@ -546,8 +546,12 @@ UINT       sack_index;
     if ((need_fast_retransmit == NX_TRUE) || (socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE))
     {
 
-        /* Increment the retry counter.  */
-        socket_ptr -> nx_tcp_socket_timeout_retries++;
+        /* RFC 6298 section 5.5 backs off only after a timer expiry. Fast
+           retransmit restarts the current RTO, without counting a timeout. */
+        if (need_fast_retransmit == NX_FALSE)
+        {
+            socket_ptr -> nx_tcp_socket_timeout_retries++;
+        }
 
         /* Setup the next timeout.  */
         socket_ptr -> nx_tcp_socket_timeout = socket_ptr -> nx_tcp_socket_timeout_rate <<

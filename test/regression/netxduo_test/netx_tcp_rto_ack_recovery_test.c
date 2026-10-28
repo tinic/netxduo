@@ -172,6 +172,54 @@ static void ack(UINT segments, ULONG window)
     ack_bytes(segments * MSS, window);
 }
 
+/* RFC 6582 section 4.1 says at most four SMSS, including the boundary.
+   Keep the greater-than-four control conservative without new SACK evidence. */
+static void recovery_ack_heuristic(ULONG start)
+{
+UINT i;
+UINT distance;
+
+    for (distance = 3; distance <= 5; distance++)
+    {
+        fixture(start);
+        socket_0.nx_tcp_socket_rx_window_current = 64000;
+        socket_0.nx_tcp_socket_previous_highest_ack = start - distance * MSS;
+        socket_0.nx_tcp_socket_tx_window_congestion = 2 * MSS;
+        for (i = 0; i < NX_TCP_FAST_RETRANSMIT_THRESHOLD; i++)
+            ack(0, 64000);
+        check(socket_0.nx_tcp_socket_duplicated_ack_received == NX_TCP_FAST_RETRANSMIT_THRESHOLD,
+              "ACK heuristic receives three duplicate ACKs");
+        if (distance <= 4)
+            check(sent == 1 && socket_0.nx_tcp_socket_fast_recovery == NX_TRUE,
+                  "ACK heuristic permits advancement of at most four MSS");
+        else
+            check(sent == 0 && socket_0.nx_tcp_socket_fast_recovery == NX_FALSE,
+                  "ACK heuristic rejects advancement greater than four MSS");
+    }
+}
+
+static void fast_retransmit_timer(ULONG start)
+{
+    fixture(start);
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_socket_retransmit(&ip, &socket_0, NX_TRUE);
+    check(sent == 1 && socket_0.nx_tcp_socket_fast_recovery == NX_TRUE,
+          "fast retransmit sends the lost head");
+    check(socket_0.nx_tcp_socket_timeout_retries == 0 &&
+          socket_0.nx_tcp_socket_timeout == socket_0.nx_tcp_socket_timeout_rate,
+          "fast retransmit restarts current RTO without timeout backoff");
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(socket_0.nx_tcp_socket_timeout_retries == 1 &&
+          socket_0.nx_tcp_socket_timeout == (socket_0.nx_tcp_socket_timeout_rate << 1),
+          "lost fast retransmit backs off on the first actual timeout");
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(socket_0.nx_tcp_socket_timeout_retries == 2 &&
+          socket_0.nx_tcp_socket_timeout == (socket_0.nx_tcp_socket_timeout_rate << 2),
+          "repeated actual timeouts retain exponential backoff");
+}
+
 /* FIN consumes sequence space, but it is not an outstanding DATA byte. */
 static void fin_ack_sequence(ULONG start)
 {
@@ -246,6 +294,85 @@ ULONG before;
 }
 
 #ifdef NX_ENABLE_TCP_SACK
+/* A SACK above a completed recovery point describes new-flight data. A large
+   final ACK from the previous recovery must not disable the next fast retransmit. */
+static void sack_recovery_reentry(ULONG start)
+{
+UINT states[] = {NX_TCP_ESTABLISHED, NX_TCP_CLOSE_WAIT, NX_TCP_FIN_WAIT_1, NX_TCP_CLOSING, NX_TCP_LAST_ACK};
+UINT state;
+UINT mode;
+UINT i;
+UCHAR option[12];
+ULONG left;
+ULONG right;
+
+    for (state = 0; state < sizeof(states) / sizeof(states[0]); state++)
+    {
+        for (mode = 0; mode < 11; mode++)
+        {
+            fixture(start);
+            socket_0.nx_tcp_socket_rx_window_current = 64000;
+            socket_0.nx_tcp_socket_state = states[state];
+            if (states[state] >= NX_TCP_FIN_WAIT_1)
+                socket_0.nx_tcp_socket_tx_sequence++;
+            socket_0.nx_tcp_socket_previous_highest_ack = start - 6 * MSS;
+            socket_0.nx_tcp_socket_sack_permitted = (mode == 3 ? NX_FALSE : NX_TRUE);
+            if (mode == 4)
+                socket_0.nx_tcp_socket_tx_sequence_recover = start + MSS;
+            left = (mode == 1 ? start : (mode == 9 ? start + 1 : start + 3 * MSS));
+            right = (mode == 2 ? start + (SEGMENTS + 1) * MSS : start + 6 * MSS);
+            memset(option, 0, sizeof(option));
+            option[0] = NX_TCP_SACK_KIND;
+            option[1] = 10;
+            for (i = 0; i < 4; i++)
+            {
+                option[2 + i] = (UCHAR)(left >> (24 - i * 8));
+                option[6 + i] = (UCHAR)(right >> (24 - i * 8));
+            }
+            if (mode == 10)
+            {
+                /* A SACK cannot acknowledge a queued FIN as DATA. */
+                left = start + SEGMENTS * MSS - 1;
+                right = start + SEGMENTS * MSS + 1;
+                for (i = 0; i < 4; i++)
+                {
+                    option[2 + i] = (UCHAR)(left >> (24 - i * 8));
+                    option[6 + i] = (UCHAR)(right >> (24 - i * 8));
+                }
+            }
+            _nx_tcp_sack_option_get(&socket_0, option, sizeof(option));
+            if (mode == 3)
+            {
+                socket_0.nx_tcp_socket_sack_block_count = 1;
+                socket_0.nx_tcp_socket_sack_left[0] = left;
+                socket_0.nx_tcp_socket_sack_right[0] = right;
+            }
+            else if (mode == 5)
+            {
+                /* A cached old-flight block is not evidence about this loss. */
+                socket_0.nx_tcp_socket_sack_block_count = 1;
+                socket_0.nx_tcp_socket_sack_left[0] = start - 2 * MSS;
+                socket_0.nx_tcp_socket_sack_right[0] = start;
+            }
+            else if (mode == 6)
+                socket_0.nx_tcp_socket_sack_block_count = 0;
+            else if (mode == 7)
+                socket_0.nx_tcp_socket_sack_right[0] = socket_0.nx_tcp_socket_sack_left[0];
+            else if (mode == 8)
+                socket_0.nx_tcp_socket_sack_right[0] = start + (SEGMENTS + 1) * MSS;
+            for (i = 0; i < NX_TCP_FAST_RETRANSMIT_THRESHOLD; i++)
+                ack(0, 64000);
+            if ((mode == 0) || (mode == 9))
+                check(sent != 0 && log_sequence[0] == start &&
+                      socket_0.nx_tcp_socket_fast_recovery == NX_TRUE,
+                      "valid new-flight SACK permits recovery after a large full ACK");
+            else
+                check(sent == 0 && socket_0.nx_tcp_socket_fast_recovery == NX_FALSE,
+                      "invalid old or unnegotiated SACK cannot bypass the recovery point");
+        }
+    }
+}
+
 static void fin_sack_option_sequence(ULONG start)
 {
 UINT states[] = {NX_TCP_ESTABLISHED, NX_TCP_CLOSE_WAIT, NX_TCP_FIN_WAIT_1, NX_TCP_CLOSING, NX_TCP_LAST_ACK};
@@ -452,11 +579,19 @@ NX_TCP_HEADER *header;
 
     NX_PARAMETER_NOT_USED(input);
     printf("NetX Test:   TCP RTO ACK Recovery Test................................");
+    recovery_ack_heuristic(1000);
+    recovery_ack_heuristic(0xFFFFFE00UL);
+    recovery_ack_heuristic(0);
+    fast_retransmit_timer(1000);
+    fast_retransmit_timer(0xFFFFFE00UL);
     run_recovery(1000);
     run_recovery(0xFFFFFE00UL);
     fin_ack_sequence(1000);
     fin_ack_sequence(0xFFFFFE00UL);
 #ifdef NX_ENABLE_TCP_SACK
+    sack_recovery_reentry(1000);
+    sack_recovery_reentry(0xFFFFFE00UL);
+    sack_recovery_reentry(0);
     fin_sack_option_sequence(1000);
     fin_sack_option_sequence(0xFFFFFE00UL);
     fin_sack_option_sequence(0xFFFFFFFFUL);

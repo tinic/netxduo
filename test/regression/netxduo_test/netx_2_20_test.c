@@ -397,7 +397,9 @@ NX_TCP_HEADER        *tcp_header_ptr;
 
     if((packet_ptr -> nx_packet_length-40 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr+40, MSG, 20)))
     {
-        if(server_socket.nx_tcp_socket_timeout_retries == 0)
+        /* Drop the original, then inspect the fast retransmission itself.
+           A fast retransmission is not a timeout retry.  */
+        if(server_socket.nx_tcp_socket_fast_recovery == NX_FALSE)
         {
             NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr ->nx_tcp_sequence_number);
             seq_number = tcp_header_ptr -> nx_tcp_sequence_number;
@@ -407,8 +409,11 @@ NX_TCP_HEADER        *tcp_header_ptr;
             *operation_ptr = NX_RAMDRIVER_OP_DROP;
         }
 
-        else if(server_socket.nx_tcp_socket_timeout_retries == 1)
+        else if(server_socket.nx_tcp_socket_fast_recovery == NX_TRUE)
         {
+            if(server_socket.nx_tcp_socket_timeout_retries != 0)
+                error_counter++;
+
             if((server_socket.nx_tcp_socket_tx_slow_start_threshold == server_socket.nx_tcp_socket_tx_outstanding_bytes / 2) || (server_socket.nx_tcp_socket_tx_slow_start_threshold == server_socket.nx_tcp_socket_connect_mss * 2))
                 is_set = NX_TRUE;
 
