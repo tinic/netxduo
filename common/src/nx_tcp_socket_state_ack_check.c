@@ -96,6 +96,13 @@ ULONG          ts_now;
 #endif
 UINT           wrapped_flag = NX_FALSE;
 UINT           dupack_threshold;
+#ifdef NX_ENABLE_TCP_SACK
+UINT           sack_recovery_index;
+UINT           sack_new_recovery;
+ULONG          sack_left;
+ULONG          sack_right;
+#endif
+
 
 
     /* Determine if the header has an ACK bit set.  This is an
@@ -333,8 +340,38 @@ UINT           dupack_threshold;
 
                     if (socket_ptr -> nx_tcp_socket_duplicated_ack_received == dupack_threshold)
                     {
-                        if ((INT)((tcp_header_ptr -> nx_tcp_acknowledgment_number - 1) -
-                                  socket_ptr -> nx_tcp_socket_tx_sequence_recover) > 0)
+#ifdef NX_ENABLE_TCP_SACK
+                        sack_new_recovery = NX_FALSE;
+                        if ((socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE) &&
+                            (tcp_header_ptr -> nx_tcp_acknowledgment_number - 1 ==
+                             socket_ptr -> nx_tcp_socket_tx_sequence_recover))
+                        {
+                            /* The old recovery is fully acknowledged. A valid block
+                               above this ACK describes new-flight data, not duplicate
+                               copies of the old flight. RFC 6675 sections 5 and 5.1
+                               permit new recovery once HighACK reaches RecoveryPoint. */
+                            for (sack_recovery_index = 0; sack_recovery_index < socket_ptr -> nx_tcp_socket_sack_block_count &&
+                                 sack_recovery_index < NX_TCP_SACK_MAX_BLOCKS; sack_recovery_index++)
+                            {
+                                sack_left = socket_ptr -> nx_tcp_socket_sack_left[sack_recovery_index];
+                                sack_right = socket_ptr -> nx_tcp_socket_sack_right[sack_recovery_index];
+                                if (((INT)(sack_left - tcp_header_ptr -> nx_tcp_acknowledgment_number) > 0) &&
+                                    ((INT)(sack_right - sack_left) > 0) &&
+                                    ((INT)(starting_tx_sequence + socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -
+                                           sack_right) >= 0))
+                                {
+                                    sack_new_recovery = NX_TRUE;
+                                    break;
+                                }
+                            }
+                        }
+#endif /* NX_ENABLE_TCP_SACK */
+                        if (((INT)((tcp_header_ptr -> nx_tcp_acknowledgment_number - 1) -
+                                   socket_ptr -> nx_tcp_socket_tx_sequence_recover) > 0)
+#ifdef NX_ENABLE_TCP_SACK
+                            || (sack_new_recovery == NX_TRUE)
+#endif
+                           )
                         {
 
                             /* Cumulative acknowledge covers more than recover. */
