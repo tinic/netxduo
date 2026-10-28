@@ -472,10 +472,6 @@ ULONG          retry_shift;
                    Otherwise its SACK/HighRxt filters and retry handling are
                    still in effect and the loss window is not installed. */
                 socket_ptr -> nx_tcp_socket_fast_recovery = NX_FALSE;
-                socket_ptr -> nx_tcp_socket_tx_rto_next = socket_ptr -> nx_tcp_socket_tx_sequence -
-                                                          socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
-                socket_ptr -> nx_tcp_socket_tx_rto_end = socket_ptr -> nx_tcp_socket_tx_sequence;
-
                 /* Retransmit the packet. */
                 _nx_tcp_socket_retransmit(ip_ptr, socket_ptr, NX_FALSE);
             }

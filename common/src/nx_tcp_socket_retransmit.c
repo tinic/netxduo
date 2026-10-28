@@ -383,6 +383,17 @@ UINT           compute_checksum = 1;
 /*    _nx_tcp_socket_state_ack_check        Process ACK number            */
 /*                                                                        */
 /**************************************************************************/
+/* A driver-owned packet still includes its IP (and possibly link) header;
+   a completed one has already been restored to its TCP header. */
+static NX_TCP_HEADER *_nx_tcp_socket_queued_header(NX_PACKET *packet_ptr)
+{
+    if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE)
+    {
+        return (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+    }
+    return (NX_TCP_HEADER *)(packet_ptr -> nx_packet_ip_header + packet_ptr -> nx_packet_ip_header_length);
+}
+
 VOID  _nx_tcp_socket_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, UINT need_fast_retransmit)
 {
 NX_PACKET *packet_ptr;
@@ -390,6 +401,7 @@ ULONG      window;
 ULONG      available;
 ULONG      resent_end;
 ULONG      resent_header;
+NX_TCP_HEADER *queued_header;
 #ifdef NX_ENABLE_TCP_SACK
 ULONG      sack_left[NX_TCP_SACK_MAX_BLOCKS];
 ULONG      sack_right[NX_TCP_SACK_MAX_BLOCKS];
@@ -402,6 +414,28 @@ ULONG      in_flight;
 UINT       sack_blocks;
 UINT       sack_index;
 #endif /* NX_ENABLE_TCP_SACK */
+
+    if ((need_fast_retransmit == NX_FALSE) && (socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE) &&
+        (socket_ptr -> nx_tcp_socket_tx_window_advertised != 0) &&
+        socket_ptr -> nx_tcp_socket_transmit_sent_head && socket_ptr -> nx_tcp_socket_transmit_sent_tail)
+    {
+        /* Use the queued DATA boundaries, not SND.NXT minus outstanding
+           bytes: SND.NXT may also include a FIN, which is not a data byte. */
+        queued_header = _nx_tcp_socket_queued_header(socket_ptr -> nx_tcp_socket_transmit_sent_head);
+        resent_end = queued_header -> nx_tcp_sequence_number;
+        NX_CHANGE_ULONG_ENDIAN(resent_end);
+        socket_ptr -> nx_tcp_socket_tx_rto_next = resent_end;
+
+        packet_ptr = socket_ptr -> nx_tcp_socket_transmit_sent_tail;
+        queued_header = _nx_tcp_socket_queued_header(packet_ptr);
+        resent_end = queued_header -> nx_tcp_sequence_number;
+        resent_header = queued_header -> nx_tcp_header_word_3;
+        NX_CHANGE_ULONG_ENDIAN(resent_end);
+        NX_CHANGE_ULONG_ENDIAN(resent_header);
+        socket_ptr -> nx_tcp_socket_tx_rto_end = resent_end + packet_ptr -> nx_packet_length -
+            ((ULONG)((UCHAR *)queued_header - packet_ptr -> nx_packet_prepend_ptr) +
+             (resent_header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
+    }
 
 #ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
 
@@ -899,7 +933,14 @@ ULONG          length;
         return;
     }
 
-    unacked = socket_ptr -> nx_tcp_socket_tx_sequence - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
+    if (socket_ptr -> nx_tcp_socket_transmit_sent_head == NX_NULL)
+    {
+        socket_ptr -> nx_tcp_socket_tx_rto_next = socket_ptr -> nx_tcp_socket_tx_rto_end;
+        return;
+    }
+    header_ptr = _nx_tcp_socket_queued_header(socket_ptr -> nx_tcp_socket_transmit_sent_head);
+    unacked = header_ptr -> nx_tcp_sequence_number;
+    NX_CHANGE_ULONG_ENDIAN(unacked);
     if ((INT)(unacked - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
     {
         socket_ptr -> nx_tcp_socket_tx_rto_next = unacked;

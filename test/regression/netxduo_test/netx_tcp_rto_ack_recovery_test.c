@@ -89,6 +89,7 @@ NX_INTERFACE *interface;
     socket_0.nx_tcp_socket_connect_interface = interface;
     socket_0.nx_tcp_socket_connect_ip.nxd_ip_version = NX_IP_VERSION_V4;
     socket_0.nx_tcp_socket_connect_ip.nxd_ip_address.v4 = IP_ADDRESS(1, 2, 3, 5);
+    socket_0.nx_tcp_socket_next_hop_address = IP_ADDRESS(1, 2, 3, 5);
     socket_0.nx_tcp_socket_connect_mss = MSS;
     socket_0.nx_tcp_socket_connect_mss2 = MSS * MSS;
     socket_0.nx_tcp_socket_time_to_live = 64;
@@ -198,6 +199,17 @@ ULONG before;
     printf("NetX Test:   TCP RTO ACK Recovery Test................................");
     run_recovery(1000);
     run_recovery(0xFFFFFE00UL);
+
+    fixture(1000);
+    socket_0.nx_tcp_socket_state = NX_TCP_FIN_WAIT_1;
+    socket_0.nx_tcp_socket_tx_sequence++;
+    _nx_tcp_fast_periodic_processing(&ip);
+    ack(1, 64000);
+    /* The existing ACK accounting includes FIN in SND.NXT and grows cwnd
+       by MSS-1 here, so only one complete MSS fits.  The cursor must still
+       resend the first DATA segment rather than skip it by one byte. */
+    check(sent == 2 && log_sequence[1] == 1100,
+          "queued FIN does not shift the first DATA resend boundary");
 
     fixture(1000);
     _nx_tcp_fast_periodic_processing(&ip);
