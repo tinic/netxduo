@@ -355,10 +355,14 @@ ULONG          sack_right;
                             {
                                 sack_left = socket_ptr -> nx_tcp_socket_sack_left[sack_recovery_index];
                                 sack_right = socket_ptr -> nx_tcp_socket_sack_right[sack_recovery_index];
+                                /* A block may include a sent FIN as well as DATA.
+                                   Bound the wire edge by SND.NXT, but require DATA
+                                   below it; a FIN-only block is not loss evidence. */
                                 if (((INT)(sack_left - tcp_header_ptr -> nx_tcp_acknowledgment_number) > 0) &&
                                     ((INT)(sack_right - sack_left) > 0) &&
+                                    ((INT)(socket_ptr -> nx_tcp_socket_tx_sequence - sack_right) >= 0) &&
                                     ((INT)(starting_tx_sequence + socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -
-                                           sack_right) >= 0))
+                                           sack_left) > 0))
                                 {
                                     sack_new_recovery = NX_TRUE;
                                     break;
