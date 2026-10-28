@@ -229,13 +229,17 @@ ULONG before;
         fixture(start);
         socket_0.nx_tcp_socket_sack_permitted = NX_TRUE;
         _nx_tcp_fast_periodic_processing(&ip);
+        socket_0.nx_tcp_socket_sack_block_count = 1;
+        socket_0.nx_tcp_socket_sack_left[0] = start + 4 * MSS;
+        socket_0.nx_tcp_socket_sack_right[0] = start + SEGMENTS * MSS;
         for (i = 1; i <= 3; i++)
         {
-            socket_0.nx_tcp_socket_sack_block_count = 1;
-            socket_0.nx_tcp_socket_sack_left[0] = start + 4 * MSS;
-            socket_0.nx_tcp_socket_sack_right[0] = start + SEGMENTS * MSS;
+            /* Only the first ACK carries the option; subsequent plain
+               ACKs below the block's left edge do not contradict it. */
             ack(i, 64000);
         }
+        check(socket_0.nx_tcp_socket_sack_block_count == 1,
+              "plain ACK below cached left edge preserves uncontradicted SACK");
         check(sent == 4, "post-RTO SACK avoids duplicate tail copies");
         check(socket_0.nx_tcp_socket_tx_rto_next == start + 4 * MSS,
               "post-RTO SACK retains the queued tail cursor");
