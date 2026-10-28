@@ -107,6 +107,7 @@ ULONG elapsed;
         (socket_ptr -> nx_tcp_socket_transmit_sent_head == NX_NULL) ||
         (socket_ptr -> nx_tcp_socket_tx_window_advertised == 0) ||
         (socket_ptr -> nx_tcp_socket_timeout_retries != 0) ||
+        ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0) ||
         (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE) ||
         (socket_ptr -> nx_tcp_socket_rtt_configured == NX_TRUE))
     {
@@ -467,12 +468,12 @@ ULONG          retry_shift;
                 /* Update the transmit sequence that entered fast transmit. */
                 socket_ptr -> nx_tcp_socket_tx_sequence_recover = socket_ptr -> nx_tcp_socket_tx_sequence - 1;
 
+                /* A timeout leaves fast recovery BEFORE retransmitting.
+                   Otherwise its SACK/HighRxt filters and retry handling are
+                   still in effect and the loss window is not installed. */
+                socket_ptr -> nx_tcp_socket_fast_recovery = NX_FALSE;
                 /* Retransmit the packet. */
                 _nx_tcp_socket_retransmit(ip_ptr, socket_ptr, NX_FALSE);
-
-                /* Exit fast recovery procedure. */
-                socket_ptr -> nx_tcp_socket_fast_recovery = NX_FALSE;
-                socket_ptr -> nx_tcp_socket_tx_window_congestion = socket_ptr -> nx_tcp_socket_tx_slow_start_threshold;
             }
             else if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
                      (socket_ptr -> nx_tcp_socket_state == NX_TCP_CLOSING)    ||

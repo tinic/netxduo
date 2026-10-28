@@ -2398,6 +2398,14 @@ typedef struct NX_TCP_SOCKET_STRUCT
     VOID *nx_tcp_socket_tcpip_offload_context;
 #endif /* NX_ENABLE_TCPIP_OFFLOAD */
 
+    /* Timeout recovery resends the old flight under the ACK clock.  The
+       interval [next, end) contains data not yet resent in this recovery;
+       equal bounds mean there is nothing left to resend.  Separate from
+       SACK HighRxt: timeout recovery also works without SACK.  Appended to
+       preserve existing base member offsets; consumers must rebuild. */
+    ULONG       nx_tcp_socket_tx_rto_next;
+    ULONG       nx_tcp_socket_tx_rto_end;
+
     /* Define the port extension in the TCP socket control block. This
        is typically defined to whitespace in nx_port.h.  */
     NX_TCP_SOCKET_MODULE_EXTENSION
