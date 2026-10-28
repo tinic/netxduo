@@ -370,6 +370,14 @@ static void    ntest_0_disconnect_received(NX_TCP_SOCKET *socket)
 
 static UINT    my_packet_process_3_04(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+ULONG payload_offset;
+
+    if ((packet_ptr -> nx_packet_length < 40) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 4) ||
+        (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    payload_offset = 20 + ((ULONG)(packet_ptr -> nx_packet_prepend_ptr[32] >> 4) << 2);
+
 NX_TCP_HEADER   *tcp_header_ptr;
 ULONG           checksum;
 #if defined(__PRODUCT_NETXDUO__)
@@ -384,7 +392,7 @@ ULONG           source_ip, dest_ip;
     tcp_header_ptr = (NX_TCP_HEADER*)((packet_ptr -> nx_packet_prepend_ptr) + 20);
 
     /* Check if it is a DATA packet.  */
-    if((packet_ptr -> nx_packet_length - 40 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 40, MSG, 20)))
+    if((packet_ptr -> nx_packet_length - payload_offset == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 20)))
     {
         if (data_packet_counter == 0)
         {
@@ -451,6 +459,9 @@ ULONG           source_ip, dest_ip;
 
 static void    my_tcp_packet_receive_3_04(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
+/* Capture the data offset before the callback changes header byte order. */
+ULONG payload_offset = (ULONG)(packet_ptr -> nx_packet_prepend_ptr[12] >> 4) << 2;
+
 NX_TCP_HEADER   *header_ptr;
 
     /* Point to TCP header  */
@@ -461,7 +472,7 @@ NX_TCP_HEADER   *header_ptr;
     NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_acknowledgment_number);
 
     /* Check if it is a segment.  */
-    if((packet_ptr -> nx_packet_length - 20 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 20, MSG, 20)))
+    if((packet_ptr -> nx_packet_length - payload_offset == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 20)))
     {
         
         /* Check if client sends a packet with OTW SEQ and proper ACK number.  */

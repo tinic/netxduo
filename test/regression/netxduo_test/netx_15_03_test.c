@@ -359,6 +359,14 @@ static void    ntest_1_disconnect_received(NX_TCP_SOCKET *socket)
 
 static UINT    my_packet_process_15_03(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+ULONG payload_offset;
+
+    if ((packet_ptr -> nx_packet_length < 40) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 4) ||
+        (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    payload_offset = 20 + ((ULONG)(packet_ptr -> nx_packet_prepend_ptr[32] >> 4) << 2);
+
 #if defined(__PRODUCT_NETXDUO__)
 NX_IPV4_HEADER    *ip_header_ptr = (NX_IPV4_HEADER*)(packet_ptr -> nx_packet_prepend_ptr);
 #else
@@ -366,7 +374,7 @@ NX_IP_HEADER    *ip_header_ptr = (NX_IP_HEADER*)(packet_ptr -> nx_packet_prepend
 #endif
 
     /* Drop the packet.  */
-    if ((packet_ptr -> nx_packet_length - 40 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 40, MSG, 20)))
+    if ((packet_ptr -> nx_packet_length - payload_offset == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 20)))
     {
         if(drop_counter == 0)
         {

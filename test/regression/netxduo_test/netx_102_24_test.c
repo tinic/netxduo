@@ -55,7 +55,7 @@ static void    ntest_1_entry(ULONG thread_input);
 static void    ntest_1_connect_received(NX_TCP_SOCKET *server_socket, UINT port);
 static void    ntest_1_disconnect_received(NX_TCP_SOCKET *server_socket);
 static void    my_tcp_packet_receive_102_24(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
-extern void    _nx_ram_network_driver(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern void    _nx_ram_network_driver_tcp(struct NX_IP_DRIVER_STRUCT *driver_req);
 
 
 /* Define what the initial system looks like.  */
@@ -101,12 +101,12 @@ UINT       status;
         error_counter++;
 
     /* Create an IP instance.  */
-    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                           pointer, 2048, 1);
     pointer = pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                            pointer, 2048, 1);
     pointer = pointer + 2048;
 

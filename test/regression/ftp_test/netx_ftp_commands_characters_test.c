@@ -315,7 +315,8 @@ void           my_ftp_packet_receive_server(NX_IP *ip_ptr, NX_PACKET *packet_ptr
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 
-    message = packet_ptr -> nx_packet_prepend_ptr + 20;
+    message = packet_ptr -> nx_packet_prepend_ptr +
+        ((tcp_header_ptr -> nx_tcp_header_word_3 >> 28) << 2);
 
     if((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT) && *message == 'M' )
     {
@@ -344,7 +345,8 @@ UCHAR            *message;
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 
-    message = packet_ptr -> nx_packet_prepend_ptr + 20;
+    message = packet_ptr -> nx_packet_prepend_ptr +
+        ((tcp_header_ptr -> nx_tcp_header_word_3 >> 28) << 2);
 
     if((packet_ptr -> nx_packet_length > 23) && (!memcmp(message,"200",3)))
         command_success_counter++;

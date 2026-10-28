@@ -360,10 +360,13 @@ NX_TCP_HEADER    *tcp_header_ptr;
 
 static void    my_tcp_packet_receive_1_27_01(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
+/* Capture the data offset before the callback changes header byte order. */
+ULONG payload_offset = (ULONG)(packet_ptr -> nx_packet_prepend_ptr[12] >> 4) << 2;
+
 
     if(client_socket.nx_tcp_socket_state == NX_TCP_SYN_SENT)
     {
-        if((packet_ptr->nx_packet_length == 40) && !(memcmp(packet_ptr->nx_packet_prepend_ptr + 20, MSG, 20)))
+        if((packet_ptr->nx_packet_length - payload_offset == 20) && !(memcmp(packet_ptr->nx_packet_prepend_ptr + payload_offset, MSG, 20)))
         {
             data_packet_counter++;
 

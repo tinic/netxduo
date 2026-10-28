@@ -333,12 +333,20 @@ NX_TCP_HEADER   *tcp_header_ptr;
 
 static UINT    my_packet_process_11_26(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+ULONG payload_offset;
+
+    if ((packet_ptr -> nx_packet_length < 40) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 4) ||
+        (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    payload_offset = 20 + ((ULONG)(packet_ptr -> nx_packet_prepend_ptr[32] >> 4) << 2);
+
 
 UCHAR   *data_ptr;
 
     if(client_socket.nx_tcp_socket_state == NX_TCP_CLOSE_WAIT)
     {
-        data_ptr = packet_ptr -> nx_packet_prepend_ptr + 40;
+        data_ptr = packet_ptr -> nx_packet_prepend_ptr + payload_offset;
 
         if(memcmp(data_ptr, data_11_26, 20) == 0)
             data_counter++;

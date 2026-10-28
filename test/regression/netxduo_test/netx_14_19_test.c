@@ -26,7 +26,14 @@ extern void    test_control_return(UINT status);
 
 #define     DEMO_STACK_SIZE    2048
 
-#define MSG "----------abcdefgh20----------ABCDEFGH40----------klmnopqr60----------KLMNOPQR80--------------------"
+/* Preserve the SWS premise when the configured minimum exceeds MSS 88. */
+#if defined(NX_ENABLE_TCP_MSS_CHECK) && (NX_TCP_MSS_MINIMUM > 88)
+#define TEST_PEER_MSS NX_TCP_MSS_MINIMUM
+#else
+#define TEST_PEER_MSS 88
+#endif
+static CHAR message[TEST_PEER_MSS];
+#define MSG message
 
 /* Define the ThreadX and NetX object control blocks...  */
 
@@ -52,7 +59,7 @@ static void    ntest_0_entry(ULONG thread_input);
 static void    ntest_1_entry(ULONG thread_input);
 static void    ntest_0_connect_received(NX_TCP_SOCKET *server_socket, UINT port);
 static void    ntest_0_disconnect_received(NX_TCP_SOCKET *server_socket);
-extern void    _nx_ram_network_driver(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern void    _nx_ram_network_driver_tcp(struct NX_IP_DRIVER_STRUCT *driver_req);
 
 /* Define what the initial system looks like.  */
 
@@ -64,9 +71,13 @@ void           netx_14_19_application_define(void *first_unused_memory)
 {
 CHAR       *pointer;
 UINT       status;
+UINT       i;
 
     /* Setup the working pointer.  */
     pointer = (CHAR *) first_unused_memory;
+
+    for (i = 0; i < sizeof(message); i++)
+        message[i] = (CHAR)('A' + i % 26);
 
     error_counter = 0;
     data_packet_counter = 0;
@@ -98,12 +109,12 @@ UINT       status;
         error_counter++;
 
     /* Create an IP instance.  */
-    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                           pointer, 2048, 1);
     pointer = pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                            pointer, 2048, 1);
     pointer = pointer + 2048;
 
@@ -160,7 +171,7 @@ ULONG        rcv_length;
 
     /* Create a socket.  */
     status = nx_tcp_socket_create(&ip_0, &server_socket, "Server Socket", 
-                                  NX_IP_NORMAL, NX_FRAGMENT_OKAY, NX_IP_TIME_TO_LIVE, 200,
+                                  NX_IP_NORMAL, NX_FRAGMENT_OKAY, NX_IP_TIME_TO_LIVE, 2 * TEST_PEER_MSS + 24,
                                   NX_NULL, ntest_0_disconnect_received);
 
     /* Check for error.  */

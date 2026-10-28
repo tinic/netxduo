@@ -366,12 +366,15 @@ NX_TCP_HEADER *tcp_header_ptr;
 
 static void    my_tcp_packet_receive_8_02(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
+/* Capture the data offset before the callback changes header byte order. */
+ULONG payload_offset = (ULONG)(packet_ptr -> nx_packet_prepend_ptr[12] >> 4) << 2;
+
 
 NX_TCP_HEADER  *tcp_header_ptr;
 
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr->nx_packet_prepend_ptr;
 
-    if ((packet_ptr -> nx_packet_length - 20 == 20) && !memcmp(packet_ptr -> nx_packet_prepend_ptr + 20, MSG, 20))
+    if ((packet_ptr -> nx_packet_length - payload_offset == 20) && !memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 20))
     {
         NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 

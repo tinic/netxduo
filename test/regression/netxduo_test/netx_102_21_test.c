@@ -14,6 +14,14 @@
 #include   "tx_api.h"
 #include   "nx_api.h"
 #include   "nx_tcp.h"
+
+/* These 20-byte application writes expose a two-segment flight. RFC 5827
+   repairs it on the first duplicate ACK when early retransmit is enabled. */
+#ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
+#define TEST_DUPACK_THRESHOLD 1
+#else
+#define TEST_DUPACK_THRESHOLD 3
+#endif
 #include   "nx_ram_network_driver_test_1500.h"
 extern void    test_control_return(UINT status);
 
@@ -49,7 +57,7 @@ static void    ntest_0_entry(ULONG thread_input);
 static void    ntest_1_entry(ULONG thread_input);
 static void    ntest_0_connect_received(NX_TCP_SOCKET *server_socket, UINT port);
 static void    ntest_0_disconnect_received(NX_TCP_SOCKET *server_socket);
-extern void    _nx_ram_network_driver(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern void    _nx_ram_network_driver_tcp(struct NX_IP_DRIVER_STRUCT *driver_req);
 extern void    _nx_ram_network_driver_1500(struct NX_IP_DRIVER_STRUCT *driver_req);
 extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
 static UINT    my_packet_process_102_21(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
@@ -107,7 +115,7 @@ UINT           status;
     pointer = pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                            pointer, 2048, 1);
     pointer = pointer + 2048;
 
@@ -361,7 +369,7 @@ NX_PACKET    *packet_ptr;
         error_counter++;
 
     /* Determine if the test was successful.  */
-    if(error_counter || (data_packet_counter != 4) ||  (duplicate_ack_counter != 3) || (is_set != NX_TRUE))
+    if(error_counter || (data_packet_counter != 4) ||  (duplicate_ack_counter != TEST_DUPACK_THRESHOLD) || (is_set != NX_TRUE))
     {
         printf("ERROR!\n");
         test_control_return(1);
@@ -392,10 +400,19 @@ static void    ntest_0_disconnect_received(NX_TCP_SOCKET *socket)
 static UINT    my_packet_process_102_21(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
 NX_TCP_HEADER        *tcp_header_ptr;
+ULONG                 header_length;
+UCHAR                *data = packet_ptr -> nx_packet_prepend_ptr;
 
-    tcp_header_ptr = (NX_TCP_HEADER *)(packet_ptr -> nx_packet_prepend_ptr + 20);
+    if ((packet_ptr -> nx_packet_length < 40) || ((data[0] >> 4) != 4) ||
+        (data[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    tcp_header_ptr = (NX_TCP_HEADER *)(data + 20);
+    header_length = 20 + ((ULONG)(data[32] >> 4) << 2);
+    if ((header_length < 40) || (header_length > packet_ptr -> nx_packet_length))
+        return NX_TRUE;
 
-    if((packet_ptr -> nx_packet_length-40 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr+40, MSG, 20)))
+    if ((packet_ptr -> nx_packet_length - header_length == 20) &&
+        !memcmp(data + header_length, MSG, 20))
     {
         /* Drop the original, then inspect the fast retransmission itself.
            A fast retransmission is not a timeout retry.  */
@@ -411,7 +428,8 @@ NX_TCP_HEADER        *tcp_header_ptr;
 
         else if(server_socket.nx_tcp_socket_fast_recovery == NX_TRUE)
         {
-            if(server_socket.nx_tcp_socket_timeout_retries != 0)
+            if ((server_socket.nx_tcp_socket_timeout_retries != 0) ||
+                (server_socket.nx_tcp_socket_duplicated_ack_received != TEST_DUPACK_THRESHOLD))
                 error_counter++;
 
             if((server_socket.nx_tcp_socket_tx_slow_start_threshold == server_socket.nx_tcp_socket_tx_outstanding_bytes / 2) || (server_socket.nx_tcp_socket_tx_slow_start_threshold >= server_socket.nx_tcp_socket_connect_mss * 2))
@@ -439,7 +457,7 @@ NX_TCP_HEADER        *tcp_header_ptr;
         if(tcp_header_ptr ->nx_tcp_acknowledgment_number == seq_number)
             duplicate_ack_counter++;
 
-        if(duplicate_ack_counter == 3)
+        if(duplicate_ack_counter == TEST_DUPACK_THRESHOLD)
             ip_0.nx_ip_tcp_packet_receive = _nx_tcp_packet_receive;
 
         NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_acknowledgment_number);

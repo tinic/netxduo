@@ -362,7 +362,8 @@ void           my_ftp_packet_receive_server(NX_IP *ip_ptr, NX_PACKET *packet_ptr
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 
-    message = packet_ptr -> nx_packet_prepend_ptr + 20;
+    message = packet_ptr -> nx_packet_prepend_ptr +
+        ((tcp_header_ptr -> nx_tcp_header_word_3 >> 28) << 2);
 
     /* Check if our host can accept these commands*/
     if(!memcmp(message,"USER ",5))
@@ -395,7 +396,8 @@ UCHAR            *message;
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 
-    message = packet_ptr -> nx_packet_prepend_ptr + 20;
+    message = packet_ptr -> nx_packet_prepend_ptr +
+        ((tcp_header_ptr -> nx_tcp_header_word_3 >> 28) << 2);
 
     /* Check if our host can accept these commands successfully*/
     if(!memcmp(message,"230 Logged in",13))
