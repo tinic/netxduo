@@ -217,6 +217,82 @@ ULONG timer;
     check(sent == before, "completed recovery sends nothing");
 }
 
+#ifdef NX_ENABLE_TCP_SACK
+static void fresh_sack_tail(ULONG start)
+{
+UINT scenario;
+UINT i;
+ULONG before;
+
+    for (scenario = 0; scenario < 3; scenario++)
+    {
+        fixture(start);
+        socket_0.nx_tcp_socket_sack_permitted = NX_TRUE;
+        _nx_tcp_fast_periodic_processing(&ip);
+        socket_0.nx_tcp_socket_sack_block_count = 1;
+        socket_0.nx_tcp_socket_sack_left[0] = start + 4 * MSS;
+        socket_0.nx_tcp_socket_sack_right[0] = start + SEGMENTS * MSS;
+        for (i = 1; i <= 3; i++)
+        {
+            /* Only the first ACK carries the option; subsequent plain
+               ACKs below the block's left edge do not contradict it. */
+            ack(i, 64000);
+        }
+        check(socket_0.nx_tcp_socket_sack_block_count == 1,
+              "plain ACK below cached left edge preserves uncontradicted SACK");
+        check(sent == 4, "post-RTO SACK avoids duplicate tail copies");
+        check(socket_0.nx_tcp_socket_tx_rto_next == start + 4 * MSS,
+              "post-RTO SACK retains the queued tail cursor");
+        for (i = 0; i < 4 && i < sent; i++)
+        {
+            check(log_sequence[i] == start + i * MSS, "missing prefix still follows the ACK clock");
+        }
+        before = sent;
+        if (scenario == 0)
+        {
+            socket_0.nx_tcp_socket_sack_block_count = 0;
+            ack(SEGMENTS, 64000);
+            check(sent == before, "cumulative ACK completes tail without retransmission");
+        }
+        else
+        {
+            if (scenario == 2)
+            {
+                socket_0.nx_tcp_socket_timeout = 1;
+                _nx_tcp_fast_periodic_processing(&ip);
+                check(sent == before + 1 && log_sequence[before] == start + 3 * MSS,
+                      "next RTO recovers current head despite prior tail SACK");
+                check(socket_0.nx_tcp_socket_sack_block_count == 0, "next RTO clears post-RTO SACK too");
+            }
+            before = sent;
+            /* Plain ACK: leave the previous option's blocks cached, as
+               socket_packet_process does when there is no option area. */
+            ack(4, 64000);
+            check(sent > before && log_sequence[before] == start + 4 * MSS,
+                  "withdrawn SACK resumes at the preserved tail cursor");
+            check(socket_0.nx_tcp_socket_sack_block_count == 0,
+                  "ACK entering cached SACK block invalidates that old claim");
+            for (i = 5; i <= SEGMENTS; i++) { ack(i, 64000); }
+        }
+        check(socket_0.nx_tcp_socket_transmit_sent_count == 0 && pool.nx_packet_pool_available == SEGMENTS,
+              "fresh-SACK path cumulatively releases every packet");
+    }
+
+    fixture(start);
+    socket_0.nx_tcp_socket_sack_permitted = NX_TRUE;
+    _nx_tcp_fast_periodic_processing(&ip);
+    for (i = 1; i <= SEGMENTS; i++)
+    {
+        socket_0.nx_tcp_socket_sack_block_count = 1;
+        socket_0.nx_tcp_socket_sack_left[0] = start + 4 * MSS;
+        socket_0.nx_tcp_socket_sack_right[0] = start + 6 * MSS;
+        ack(i, 64000);
+    }
+    check(sent == SEGMENTS && log_sequence[6] == start + 6 * MSS && log_sequence[7] == start + 7 * MSS,
+          "interior SACK does not stop recovery of missing later data");
+}
+#endif /* NX_ENABLE_TCP_SACK */
+
 static void test_entry(ULONG input)
 {
 ULONG before;
@@ -228,6 +304,10 @@ NX_TCP_HEADER *header;
     printf("NetX Test:   TCP RTO ACK Recovery Test................................");
     run_recovery(1000);
     run_recovery(0xFFFFFE00UL);
+#ifdef NX_ENABLE_TCP_SACK
+    fresh_sack_tail(1000);
+    fresh_sack_tail(0xFFFFFE00UL);
+#endif /* NX_ENABLE_TCP_SACK */
 
     fixture(1000);
     socket_0.nx_tcp_socket_state = NX_TCP_FIN_WAIT_1;

@@ -958,6 +958,9 @@ ULONG          in_flight;
 ULONG          sequence;
 ULONG          header;
 ULONG          length;
+#ifdef NX_ENABLE_TCP_SACK
+UINT           sack_index;
+#endif /* NX_ENABLE_TCP_SACK */
 
     if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) <= 0)
     {
@@ -1030,6 +1033,27 @@ ULONG          length;
             {
                 break;
             }
+
+#ifdef NX_ENABLE_TCP_SACK
+            /* The RTO discarded the old scoreboard.  A SACK received since
+               then can show that the entire remaining tail is still held
+               by the peer (RFC 6675 section 5.1).  Leave the cursor here:
+               if a later ACK withdraws that information, or another RTO
+               discards it, these queued bytes must remain recoverable.
+               An interior SACK island cannot stop the walk, because data
+               beyond it may still be missing.  No send credit is changed. */
+            for (sack_index = 0; sack_index < socket_ptr -> nx_tcp_socket_sack_block_count; sack_index++)
+            {
+                if (((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
+                           socket_ptr -> nx_tcp_socket_sack_left[sack_index]) > 0) &&
+                    ((INT)(sequence - socket_ptr -> nx_tcp_socket_sack_left[sack_index]) >= 0) &&
+                    ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
+                           socket_ptr -> nx_tcp_socket_tx_rto_end) >= 0))
+                {
+                    return;
+                }
+            }
+#endif /* NX_ENABLE_TCP_SACK */
 
 #ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
             socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
