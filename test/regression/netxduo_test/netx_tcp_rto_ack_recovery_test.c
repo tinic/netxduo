@@ -26,12 +26,49 @@ static TX_THREAD test_thread;
 static NX_IP ip;
 static NX_TCP_SOCKET socket_0;
 static NX_PACKET_POOL pool;
-static NX_PACKET packets[SEGMENTS];
-static ULONG storage[SEGMENTS][128];
+static NX_PACKET packets[SEGMENTS + 1];
+static ULONG storage[SEGMENTS + 1][128];
 static ULONG log_sequence[64];
 static ULONG sent;
 static ULONG failures;
 static ULONG initial_sequence;
+
+static NX_PACKET *prepare_packet(UINT index, ULONG sequence, ULONG length)
+{
+NX_PACKET *packet = &packets[index];
+NX_TCP_HEADER *header;
+
+    memset(packet, 0, sizeof(*packet));
+    packet -> nx_packet_data_start = (UCHAR *)storage[index];
+    packet -> nx_packet_data_end = (UCHAR *)(storage[index] + 128);
+    packet -> nx_packet_prepend_ptr = (UCHAR *)(storage[index] + 32);
+    packet -> nx_packet_append_ptr = packet -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER) + length;
+    packet -> nx_packet_length = sizeof(NX_TCP_HEADER) + length;
+    packet -> nx_packet_pool_owner = &pool;
+    packet -> nx_packet_ip_version = NX_IP_VERSION_V4;
+    packet -> nx_packet_address.nx_packet_interface_ptr = &ip.nx_ip_interface[0];
+    packet -> nx_packet_queue_next = (NX_PACKET *)NX_DRIVER_TX_DONE;
+    packet -> nx_packet_union_next.nx_packet_tcp_queue_next = (NX_PACKET *)NX_PACKET_ENQUEUED;
+    header = (NX_TCP_HEADER *)packet -> nx_packet_prepend_ptr;
+    header -> nx_tcp_sequence_number = sequence;
+    header -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | 64000;
+    NX_CHANGE_ULONG_ENDIAN(header -> nx_tcp_sequence_number);
+    NX_CHANGE_ULONG_ENDIAN(header -> nx_tcp_header_word_3);
+    return packet;
+}
+
+/* Represent a transmit whose driver has not yet completed.  Completion uses
+   the real packet-release path to remove the IP header again. */
+static void driver_owns(UINT index)
+{
+NX_PACKET *packet = &packets[index];
+
+    packet -> nx_packet_prepend_ptr -= sizeof(NX_IPV4_HEADER);
+    packet -> nx_packet_length += sizeof(NX_IPV4_HEADER);
+    packet -> nx_packet_ip_header = packet -> nx_packet_prepend_ptr;
+    packet -> nx_packet_ip_header_length = sizeof(NX_IPV4_HEADER);
+    packet -> nx_packet_queue_next = NX_NULL;
+}
 
 static void check(UINT condition, const CHAR *description)
 {
@@ -64,7 +101,6 @@ ULONG sequence;
 static void fixture(ULONG start)
 {
 UINT i;
-NX_TCP_HEADER *header;
 NX_INTERFACE *interface;
 
     memset(&ip, 0, sizeof(ip));
@@ -108,25 +144,13 @@ NX_INTERFACE *interface;
     socket_0.nx_tcp_socket_transmit_sent_head = &packets[0];
     socket_0.nx_tcp_socket_transmit_sent_tail = &packets[SEGMENTS - 1];
     socket_0.nx_tcp_socket_transmit_sent_count = SEGMENTS;
+    socket_0.nx_tcp_socket_transmit_queue_maximum = SEGMENTS + 2;
 
     for (i = 0; i < SEGMENTS; i++)
     {
-        packets[i].nx_packet_data_start = (UCHAR *)storage[i];
-        packets[i].nx_packet_data_end = (UCHAR *)(storage[i] + 128);
-        packets[i].nx_packet_prepend_ptr = (UCHAR *)(storage[i] + 32);
-        packets[i].nx_packet_append_ptr = packets[i].nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER) + MSS;
-        packets[i].nx_packet_length = sizeof(NX_TCP_HEADER) + MSS;
-        packets[i].nx_packet_pool_owner = &pool;
-        packets[i].nx_packet_ip_version = NX_IP_VERSION_V4;
-        packets[i].nx_packet_address.nx_packet_interface_ptr = interface;
-        packets[i].nx_packet_queue_next = (NX_PACKET *)NX_DRIVER_TX_DONE;
+        prepare_packet(i, start + i * MSS, MSS);
         packets[i].nx_packet_union_next.nx_packet_tcp_queue_next =
             (i + 1 < SEGMENTS) ? &packets[i + 1] : (NX_PACKET *)NX_PACKET_ENQUEUED;
-        header = (NX_TCP_HEADER *)packets[i].nx_packet_prepend_ptr;
-        header -> nx_tcp_sequence_number = start + i * MSS;
-        header -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | 64000;
-        NX_CHANGE_ULONG_ENDIAN(header -> nx_tcp_sequence_number);
-        NX_CHANGE_ULONG_ENDIAN(header -> nx_tcp_header_word_3);
     }
 }
 
@@ -194,6 +218,9 @@ ULONG timer;
 static void test_entry(ULONG input)
 {
 ULONG before;
+UINT i;
+NX_PACKET *packet;
+NX_TCP_HEADER *header;
 
     NX_PARAMETER_NOT_USED(input);
     printf("NetX Test:   TCP RTO ACK Recovery Test................................");
@@ -212,6 +239,90 @@ ULONG before;
           (sent - 1) * MSS <= socket_0.nx_tcp_socket_tx_window_congestion &&
           sent * MSS > socket_0.nx_tcp_socket_tx_window_congestion,
           "queued FIN does not shift the first DATA resend boundary");
+
+    fixture(1000);
+    socket_0.nx_tcp_socket_tx_window_advertised = MSS / 2;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(sent == 1 && log_sequence[0] == 1000, "RTO resends old head when receiver window shrinks below MSS");
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(sent == 2 && log_sequence[1] == 1000, "small nonzero window does not suppress the next RTO");
+
+    fixture(1000);
+    _nx_tcp_fast_periodic_processing(&ip);
+    ack(1, 64000);
+    ack(1, 64000);
+    ack(1, 64000);
+    ack(1, 64000);
+    check(socket_0.nx_tcp_socket_fast_recovery == NX_TRUE, "duplicate ACKs can enter new fast recovery after RTO");
+    check(socket_0.nx_tcp_socket_tx_rto_next == socket_0.nx_tcp_socket_tx_rto_end,
+          "new fast recovery discards old timeout cursor");
+    before = sent;
+    ack(SEGMENTS, 64000);
+    check(socket_0.nx_tcp_socket_fast_recovery == NX_FALSE && sent == before,
+          "exiting fast recovery does not revive timeout resends");
+
+    fixture(1000);
+    socket_0.nx_tcp_socket_tx_rto_next = 1000;
+    socket_0.nx_tcp_socket_tx_rto_end = 1000 + (SEGMENTS + 1) * MSS;
+    _nx_tcp_socket_retransmit_after_timeout(&ip, &socket_0);
+    check(sent == 0 && socket_0.nx_tcp_socket_tx_rto_next == socket_0.nx_tcp_socket_tx_rto_end,
+          "inconsistent old-flight boundary cannot underflow credit");
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(sent == 1, "ordinary RTO still progresses after rejecting invalid cursor");
+
+    fixture(1000);
+    driver_owns(0);
+    driver_owns(SEGMENTS - 1);
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(sent == 0 && socket_0.nx_tcp_socket_tx_rto_next == 1000 &&
+          socket_0.nx_tcp_socket_tx_rto_end == 1000 + SEGMENTS * MSS,
+          "RTO reads driver-owned DATA bounds and waits for head completion");
+    _nx_packet_transmit_release(&packets[0]);
+    socket_0.nx_tcp_socket_timeout = 1;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(sent == 1 && log_sequence[0] == 1000, "head retransmits after driver completion");
+
+    fixture(1000);
+    _nx_tcp_fast_periodic_processing(&ip);
+    driver_owns(SEGMENTS - 1);
+    for (i = 1; i <= 5; i++)
+    {
+        ack(i, 64000);
+    }
+    packet = prepare_packet(SEGMENTS, 1000 + SEGMENTS * MSS, MSS);
+    packet -> nx_packet_prepend_ptr += sizeof(NX_TCP_HEADER);
+    packet -> nx_packet_length = MSS;
+    packet -> nx_packet_queue_next = NX_NULL;
+    packet -> nx_packet_union_next.nx_packet_tcp_queue_next = (NX_PACKET *)NX_PACKET_ALLOCATED;
+    check(_nx_tcp_socket_send_internal(&socket_0, packet, NX_NO_WAIT) == NX_SUCCESS,
+          "normal sender adds new data beyond the old flight");
+    before = sent;
+    _nx_packet_transmit_release(&packets[SEGMENTS - 1]);
+    ack(6, 2 * MSS);
+    check(sent == before, "new data consumes recovery window credit");
+    ack(7, 2 * MSS);
+    check(sent == before + 1 && log_sequence[before] == 1700,
+          "next advancing ACK resends only old data when credit opens");
+    check(socket_0.nx_tcp_socket_tx_rto_end == 1800, "new data does not extend old-flight boundary");
+
+    /* Real NetX FINs are outside the DATA queue (the FIN_WAIT_1 test above
+       covers that).  Defensively, a zero-payload queued tail must also not
+       be mistaken for data that the ACK clock should resend. */
+    fixture(1000);
+    packet = prepare_packet(SEGMENTS, 1800, 0);
+    header = (NX_TCP_HEADER *)packet -> nx_packet_prepend_ptr;
+    header -> nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | NX_TCP_FIN_BIT | 64000;
+    NX_CHANGE_ULONG_ENDIAN(header -> nx_tcp_header_word_3);
+    packets[SEGMENTS - 1].nx_packet_union_next.nx_packet_tcp_queue_next = packet;
+    socket_0.nx_tcp_socket_transmit_sent_tail = packet;
+    socket_0.nx_tcp_socket_transmit_sent_count++;
+    socket_0.nx_tcp_socket_tx_sequence++;
+    _nx_tcp_fast_periodic_processing(&ip);
+    check(socket_0.nx_tcp_socket_tx_rto_end == 1800, "zero-length tail adds no DATA to old-flight boundary");
+    socket_0.nx_tcp_socket_tx_window_congestion = 64000;
+    _nx_tcp_socket_retransmit_after_timeout(&ip, &socket_0);
+    check(sent == SEGMENTS, "ACK-driven walk never resends zero-payload tail");
 
     fixture(1000);
     _nx_tcp_fast_periodic_processing(&ip);

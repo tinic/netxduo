@@ -48,6 +48,17 @@
 #define NX_TCP_SEGMENT_HEADER_LENGTH    ((ULONG)sizeof(NX_TCP_HEADER))
 #endif /* NX_ENABLE_TCP_TIMESTAMP */
 
+/* A driver-owned packet still includes its IP (and possibly link) header;
+   a completed one has already been restored to its TCP header. */
+static NX_TCP_HEADER *_nx_tcp_socket_queued_header(NX_PACKET *packet_ptr)
+{
+    if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE)
+    {
+        return (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+    }
+    return (NX_TCP_HEADER *)(packet_ptr -> nx_packet_ip_header + packet_ptr -> nx_packet_ip_header_length);
+}
+
 
 /**************************************************************************/
 /*                                                                        */
@@ -383,17 +394,6 @@ UINT           compute_checksum = 1;
 /*    _nx_tcp_socket_state_ack_check        Process ACK number            */
 /*                                                                        */
 /**************************************************************************/
-/* A driver-owned packet still includes its IP (and possibly link) header;
-   a completed one has already been restored to its TCP header. */
-static NX_TCP_HEADER *_nx_tcp_socket_queued_header(NX_PACKET *packet_ptr)
-{
-    if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE)
-    {
-        return (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
-    }
-    return (NX_TCP_HEADER *)(packet_ptr -> nx_packet_ip_header + packet_ptr -> nx_packet_ip_header_length);
-}
-
 VOID  _nx_tcp_socket_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, UINT need_fast_retransmit)
 {
 NX_PACKET *packet_ptr;
@@ -583,6 +583,10 @@ UINT       sack_index;
             /* Now TCP is in fast recovery procedure. */
             socket_ptr -> nx_tcp_socket_fast_recovery = NX_TRUE;
 
+            /* Fast recovery supersedes the earlier timeout walk. */
+            socket_ptr -> nx_tcp_socket_tx_rto_next = 0;
+            socket_ptr -> nx_tcp_socket_tx_rto_end = 0;
+
             /* Update the transmit sequence that enters fast transmit. */
             socket_ptr -> nx_tcp_socket_tx_sequence_recover = socket_ptr -> nx_tcp_socket_tx_sequence - 1;
 
@@ -609,11 +613,6 @@ UINT       sack_index;
 
     /* Get available size of packet that can be sent. */
     available = socket_ptr -> nx_tcp_socket_tx_window_congestion;
-    if ((socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE) &&
-        (available > socket_ptr -> nx_tcp_socket_tx_window_advertised))
-    {
-        available = socket_ptr -> nx_tcp_socket_tx_window_advertised;
-    }
 
 #ifdef NX_ENABLE_TCP_SACK
 
@@ -912,10 +911,42 @@ UINT       sack_index;
 }
 
 
-/* ACK-clocked slow start after an RTO.  Data beyond the old flight is sent
-   by the normal send path.  The cursor counts only this recovery's resends
-   as in flight, so data presumed lost at the RTO cannot block every send
-   until the next timer.  No SACK information from before the RTO is used. */
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_after_timeout              PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Eclipse ThreadX Contributors                                        */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function performs ACK-clocked slow start after an RTO.  The     */
+/*    normal send path sends new data beyond the old flight.  The cursor   */
+/*    excludes old data presumed lost from the in-flight count, preventing */
+/*    that data from blocking every resend until the next timeout.  SACK   */
+/*    information from before the RTO is not used.                         */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                Pointer to IP control block   */
+/*    socket_ptr                            Pointer to TCP socket         */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_packet       Resend a queued segment       */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_socket_state_ack_check                                      */
+/*                                                                        */
+/**************************************************************************/
 VOID _nx_tcp_socket_retransmit_after_timeout(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
 {
 NX_PACKET     *packet_ptr;
@@ -965,6 +996,14 @@ ULONG          length;
     }
     /* Include any new data sent beyond the old flight as well as the old
        segments already resent.  Only [next, end) is presumed lost. */
+    if ((socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) >
+        socket_ptr -> nx_tcp_socket_tx_outstanding_bytes)
+    {
+        /* An inconsistent old-flight boundary must not wrap the credit.
+           Leave progress to the ordinary retransmission timeout. */
+        socket_ptr -> nx_tcp_socket_tx_rto_next = socket_ptr -> nx_tcp_socket_tx_rto_end;
+        return;
+    }
     in_flight = socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -
                 (socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next);
     if (available <= in_flight)
