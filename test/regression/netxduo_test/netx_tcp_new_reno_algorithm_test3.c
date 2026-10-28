@@ -423,7 +423,11 @@ static void    thread_1_entry(ULONG thread_input)
     tx_thread_relinquish();   
 
     /* Determine if the test was successful.  */
+#ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
+    if ((error_counter) || (packet_counter != 4) || (ack_counter < 2))
+#else
     if ((error_counter) || (packet_counter != 6) || (ack_counter < 3))
+#endif
     {
         notify;
         printf("ERROR!\n");
@@ -451,7 +455,8 @@ NX_TCP_HEADER        *tcp_header_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
 
     /* Check the data length.  */
-    if(packet_ptr -> nx_packet_length == 60)
+    if(packet_ptr -> nx_packet_length ==
+       (ULONG)(20 + (packet_ptr -> nx_packet_prepend_ptr[32] >> 4) * 4 + 20))
     {
 
         /* Update the counter.  */
@@ -489,6 +494,20 @@ NX_TCP_HEADER        *tcp_header_ptr;
                 error_counter ++;
             }
         }
+#ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
+        else if ((packet_counter == 3) || (packet_counter == 4))
+        {
+            /* RFC 5827: two outstanding segments need one duplicate ACK.
+               Repair the hole before RTO, then transmit the unsent third segment.  */
+            if ((tcp_header_ptr -> nx_tcp_sequence_number !=
+                 client_tx_sequnce + (packet_counter == 3 ? 0 : 40)) ||
+                (client_socket.nx_tcp_socket_fast_recovery != NX_TRUE) ||
+                (client_socket.nx_tcp_socket_duplicated_ack_received != 1) ||
+                (client_socket.nx_tcp_socket_tx_sequence_recover != client_tx_sequnce + 39) ||
+                ((tx_time_get() - start_ticks) >= (NX_IP_PERIODIC_RATE - _nx_tcp_fast_timer_rate)))
+                error_counter++;
+        }
+#else
         else if (packet_counter == 3)
         {
 
@@ -606,6 +625,8 @@ NX_TCP_HEADER        *tcp_header_ptr;
                 error_counter ++;
             }
         }
+#endif
+
     }
     
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
@@ -630,6 +651,24 @@ NX_TCP_HEADER        *tcp_header_ptr;
         /* Update the counter.  */
         ack_counter++;
 
+#ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
+        if (ack_counter == 1)
+        {
+            if ((tcp_header_ptr -> nx_tcp_acknowledgment_number != client_tx_sequnce) ||
+                (client_socket.nx_tcp_socket_fast_recovery != NX_FALSE) ||
+                (client_socket.nx_tcp_socket_duplicated_ack_received != 0) ||
+                (client_socket.nx_tcp_socket_tx_sequence_recover != client_tx_sequnce - 1))
+                error_counter++;
+        }
+        else if (ack_counter == 2)
+        {
+            if ((tcp_header_ptr -> nx_tcp_acknowledgment_number != client_tx_sequnce + 60) ||
+                (client_socket.nx_tcp_socket_fast_recovery != NX_TRUE) ||
+                (client_socket.nx_tcp_socket_duplicated_ack_received != 1) ||
+                (client_socket.nx_tcp_socket_tx_sequence_recover != client_tx_sequnce + 39))
+                error_counter++;
+        }
+#else
         /* This should be duplicate ACKs for 1th segment.  */
         if ((ack_counter == 1) || (ack_counter == 2))
         {
@@ -680,6 +719,7 @@ NX_TCP_HEADER        *tcp_header_ptr;
                 error_counter ++;
             }
         }
+#endif
         /* Other ACKs for window update when call nx_tcp_socket_receive API.  */
     }
 

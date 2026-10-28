@@ -107,6 +107,7 @@ UINT    status;
     if (status)
         error_counter++;
 
+
     /* Enable TCP processing for both IP instances.  */
     status =  nx_tcp_enable(&ip_0);
     status += nx_tcp_enable(&ip_1);
@@ -135,6 +136,16 @@ NX_PACKET  *packet_ptr;
         test_control_return(1);
     }
 
+
+#ifdef NX_ENABLE_TCP_MSS_CHECK
+    /* After driver initialization, retain a small MTU with a valid peer MSS.  */
+    if (NX_TCP_MSS_MINIMUM > 88)
+    {
+        status = nx_ip_interface_mtu_set(&ip_0, 0, NX_TCP_MSS_MINIMUM + 40);
+        if (status)
+            error_counter++;
+    }
+#endif
 
     /* Create the client socket. */
     status = nx_tcp_socket_create(&ip_0, &client_socket, "Client Socket", 
@@ -245,6 +256,16 @@ static void    thread_1_entry(ULONG thread_input)
 {
 UINT        status;
 NX_PACKET  *packet_ptr;
+
+#ifdef NX_ENABLE_TCP_MSS_CHECK
+    /* After driver initialization, retain a small MTU with a valid peer MSS.  */
+    if (NX_TCP_MSS_MINIMUM > 88)
+    {
+        status = nx_ip_interface_mtu_set(&ip_1, 0, NX_TCP_MSS_MINIMUM + 40);
+        if (status)
+            error_counter++;
+    }
+#endif
 
     /* Create the server socket. */
     status = nx_tcp_socket_create(&ip_1, &server_socket, "Server Socket", 

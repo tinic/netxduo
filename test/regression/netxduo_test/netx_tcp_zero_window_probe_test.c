@@ -294,6 +294,14 @@ UINT    status;
 
 static UINT    client_driver_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+UINT header_length;
+
+    /* These fixtures use IPv4 without IP options. Read the TCP data offset.  */
+    if ((packet_ptr -> nx_packet_length < 40) ||
+        (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    header_length = 20 + (UINT)(packet_ptr -> nx_packet_prepend_ptr[32] >> 4) * 4;
+
 
     /* Ingore the server packet.  */
     if (ip_ptr != &ip_0)
@@ -307,7 +315,7 @@ static UINT    client_driver_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr
     {
 
         /* Check the packet length.  */
-        if (packet_ptr -> nx_packet_length != (WINDOW_SIZE/2 + 40))
+        if (packet_ptr -> nx_packet_length != (WINDOW_SIZE/2 + header_length))
             error_counter ++;
     }
     
@@ -316,7 +324,7 @@ static UINT    client_driver_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr
     {
 
         /* Check the packet length.  */
-        if (packet_ptr -> nx_packet_length != (WINDOW_SIZE/2 + 40))
+        if (packet_ptr -> nx_packet_length != (WINDOW_SIZE/2 + header_length))
             error_counter ++;
     }
       
@@ -325,7 +333,7 @@ static UINT    client_driver_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr
     {
 
         /* Check the packet length.  */
-        if ((packet_ptr -> nx_packet_length == (1 + 40)) &&
+        if ((packet_ptr -> nx_packet_length == (1 + header_length)) &&
             (*(packet_ptr -> nx_packet_append_ptr - 1) == send_buff[0]))
         {
             zero_window_probe = NX_TRUE;

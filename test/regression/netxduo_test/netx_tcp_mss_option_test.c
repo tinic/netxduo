@@ -361,8 +361,10 @@ ULONG           *option_word_1;
     if (syn_counter == 3)
     {                    
                                                                       
-        /* Set the invalid Option.  */ 
-        *option_word_1 = 0x04090000;  
+        /* The option must overrun the actual SYN option area, even with timestamps.  */
+        *option_word_1 = 0x04000000 |
+            (((packet_ptr -> nx_packet_prepend_ptr[12] >> 4) * 4 -
+              sizeof(NX_TCP_HEADER) + 1) << 16);
     }      
 
 #ifdef NX_ENABLE_TCP_MSS_CHECK

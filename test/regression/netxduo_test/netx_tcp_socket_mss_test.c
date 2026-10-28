@@ -14,6 +14,13 @@
 #include   "nx_api.h"
 #include   "nx_tcp.h"
 
+/* Both peers negotiate timestamps when enabled; the API reports payload MSS.  */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+#define TEST_TCP_OPTION_BYTES NX_TCP_TIMESTAMP_OPTION_SIZE
+#else
+#define TEST_TCP_OPTION_BYTES 0
+#endif
+
 extern void    test_control_return(UINT status);
 #if defined(__PRODUCT_NETXDUO__) && !defined(NX_DISABLE_IPV4)
 #define     DEMO_STACK_SIZE         2048
@@ -243,7 +250,7 @@ ULONG       mss;
     status = nx_tcp_socket_mss_get(&client_socket, &mss);
 
     /* Check for error.  */
-    if (status || (mss != SERVER_MSS))
+    if (status || (mss != (SERVER_MSS - TEST_TCP_OPTION_BYTES)))
     {
 
         printf("ERROR!\n");
@@ -310,7 +317,7 @@ ULONG           mss;
     status = nx_tcp_socket_mss_get(&server_socket, &mss);
 
     /* Check for error.  */
-    if (status || (mss != CLIENT_MSS))
+    if (status || (mss != (CLIENT_MSS - TEST_TCP_OPTION_BYTES)))
         error_counter++;
 
     /* Disconnect this socket.  */

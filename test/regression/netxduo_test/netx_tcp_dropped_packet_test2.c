@@ -14,6 +14,7 @@
  * The first and the third packets are dropped. */
 
 #include   "nx_api.h"
+#include   "nx_tcp.h"
 #include   "nx_ram_network_driver_test_1500.h"
 extern void    test_control_return(UINT status);
 
@@ -188,7 +189,7 @@ UINT        i;
         if (status)
             error_counter++;
 
-        status = nx_packet_data_append(my_packet, send_buff, client_socket.nx_tcp_socket_connect_mss, &pool_0, 2 * NX_IP_PERIODIC_RATE);
+        status = nx_packet_data_append(my_packet, send_buff, _nx_tcp_socket_payload_mss(&client_socket), &pool_0, 2 * NX_IP_PERIODIC_RATE);
         if(status)
             error_counter++;
 

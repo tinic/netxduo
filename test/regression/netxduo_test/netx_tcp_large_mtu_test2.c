@@ -12,6 +12,14 @@
 /* This NetX test concentrates initial cwnd size with large MTU.  */
 
 #include   "nx_api.h"
+#include   "nx_tcp.h"
+/* Both peers negotiate timestamps when enabled; the API reports payload MSS.  */
+#ifdef NX_ENABLE_TCP_TIMESTAMP
+#define TEST_TCP_OPTION_BYTES NX_TCP_TIMESTAMP_OPTION_SIZE
+#else
+#define TEST_TCP_OPTION_BYTES 0
+#endif
+
 extern void    test_control_return(UINT status);
 
 #if !defined(NX_DISABLE_IPV4)
@@ -198,7 +206,7 @@ ULONG   mss;
     }
 
     /* Verify connection MSS. */
-    if (mss != 1460)
+    if (mss != (1460 - TEST_TCP_OPTION_BYTES))
     {
         error_counter++;
     }
@@ -289,7 +297,7 @@ ULONG   mss;
     }
 
     /* Verify connection MSS. */
-    if (mss != 1460)
+    if (mss != (1460 - TEST_TCP_OPTION_BYTES))
     {
         error_counter++;
     }

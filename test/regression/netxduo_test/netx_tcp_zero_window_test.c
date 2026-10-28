@@ -525,14 +525,34 @@ UINT    i;
 
 static UINT    advanced_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+UINT ip_length;
+UINT header_length;
+
+    /* Do not confuse an IPv6 neighbour advertisement with a timestamp ACK.  */
+    if ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) == 6)
+    {
+        if ((packet_ptr -> nx_packet_length < 60) ||
+            (packet_ptr -> nx_packet_prepend_ptr[6] != NX_PROTOCOL_TCP))
+            return NX_TRUE;
+        ip_length = 40;
+    }
+    else
+    {
+        if ((packet_ptr -> nx_packet_length < 40) ||
+            (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+            return NX_TRUE;
+        ip_length = (UINT)(packet_ptr -> nx_packet_prepend_ptr[0] & 0x0f) * 4;
+    }
+    header_length = ip_length +
+        (UINT)(packet_ptr -> nx_packet_prepend_ptr[ip_length + 12] >> 4) * 4;
+
 
     /* Drop zero window probe from ip_0. */
     if (ip_ptr == &ip_0)
     {
 
         /* Is the length match TCP zero window probe packet? */
-        if ((packet_ptr -> nx_packet_length == 41) ||
-            (packet_ptr -> nx_packet_length == 61))
+        if (packet_ptr -> nx_packet_length == header_length + 1)
         {
 
             /* Yes it is. */
@@ -548,7 +568,7 @@ static UINT    advanced_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UIN
     }
 
     /* Is the length match TCP ACK packet? */
-    if ((packet_ptr -> nx_packet_length == 40) || (packet_ptr -> nx_packet_length == 60))
+    if (packet_ptr -> nx_packet_length == header_length)
     {
 
         /* Yes it is. Drop it. */
