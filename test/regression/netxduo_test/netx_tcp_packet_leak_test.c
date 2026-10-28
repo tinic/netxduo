@@ -12,6 +12,7 @@
 /* This NetX test concentrates no packet leak after socket is deleted.  */
 
 #include   "nx_api.h"
+#include   "nx_ram_network_driver_test_1500.h"
 extern void    test_control_return(UINT status);
 #if !defined(NX_DISABLE_IPV4)
 
@@ -84,12 +85,12 @@ UINT    status;
         error_counter++;
 
     /* Create an IP instance.  */
-    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFF0000UL, &pool_0, _nx_ram_network_driver,
+    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFF0000UL, &pool_0, _nx_ram_network_driver_tcp,
                     pointer, 2048, 1);
     pointer =  pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                     pointer, 2048, 2);
     pointer =  pointer + 2048;
     if (status)
@@ -106,6 +107,7 @@ UINT    status;
     pointer = pointer + 1024;
     if (status)
         error_counter++;
+
 
     /* Enable TCP processing for both IP instances.  */
     status =  nx_tcp_enable(&ip_0);

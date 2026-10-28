@@ -391,7 +391,8 @@ NX_TCP_HEADER        *tcp_header_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
 
     /* Check the data length.  */
-    if(packet_ptr -> nx_packet_length == 60)
+    if(packet_ptr -> nx_packet_length ==
+       (ULONG)(20 + (packet_ptr -> nx_packet_prepend_ptr[32] >> 4) * 4 + 20))
     {
 
         /* Update the counter.  */
@@ -546,6 +547,17 @@ NX_TCP_HEADER        *tcp_header_ptr;
             }
         }           
         /* This should be normal ACK for 1th segment in fast recovery.  */
+#ifdef NX_ENABLE_TCP_SACK
+        else if ((ack_counter == 4) || (ack_counter == 5))
+        {
+            /* RFC 6675 sends both holes before the first recovery ACK.  */
+            if ((tcp_header_ptr -> nx_tcp_acknowledgment_number != client_tx_sequnce + 100) ||
+                (client_socket.nx_tcp_socket_tx_sequence_recover != client_tx_sequnce + 99) ||
+                (client_socket.nx_tcp_socket_duplicated_ack_received != (ack_counter == 4 ? 3 : 0)) ||
+                (client_socket.nx_tcp_socket_fast_recovery != (ack_counter == 4 ? NX_TRUE : NX_FALSE)))
+                error_counter++;
+        }
+#else
         else if (ack_counter == 4)
         {
               
@@ -601,6 +613,7 @@ NX_TCP_HEADER        *tcp_header_ptr;
                 error_counter ++;
             }
         }          
+#endif
         /* Other ACKs for window update when call nx_tcp_socket_receive API.  */
     }
 

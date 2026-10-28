@@ -33,6 +33,7 @@ static NX_IP                   ip_1;
 static NX_TCP_SOCKET           client_socket;
 static NX_TCP_SOCKET           server_socket;
 static ULONG                   drop_packet;
+static ULONG                   initial_drop_count;
 static NX_PACKET              *retransmission_packet;
 static ULONG                   window_size;
 static ULONG                   ack_number;
@@ -237,8 +238,11 @@ UINT       i;
             error_counter++;
     }
 
-    /* The packet will be fragmented into 4 TCP packet. Drop 4 packets. */
-    drop_packet = 4;
+    /* Drop the complete initial flight, including an options-induced tail.  */
+    initial_drop_count = (client_socket.nx_tcp_socket_tx_window_congestion +
+                          _nx_tcp_socket_payload_mss(&client_socket) - 1) /
+                         _nx_tcp_socket_payload_mss(&client_socket);
+    drop_packet = initial_drop_count;
 
     /* Send the pacekt. */
     status = nx_tcp_socket_send(&client_socket, packet_ptr, NX_NO_WAIT);
@@ -387,7 +391,7 @@ NX_TCP_HEADER *header_ptr;
         /* This packet should be dropped. */
         *operation_ptr = NX_RAMDRIVER_OP_DROP;
 
-        if (drop_packet == 4)
+        if (drop_packet == initial_drop_count)
         {
             retransmission_packet = packet_ptr;
 

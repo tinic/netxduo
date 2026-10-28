@@ -328,7 +328,7 @@ ULONG         mss_option;
         /*Get the MSS option form the SYN packet.*/
         _nx_tcp_mss_option_get((packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER)), option_words*sizeof(ULONG), &mss_option);
 
-        if(mss_option != 536)
+        if(mss_option == 1460)
             syn_counter++;
 
         ip_0.nx_ip_tcp_packet_receive = _nx_tcp_packet_receive;
@@ -346,6 +346,7 @@ static void    my_tcp_packet_receive_12_24_2(NX_IP *ip_ptr, NX_PACKET *packet_pt
 
 NX_TCP_HEADER *header_ptr;
 ULONG         option_words;
+ULONG         mss_option;
 
 
     header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
@@ -357,7 +358,10 @@ ULONG         option_words;
         /* It is a SYN,ACK packet.  */
         option_words =  (header_ptr -> nx_tcp_header_word_3 >> 28) - 5;
 
-        if(option_words == 2)
+        /* The MSS must be present even with additional negotiated options. */
+        if ((_nx_tcp_mss_option_get(packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER),
+                                    option_words * sizeof(ULONG), &mss_option) == NX_TRUE) &&
+            (mss_option == 1460))
             syn_ack_counter++;
 
         ip_1.nx_ip_tcp_packet_receive = _nx_tcp_packet_receive;

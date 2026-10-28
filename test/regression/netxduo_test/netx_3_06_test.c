@@ -324,6 +324,9 @@ static void    ntest_0_disconnect_received(NX_TCP_SOCKET *socket)
 
 static void    my_tcp_packet_receive_3_06(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
+/* Capture the data offset before the callback changes header byte order. */
+ULONG payload_offset = (ULONG)(packet_ptr -> nx_packet_prepend_ptr[12] >> 4) << 2;
+
 NX_TCP_HEADER       *tcp_header_ptr;
 
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
@@ -331,7 +334,7 @@ NX_TCP_HEADER       *tcp_header_ptr;
 
     if((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT) && !(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT) && !(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT))
     {
-        if((packet_ptr -> nx_packet_length == 30) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 20, MSG, 10)))
+        if((packet_ptr -> nx_packet_length - payload_offset == 10) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 10)))
             data_packet_counter++;
 
         /* Deal packets with default routing.  */

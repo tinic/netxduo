@@ -329,6 +329,14 @@ static void    ntest_1_disconnect_received(NX_TCP_SOCKET *socket)
 
 static UINT    my_packet_process_3_17(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+ULONG payload_offset;
+
+    if ((packet_ptr -> nx_packet_length < 40) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 4) ||
+        (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    payload_offset = 20 + ((ULONG)(packet_ptr -> nx_packet_prepend_ptr[32] >> 4) << 2);
+
 NX_TCP_HEADER               *tcp_header_ptr;
 ULONG                       checksum;
 
@@ -359,7 +367,7 @@ ULONG           source_ip, dest_ip;
 
         NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
     }
-    else if((packet_ptr -> nx_packet_length == 50) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 40, MSG, 10)))
+    else if((packet_ptr -> nx_packet_length - payload_offset == 10) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 10)))
     {
         NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr ->nx_tcp_acknowledgment_number);
 
@@ -416,9 +424,12 @@ ULONG           source_ip, dest_ip;
 
 static void    my_tcp_packet_receive_3_17(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
+/* Capture the data offset before the callback changes header byte order. */
+ULONG payload_offset = (ULONG)(packet_ptr -> nx_packet_prepend_ptr[12] >> 4) << 2;
+
 NX_TCP_HEADER               *tcp_header_ptr;
 
-    if((packet_ptr -> nx_packet_length == 30) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 20, MSG, 10)))
+    if((packet_ptr -> nx_packet_length - payload_offset == 10) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 10)))
     {
         tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
         NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr ->nx_tcp_acknowledgment_number);

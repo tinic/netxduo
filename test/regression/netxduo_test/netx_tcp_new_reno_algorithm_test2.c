@@ -374,7 +374,11 @@ static void    thread_1_entry(ULONG thread_input)
     tx_thread_relinquish();   
 
     /* Determine if the test was successful.  */
+#ifdef NX_ENABLE_TCP_SACK
+    if ((error_counter) || (packet_counter != 16) || (ack_counter < 6))
+#else
     if ((error_counter) || (packet_counter != 16) || (ack_counter < 10))
+#endif
     {
         printf("ERROR!\n");
         test_control_return(1);
@@ -401,7 +405,8 @@ NX_TCP_HEADER        *tcp_header_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_sequence_number);
 
     /* Check the data length.  */
-    if(packet_ptr -> nx_packet_length == 60)
+    if(packet_ptr -> nx_packet_length ==
+       (ULONG)(20 + (packet_ptr -> nx_packet_prepend_ptr[32] >> 4) * 4 + 20))
     {
 
         /* Update the counter.  */
@@ -538,6 +543,18 @@ NX_TCP_HEADER        *tcp_header_ptr;
             }
         }       
         /* This should be normal ACK for 3th segment in fast recovery.  */
+#ifdef NX_ENABLE_TCP_SACK
+        else if ((ack_counter == 5) || (ack_counter == 6) || (ack_counter == 7))
+        {
+            /* SACK repairs all six holes. ACKs cover through segment six, then ten.  */
+            if ((tcp_header_ptr -> nx_tcp_acknowledgment_number !=
+                 client_tx_sequnce + (ack_counter == 5 ? 120 : 200)) ||
+                (client_socket.nx_tcp_socket_tx_sequence_recover != client_tx_sequnce + 199) ||
+                (client_socket.nx_tcp_socket_duplicated_ack_received != (ack_counter == 5 ? 3 : 0)) ||
+                (client_socket.nx_tcp_socket_fast_recovery != (ack_counter == 7 ? NX_FALSE : NX_TRUE)))
+                error_counter++;
+        }
+#else
         else if (ack_counter == 5)
         {
               
@@ -708,6 +725,7 @@ NX_TCP_HEADER        *tcp_header_ptr;
                 error_counter ++;
             }
         }
+#endif
         /* Other ACKs for window update when call nx_tcp_socket_receive API.  */
     }
 

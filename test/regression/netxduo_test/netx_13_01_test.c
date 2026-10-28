@@ -25,6 +25,7 @@
 
 #include   "tx_api.h"
 #include   "nx_api.h"
+#include   "nx_ram_network_driver_test_1500.h"
 #include   "nx_tcp.h"
 extern void    test_control_return(UINT status);
 
@@ -115,7 +116,7 @@ UINT       status;
                           pointer = pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                            pointer, 2048, 1);
                            pointer = pointer + 2048;
 
@@ -216,8 +217,8 @@ NX_PACKET       *rcv_packet_ptr;
     else
     {
         /* Check data length and payload */
-        if((rcv_packet_ptr -> nx_packet_length == ip_1.nx_ip_interface[0].nx_interface_ip_mtu_size - 40) && 
-           (!memcmp(rcv_packet_ptr -> nx_packet_prepend_ptr, MSG, ip_1.nx_ip_interface[0].nx_interface_ip_mtu_size - 40)))
+        if((rcv_packet_ptr -> nx_packet_length == _nx_tcp_socket_payload_mss(&client_socket)) &&
+           (!memcmp(rcv_packet_ptr -> nx_packet_prepend_ptr, MSG, _nx_tcp_socket_payload_mss(&client_socket))))
             data_packet_counter++;
 
         /* Release the packet.  */
@@ -292,7 +293,7 @@ NX_PACKET  *my_packet;
     if(status)
         error_counter++;
 
-    status = nx_packet_data_append(my_packet, MSG, ip_1.nx_ip_interface[0].nx_interface_ip_mtu_size - 40, &pool_0, NX_IP_PERIODIC_RATE);
+    status = nx_packet_data_append(my_packet, MSG, _nx_tcp_socket_payload_mss(&client_socket), &pool_0, NX_IP_PERIODIC_RATE);
 
     /* Check for error.  */
     if(status)
@@ -399,8 +400,8 @@ NX_TCP_HEADER   *header_ptr;
     NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
 
     /* Check if the packet is a SEG.  */
-    if(packet_ptr -> nx_packet_length == (ip_1.nx_ip_interface[0].nx_interface_ip_mtu_size - 20) && 
-       (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 20, MSG, ip_1.nx_ip_interface[0].nx_interface_ip_mtu_size - 40)))
+    if(packet_ptr -> nx_packet_length == (_nx_tcp_socket_payload_mss(&client_socket) + ((header_ptr -> nx_tcp_header_word_3 >> 28) * 4)) &&
+       (!memcmp(packet_ptr -> nx_packet_prepend_ptr + ((header_ptr -> nx_tcp_header_word_3 >> 28) * 4), MSG, _nx_tcp_socket_payload_mss(&client_socket))))
     {
         /* Start timer.  */
         tx_timer_activate(&my_timer);

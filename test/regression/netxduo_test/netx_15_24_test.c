@@ -104,7 +104,7 @@ UINT       status;
     pointer = pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                            pointer, 2048, 1);
     pointer = pointer + 2048;
 
@@ -341,7 +341,7 @@ static void    ntest_0_disconnect_received(NX_TCP_SOCKET *socket)
 static UINT    my_packet_process_15_24(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
     /* Drop packet three times.  */
-    if ((packet_ptr -> nx_packet_length - 40 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 40, MSG, 20)))
+    if ((packet_ptr -> nx_packet_length - (20 + (packet_ptr -> nx_packet_prepend_ptr[32] >> 4) * 4) == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + (20 + (packet_ptr -> nx_packet_prepend_ptr[32] >> 4) * 4), MSG, 20)))
     {
 
         if(drop_counter < 2)

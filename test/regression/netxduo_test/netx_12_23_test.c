@@ -288,7 +288,8 @@ static void    ntest_1_disconnect_received(NX_TCP_SOCKET *socket)
 static void    my_tcp_packet_receive_12_23(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
 NX_TCP_HEADER *tcp_header_ptr;
-ULONG         kind;
+ULONG         option_words;
+ULONG         mss;
 
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
@@ -296,9 +297,12 @@ ULONG         kind;
     /* This packet is from TCP ,this program is to check the MSS option.  */
     if((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT) && (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT))
     {
-        kind = (tcp_header_ptr -> nx_tcp_header_word_3 >> 28) - 5;
+        option_words = (tcp_header_ptr -> nx_tcp_header_word_3 >> 28) - 5;
 
-        if(kind == 2)
+        /* Other negotiated options may share the SYN. Check the actual MSS. */
+        if ((_nx_tcp_mss_option_get(packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER),
+                                    option_words * sizeof(ULONG), &mss) == NX_TRUE) &&
+            (mss == 1460))
             syn_ack_counter++;
 
         /* Point to default function   */

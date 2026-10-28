@@ -351,6 +351,14 @@ static void    ntest_1_disconnect_received(NX_TCP_SOCKET *socket)
 
 static UINT    my_packet_process_15_20(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+ULONG payload_offset;
+
+    if ((packet_ptr -> nx_packet_length < 40) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 4) ||
+        (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    payload_offset = 20 + ((ULONG)(packet_ptr -> nx_packet_prepend_ptr[32] >> 4) << 2);
+
 NX_TCP_HEADER   *tcp_header_ptr;
 ULONG           checksum;
 
@@ -370,7 +378,7 @@ ip_header_ptr = (NX_IP_HEADER *)(packet_ptr -> nx_packet_prepend_ptr);
 
     NX_CHANGE_ULONG_ENDIAN(ip_header_ptr -> nx_ip_header_word_1);
 
-    if ((packet_ptr -> nx_packet_length - 40 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 40, MSG, 20)))
+    if ((packet_ptr -> nx_packet_length - payload_offset == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 20)))
     {
         ip_id_15_20 = (ip_header_ptr -> nx_ip_header_word_1 & NX_LOWER_16_MASK);
 
@@ -379,7 +387,7 @@ ip_header_ptr = (NX_IP_HEADER *)(packet_ptr -> nx_packet_prepend_ptr);
         data_packet_counter++;
     }
 
-    else if ((packet_ptr -> nx_packet_length - 40 == 40) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 40, MSG, 40)))
+    else if ((packet_ptr -> nx_packet_length - payload_offset == 40) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 40)))
     {
 #if defined(__PRODUCT_NETXDUO__)
         packet_ptr -> nx_packet_prepend_ptr += sizeof(NX_IPV4_HEADER);
@@ -431,6 +439,9 @@ ip_header_ptr = (NX_IP_HEADER *)(packet_ptr -> nx_packet_prepend_ptr);
 
 static void    my_tcp_packet_receive_15_20(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
+/* Capture the data offset before the callback changes header byte order. */
+ULONG payload_offset = (ULONG)(packet_ptr -> nx_packet_prepend_ptr[12] >> 4) << 2;
+
 #if defined(__PRODUCT_NETXDUO__)
 NX_IPV4_HEADER  *ip_header_ptr;
 ip_header_ptr = (NX_IPV4_HEADER *)(packet_ptr -> nx_packet_prepend_ptr - 20);
@@ -441,7 +452,7 @@ ip_header_ptr = (NX_IP_HEADER *)(packet_ptr -> nx_packet_prepend_ptr - 20);
 
     NX_CHANGE_ULONG_ENDIAN(ip_header_ptr -> nx_ip_header_word_1);
 
-    if ((packet_ptr -> nx_packet_length - 20 == 40) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 20, MSG, 40)))
+    if ((packet_ptr -> nx_packet_length - payload_offset == 40) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + payload_offset, MSG, 40)))
     {
         if(ip_id_15_20 != (ip_header_ptr -> nx_ip_header_word_1 & NX_LOWER_16_MASK))
             is_different = NX_TRUE;

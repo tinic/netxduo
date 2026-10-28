@@ -309,8 +309,19 @@ NX_PACKET    *rcv_packet_ptr;
 
 static UINT    my_packet_process_102_22(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
+ULONG     header_length;
+UCHAR    *data = packet_ptr -> nx_packet_prepend_ptr;
+
+    if ((packet_ptr -> nx_packet_length < 40) || ((data[0] >> 4) != 4) ||
+        (data[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+    header_length = 20 + ((ULONG)(data[32] >> 4) << 2);
+    if ((header_length < 40) || (header_length > packet_ptr -> nx_packet_length))
+        return NX_TRUE;
+
     /* Check if it is a data packet.  */
-    if((packet_ptr->nx_packet_length == 60) && !(memcmp(packet_ptr->nx_packet_prepend_ptr + 40, MSG, 20)))
+    if ((packet_ptr -> nx_packet_length - header_length == 20) &&
+        !memcmp(data + header_length, MSG, 20))
     {
         if(client_socket.nx_tcp_socket_timeout_retries == 0)
             /* Drop the packet. */

@@ -321,6 +321,12 @@ ULONG         option_words;
 ULONG         *source_ip, *dest_ip;
 ULONG         mss;
 
+    /* The shared driver also emits neighbor discovery packets. */
+    if ((packet_ptr -> nx_packet_length < sizeof(NX_IPV6_HEADER) + sizeof(NX_TCP_HEADER)) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 6) ||
+        (packet_ptr -> nx_packet_prepend_ptr[6] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+
     tcp_header_ptr = (NX_TCP_HEADER*)((packet_ptr -> nx_packet_prepend_ptr) + 40);
     option_word_1 = (ULONG *)(tcp_header_ptr + 1);
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
@@ -329,8 +335,6 @@ ULONG         mss;
     /* This packet is the first incoming packet,this program is to send a SYN to Server.  */
     if((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_SYN_BIT) && !(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT) && !(tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_RST_BIT))
     {
-
-        NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 
         /*Get the option kind*/
         option_words =  (tcp_header_ptr -> nx_tcp_header_word_3 >> 28) - 5;
@@ -342,7 +346,7 @@ ULONG         mss;
         if( mss != 1440)
             error_counter++;
 
-
+        NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
         NX_CHANGE_ULONG_ENDIAN(*option_word_1);
 
         /* Change the MSS.  */
@@ -427,6 +431,7 @@ static void    my_tcp_packet_receive_12_30_2(NX_IP *ip_ptr, NX_PACKET *packet_pt
 
 NX_TCP_HEADER *header_ptr;
 ULONG         option_words;
+ULONG         mss_option;
 
     header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
@@ -436,7 +441,9 @@ ULONG         option_words;
     {
         option_words =  (header_ptr -> nx_tcp_header_word_3 >> 28) - 5;
 
-        if(option_words == 2)
+        if ((_nx_tcp_mss_option_get(packet_ptr -> nx_packet_prepend_ptr + sizeof(NX_TCP_HEADER),
+                                    option_words * sizeof(ULONG), &mss_option) == NX_TRUE) &&
+            (mss_option == 1440))
             syn_ack_counter++;
 
         ip_1.nx_ip_tcp_packet_receive = _nx_tcp_packet_receive;

@@ -55,6 +55,7 @@ set(BUILD_CONFIGURATIONS
     v6_dhcp_tahi_build
     v6_bsd_raw_build
     v6_full_secure_build
+    tcp_options_build
     optimize_build)
 set(CMAKE_CONFIGURATION_TYPES
     ${BUILD_CONFIGURATIONS}
@@ -343,6 +344,19 @@ set(optimize_build ${default_build_coverage} -O3)
 set(dhcp_default_build_coverage ${default_build_coverage} -DNX_DHCP_CLIENT_USER_CREATE_PACKET_POOL -DNX_DISABLE_ASSERT)
 set(dns_default_build_coverage ${default_build_coverage}  -DNX_DNS_CLIENT_USER_CREATE_PACKET_POOL -DNX_DNS_CLIENT_CLEAR_QUEUE)
 set(tsn_build_coverage ${default_build_coverage} ${PHY_HEADER} -DNX_ENABLE_VLAN)
+# Exercise the TCP options together at the port's production MSS minimum.
+set(tcp_options_build
+    ${default_build_coverage}
+    -DNX_ENABLE_TCP_SACK
+    -DNX_ENABLE_TCP_TIMESTAMP
+    -DNX_ENABLE_TCP_RTT_ESTIMATOR
+    -DNX_ENABLE_TCP_LOSS_PROBE
+    -DNX_ENABLE_TCP_EARLY_RETRANSMIT
+    -DNX_ENABLE_TCP_WINDOW_SCALING
+    -DNX_ENABLE_TCP_KEEPALIVE
+    -DNX_ENABLE_TCP_MSS_CHECK
+    -DNX_TCP_MSS_MINIMUM=128)
+
 
 if(MSVC)
   # Win64 MSVC simulation path -------------------------------------------

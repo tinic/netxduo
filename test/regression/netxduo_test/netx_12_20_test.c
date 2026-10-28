@@ -382,6 +382,11 @@ ULONG                  source_ip, dest_ip;
 #error "NetX Product undefined."
 #endif
 
+    if ((packet_ptr -> nx_packet_length < 40) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 4) ||
+        (packet_ptr -> nx_packet_prepend_ptr[9] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+
 #if defined(__PRODUCT_NETXDUO__)
     ip_header_ptr = (NX_IPV4_HEADER*)(packet_ptr -> nx_packet_prepend_ptr);
 #else
@@ -450,7 +455,7 @@ ULONG                  source_ip, dest_ip;
         /*Modify the packet length in ip header.*/
         NX_CHANGE_ULONG_ENDIAN(ip_header_ptr -> nx_ip_header_word_0);
         ip_header_ptr -> nx_ip_header_word_0 = ip_header_ptr -> nx_ip_header_word_0 & 0xFFFF0000;
-        ip_header_ptr -> nx_ip_header_word_0 = ip_header_ptr -> nx_ip_header_word_0 | 0x00000044;
+        ip_header_ptr -> nx_ip_header_word_0 = ip_header_ptr -> nx_ip_header_word_0 | packet_ptr -> nx_packet_length;
         NX_CHANGE_ULONG_ENDIAN(ip_header_ptr -> nx_ip_header_word_0);
 
 

@@ -299,26 +299,43 @@ static void    packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
 {
 
     UINT length;
+    UINT header_length;
 
-    /* Data length equal to packet length - 20.  */
-    length = packet_ptr -> nx_packet_length - 20;
+    /* Read the TCP data offset: negotiated options are not application data.  */
+    header_length = (UINT)(packet_ptr -> nx_packet_prepend_ptr[12] >> 4) * 4;
+    if ((header_length < sizeof(NX_TCP_HEADER)) ||
+        (header_length > packet_ptr -> nx_packet_length))
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+        return;
+    }
+    length = packet_ptr -> nx_packet_length - header_length;
 
-    if(length > client_socket.nx_tcp_socket_connect_mss)
+    if(length > _nx_tcp_socket_payload_mss(&client_socket))
     {
         printf("ERROR!\n");
         test_control_return(1);
     }
 
+    /* Reject a corrupt segment before copying into the receive buffer.  */
+    if (recv_length + length > sizeof(rcv_buffer))
+    {
+        printf("ERROR!\n");
+        test_control_return(1);
+        return;
+    }
+
     /* Copy the packet.  */
-    memcpy(&rcv_buffer[recv_length], packet_ptr -> nx_packet_prepend_ptr + 20, length);
+    memcpy(&rcv_buffer[recv_length], packet_ptr -> nx_packet_prepend_ptr + header_length, length);
     recv_length += length;
 
     /* Check whether or not the last packet.  */
-    if(length < client_socket.nx_tcp_socket_connect_mss)
+    if(length < _nx_tcp_socket_payload_mss(&client_socket))
     {
 
         /* The packet is the last packet, compare the packet and receive_length.  */
-        if(memcmp(rcv_buffer,msg,packet_ptr -> nx_packet_length) || recv_length != 550)
+        if(recv_length != 550 || memcmp(rcv_buffer, msg, 550))
         {
             printf("ERROR!\n");
             test_control_return(1);

@@ -360,6 +360,12 @@ ULONG                  option_words;
 
     /*Create a data seg with mss option*/
 
+    /* The shared driver also emits neighbor discovery packets. */
+    if ((packet_ptr -> nx_packet_length < sizeof(NX_IPV6_HEADER) + sizeof(NX_TCP_HEADER)) ||
+        ((packet_ptr -> nx_packet_prepend_ptr[0] >> 4) != 6) ||
+        (packet_ptr -> nx_packet_prepend_ptr[6] != NX_PROTOCOL_TCP))
+        return NX_TRUE;
+
     ip_header_ptr = (NX_IPV6_HEADER*)(packet_ptr -> nx_packet_prepend_ptr);
     tcp_header_ptr = (NX_TCP_HEADER *)(packet_ptr -> nx_packet_prepend_ptr + 40);
     option_word_1 = (ULONG *)(tcp_header_ptr + 1);
@@ -395,7 +401,8 @@ ULONG                  option_words;
         /*Modify the payload length of the IPv6 header.*/
         NX_CHANGE_ULONG_ENDIAN(ip_header_ptr->nx_ip_header_word_1);
         ip_header_ptr->nx_ip_header_word_1 = ip_header_ptr->nx_ip_header_word_1 & 0x0000FFFF;
-        ip_header_ptr->nx_ip_header_word_1 = ip_header_ptr->nx_ip_header_word_1 | 0x00300000;
+        ip_header_ptr->nx_ip_header_word_1 = ip_header_ptr->nx_ip_header_word_1 |
+            ((packet_ptr -> nx_packet_length - sizeof(NX_IPV6_HEADER)) << 16);
         NX_CHANGE_ULONG_ENDIAN(ip_header_ptr->nx_ip_header_word_1);
 
 

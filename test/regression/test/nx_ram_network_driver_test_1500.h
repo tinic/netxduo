@@ -26,6 +26,10 @@
 
 VOID _nx_ram_network_driver_timer_clean(VOID);
 
+/* Small-MTU TCP fixtures must still advertise the configured minimum MSS.  */
+VOID _nx_ram_network_driver_tcp(NX_IP_DRIVER *driver_req_ptr);
+
+
 
 #ifdef NX_PCAP_ENABLE
 

@@ -294,8 +294,9 @@ NX_TCP_HEADER  *tcp_header_ptr;
 ULONG           checksum;
 ULONG          *source_ip, *dest_ip;
 
-    /* Check if it is a data packet (TCP(20) + DATA(28)).  */
-    if (packet_ptr ->nx_packet_length == 48)
+    /* Match application bytes independently of negotiated TCP options.  */
+    if (packet_ptr -> nx_packet_length ==
+        (ULONG)((packet_ptr -> nx_packet_prepend_ptr[12] >> 4) * 4 + 28))
     {
 
         /* Set the tcp header pointer.  */

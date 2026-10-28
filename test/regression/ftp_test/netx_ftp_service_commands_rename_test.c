@@ -331,7 +331,8 @@ UCHAR            *message;
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 
-    message = packet_ptr -> nx_packet_prepend_ptr + 20;
+    message = packet_ptr -> nx_packet_prepend_ptr +
+        ((tcp_header_ptr -> nx_tcp_header_word_3 >> 28) << 2);
 
     if((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_PSH_BIT ) && (tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT) )
     {
@@ -373,7 +374,8 @@ UCHAR            *message;
     tcp_header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
     NX_CHANGE_ULONG_ENDIAN(tcp_header_ptr -> nx_tcp_header_word_3);
 
-    message = packet_ptr -> nx_packet_prepend_ptr + 20;
+    message = packet_ptr -> nx_packet_prepend_ptr +
+        ((tcp_header_ptr -> nx_tcp_header_word_3 >> 28) << 2);
 
     if((tcp_header_ptr -> nx_tcp_header_word_3 & NX_TCP_ACK_BIT) && *(message) == '5')
     {
