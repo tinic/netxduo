@@ -156,15 +156,93 @@ NX_INTERFACE *interface;
     }
 }
 
-static void ack(UINT segments, ULONG window)
+static void ack_bytes(ULONG bytes, ULONG window)
 {
 NX_TCP_HEADER header;
 
     memset(&header, 0, sizeof(header));
     header.nx_tcp_sequence_number = socket_0.nx_tcp_socket_rx_sequence;
-    header.nx_tcp_acknowledgment_number = initial_sequence + segments * MSS;
+    header.nx_tcp_acknowledgment_number = initial_sequence + bytes;
     header.nx_tcp_header_word_3 = NX_TCP_HEADER_SIZE | NX_TCP_ACK_BIT | window;
     check(_nx_tcp_socket_state_ack_check(&socket_0, &header) == NX_TRUE, "ACK accepted");
+}
+
+static void ack(UINT segments, ULONG window)
+{
+    ack_bytes(segments * MSS, window);
+}
+
+/* FIN consumes sequence space, but it is not an outstanding DATA byte. */
+static void fin_ack_sequence(ULONG start)
+{
+UINT states[] = {NX_TCP_FIN_WAIT_1, NX_TCP_CLOSING, NX_TCP_LAST_ACK};
+UINT state;
+UINT i;
+ULONG before;
+
+    for (state = 0; state < sizeof(states) / sizeof(states[0]); state++)
+    {
+        fixture(start);
+        socket_0.nx_tcp_socket_rx_window_current = 64000;
+        socket_0.nx_tcp_socket_state = states[state];
+        socket_0.nx_tcp_socket_tx_sequence++;
+        socket_0.nx_tcp_socket_previous_highest_ack = start - 1;
+        for (i = 0; i < NX_TCP_FAST_RETRANSMIT_THRESHOLD; i++)
+        {
+            ack(0, 64000);
+        }
+        check(socket_0.nx_tcp_socket_duplicated_ack_received == NX_TCP_FAST_RETRANSMIT_THRESHOLD,
+              "pending FIN preserves duplicate ACK sequence");
+        check(socket_0.nx_tcp_socket_fast_recovery == NX_TRUE && sent == 1 && log_sequence[0] == start,
+              "pending FIN permits fast retransmit of missing DATA");
+
+        fixture(start);
+        socket_0.nx_tcp_socket_rx_window_current = 64000;
+        socket_0.nx_tcp_socket_state = states[state];
+        socket_0.nx_tcp_socket_tx_sequence++;
+        ack_bytes(1, 64000);
+        check(socket_0.nx_tcp_socket_duplicated_ack_received == 0,
+              "one-byte DATA progress is not a duplicate ACK after FIN");
+
+        fixture(start);
+        socket_0.nx_tcp_socket_rx_window_current = 64000;
+        socket_0.nx_tcp_socket_state = states[state];
+        socket_0.nx_tcp_socket_tx_sequence++;
+        socket_0.nx_tcp_socket_tx_window_congestion = MSS;
+        ack(1, 64000);
+        check(socket_0.nx_tcp_socket_tx_window_congestion == 2 * MSS,
+              "pending FIN does not reduce DATA ACK congestion credit");
+        check(socket_0.nx_tcp_socket_previous_highest_ack == start,
+              "previous ACK records the DATA sequence before FIN");
+        check(socket_0.nx_tcp_socket_tx_outstanding_bytes == (SEGMENTS - 1) * MSS &&
+              socket_0.nx_tcp_socket_fin_acked == NX_FALSE,
+              "DATA ACK leaves remaining DATA and FIN outstanding");
+        ack(SEGMENTS, 64000);
+        check(socket_0.nx_tcp_socket_tx_outstanding_bytes == 0 &&
+              socket_0.nx_tcp_socket_transmit_sent_count == 0 &&
+              socket_0.nx_tcp_socket_fin_acked == NX_FALSE,
+              "DATA-only completion does not acknowledge FIN");
+        check(socket_0.nx_tcp_socket_timeout != 0, "unacknowledged FIN retains its retry timer");
+        before = socket_0.nx_tcp_socket_tx_window_congestion;
+        ack_bytes(SEGMENTS * MSS + 1, 64000);
+        check(socket_0.nx_tcp_socket_fin_acked == NX_TRUE &&
+              socket_0.nx_tcp_socket_tx_window_congestion == before,
+              "FIN-only ACK does not earn DATA congestion credit");
+
+        fixture(start);
+        socket_0.nx_tcp_socket_rx_window_current = 64000;
+        socket_0.nx_tcp_socket_state = states[state];
+        socket_0.nx_tcp_socket_tx_sequence++;
+        socket_0.nx_tcp_socket_tx_window_congestion = SEGMENTS * MSS + 1;
+        socket_0.nx_tcp_socket_tx_slow_start_threshold = MSS;
+        ack_bytes(SEGMENTS * MSS + 1, 64000);
+        check(socket_0.nx_tcp_socket_tx_cwnd_acked == SEGMENTS * MSS &&
+              socket_0.nx_tcp_socket_tx_window_congestion == SEGMENTS * MSS + 1,
+              "combined DATA and FIN ACK credits only DATA bytes");
+        check(socket_0.nx_tcp_socket_fin_acked == NX_TRUE &&
+              pool.nx_packet_pool_available == SEGMENTS,
+              "combined DATA and FIN ACK releases every DATA packet");
+    }
 }
 
 static void run_recovery(ULONG start)
@@ -304,6 +382,8 @@ NX_TCP_HEADER *header;
     printf("NetX Test:   TCP RTO ACK Recovery Test................................");
     run_recovery(1000);
     run_recovery(0xFFFFFE00UL);
+    fin_ack_sequence(1000);
+    fin_ack_sequence(0xFFFFFE00UL);
 #ifdef NX_ENABLE_TCP_SACK
     fresh_sack_tail(1000);
     fresh_sack_tail(0xFFFFFE00UL);
