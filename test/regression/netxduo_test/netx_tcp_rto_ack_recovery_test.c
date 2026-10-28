@@ -245,6 +245,78 @@ ULONG before;
     }
 }
 
+#ifdef NX_ENABLE_TCP_SACK
+static void fin_sack_option_sequence(ULONG start)
+{
+UINT states[] = {NX_TCP_ESTABLISHED, NX_TCP_CLOSE_WAIT, NX_TCP_FIN_WAIT_1, NX_TCP_CLOSING, NX_TCP_LAST_ACK};
+UINT state;
+UINT i;
+UCHAR option[10];
+ULONG left;
+ULONG right;
+
+    for (state = 0; state < sizeof(states) / sizeof(states[0]); state++)
+    {
+        fixture(start);
+        socket_0.nx_tcp_socket_state = states[state];
+        if (states[state] >= NX_TCP_FIN_WAIT_1)
+        {
+            socket_0.nx_tcp_socket_tx_sequence++;
+        }
+        socket_0.nx_tcp_socket_sack_permitted = NX_TRUE;
+        option[0] = NX_TCP_SACK_KIND;
+        option[1] = sizeof(option);
+        left = start + 1;
+        right = start + 4 * MSS;
+        for (i = 0; i < 4; i++)
+        {
+            option[2 + i] = (UCHAR)(left >> (24 - i * 8));
+            option[6 + i] = (UCHAR)(right >> (24 - i * 8));
+        }
+        _nx_tcp_sack_option_get(&socket_0, option, sizeof(option));
+        check(socket_0.nx_tcp_socket_sack_block_count == 1 &&
+              socket_0.nx_tcp_socket_sack_left[0] == left &&
+              socket_0.nx_tcp_socket_sack_right[0] == right,
+              "wire SACK beyond a one-byte hole remains valid after FIN");
+        for (i = 0; i < 4; i++)
+        {
+            option[2 + i] = (UCHAR)(start >> (24 - i * 8));
+        }
+        _nx_tcp_sack_option_get(&socket_0, option, sizeof(option));
+        check(socket_0.nx_tcp_socket_sack_block_count == 0,
+              "wire SACK starting at cumulative ACK remains invalid after FIN");
+    }
+}
+
+static void fin_partial_ack_sequence(ULONG start)
+{
+UINT states[] = {NX_TCP_ESTABLISHED, NX_TCP_CLOSE_WAIT, NX_TCP_FIN_WAIT_1, NX_TCP_CLOSING, NX_TCP_LAST_ACK};
+UINT state;
+
+    for (state = 0; state < sizeof(states) / sizeof(states[0]); state++)
+    {
+        fixture(start);
+        socket_0.nx_tcp_socket_rx_window_current = 64000;
+        socket_0.nx_tcp_socket_state = states[state];
+        if (states[state] >= NX_TCP_FIN_WAIT_1)
+        {
+            socket_0.nx_tcp_socket_tx_sequence++;
+        }
+        socket_0.nx_tcp_socket_sack_permitted = NX_TRUE;
+        socket_0.nx_tcp_socket_fast_recovery = NX_TRUE;
+        socket_0.nx_tcp_socket_tx_sequence_recover = socket_0.nx_tcp_socket_tx_sequence - 1;
+        socket_0.nx_tcp_socket_tx_high_rxt = start + MSS;
+        ack(SEGMENTS - 2, 64000);
+        check(sent == 0, "partial ACK with two segments left does not resend in-flight DATA");
+        ack(SEGMENTS - 1, 64000);
+        check(sent == 0, "one-MSS partial ACK does not spuriously resend the recovery tail after FIN");
+        ack(SEGMENTS, 64000);
+        check(socket_0.nx_tcp_socket_transmit_sent_count == 0,
+              "partial ACK tail completes without a retransmission");
+    }
+}
+#endif /* NX_ENABLE_TCP_SACK */
+
 static void run_recovery(ULONG start)
 {
 UINT i;
@@ -385,6 +457,12 @@ NX_TCP_HEADER *header;
     fin_ack_sequence(1000);
     fin_ack_sequence(0xFFFFFE00UL);
 #ifdef NX_ENABLE_TCP_SACK
+    fin_sack_option_sequence(1000);
+    fin_sack_option_sequence(0xFFFFFE00UL);
+    fin_sack_option_sequence(0xFFFFFFFFUL);
+    fin_partial_ack_sequence(1000);
+    fin_partial_ack_sequence(0xFFFFFE00UL);
+    fin_partial_ack_sequence(0x7FFFFE00UL);
     fresh_sack_tail(1000);
     fresh_sack_tail(0xFFFFFE00UL);
 #endif /* NX_ENABLE_TCP_SACK */
