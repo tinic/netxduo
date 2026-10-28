@@ -20,6 +20,7 @@
 
 #include   "tx_api.h"
 #include   "nx_api.h"
+#include   "nx_ram_network_driver_test_1500.h"
 #include   "nx_tcp.h"
 extern void    test_control_return(UINT status);
 
@@ -110,7 +111,7 @@ UINT       status;
     pointer = pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                            pointer, 2048, 1);
     pointer = pointer + 2048;
 
@@ -393,7 +394,7 @@ NX_TCP_HEADER   *header_ptr;
     NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
 
     /* Check if the packet is a SEG.  */
-    if((packet_ptr -> nx_packet_length - 20 == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + 20, MSG, 20)))
+    if((packet_ptr -> nx_packet_length - ((header_ptr -> nx_tcp_header_word_3 >> 28) * 4) == 20) && (!memcmp(packet_ptr -> nx_packet_prepend_ptr + ((header_ptr -> nx_tcp_header_word_3 >> 28) * 4), MSG, 20)))
     {
         /* Restore function pointer.  */
         ip_ptr -> nx_ip_tcp_packet_receive = _nx_tcp_packet_receive;

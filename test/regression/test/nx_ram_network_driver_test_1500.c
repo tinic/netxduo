@@ -2709,3 +2709,21 @@ UINT _nx_driver_hardware_packet_send(NX_PACKET *packet_ptr)
 /* Callback function pointer when packet is received. */
 VOID (*_nx_driver_hardware_packet_received_callback)(NX_PACKET *packet_ptr, UCHAR *consumed);
 #endif /* NX_BSD_RAW_SUPPORT */
+
+/* Keep the generic 128-byte driver unchanged for fragmentation tests. TCP
+   fixtures use this adapter when their purpose requires a valid connection.  */
+VOID _nx_ram_network_driver_tcp(NX_IP_DRIVER *driver_req_ptr)
+{
+    _nx_ram_network_driver(driver_req_ptr);
+#if defined(__PRODUCT_NETXDUO__) && defined(NX_ENABLE_TCP_MSS_CHECK)
+    if ((driver_req_ptr -> nx_ip_driver_command == NX_LINK_INITIALIZE) &&
+        (driver_req_ptr -> nx_ip_driver_status == NX_SUCCESS) &&
+        (NX_TCP_MSS_MINIMUM > 88))
+    {
+        driver_req_ptr -> nx_ip_driver_status =
+            nx_ip_interface_mtu_set(driver_req_ptr -> nx_ip_driver_ptr,
+                driver_req_ptr -> nx_ip_driver_interface -> nx_interface_index,
+                NX_TCP_MSS_MINIMUM + 40);
+    }
+#endif
+}

@@ -12,6 +12,7 @@
 /* This NetX test concentrates no packet leak after socket is deleted.  */
 
 #include   "nx_api.h"
+#include   "nx_ram_network_driver_test_1500.h"
 extern void    test_control_return(UINT status);
 #if !defined(NX_DISABLE_IPV4)
 
@@ -84,12 +85,12 @@ UINT    status;
         error_counter++;
 
     /* Create an IP instance.  */
-    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFF0000UL, &pool_0, _nx_ram_network_driver,
+    status = nx_ip_create(&ip_0, "NetX IP Instance 0", IP_ADDRESS(1, 2, 3, 4), 0xFFFF0000UL, &pool_0, _nx_ram_network_driver_tcp,
                     pointer, 2048, 1);
     pointer =  pointer + 2048;
 
     /* Create another IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 5), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                     pointer, 2048, 2);
     pointer =  pointer + 2048;
     if (status)
@@ -136,16 +137,6 @@ NX_PACKET  *packet_ptr;
         test_control_return(1);
     }
 
-
-#ifdef NX_ENABLE_TCP_MSS_CHECK
-    /* After driver initialization, retain a small MTU with a valid peer MSS.  */
-    if (NX_TCP_MSS_MINIMUM > 88)
-    {
-        status = nx_ip_interface_mtu_set(&ip_0, 0, NX_TCP_MSS_MINIMUM + 40);
-        if (status)
-            error_counter++;
-    }
-#endif
 
     /* Create the client socket. */
     status = nx_tcp_socket_create(&ip_0, &client_socket, "Client Socket", 
@@ -256,16 +247,6 @@ static void    thread_1_entry(ULONG thread_input)
 {
 UINT        status;
 NX_PACKET  *packet_ptr;
-
-#ifdef NX_ENABLE_TCP_MSS_CHECK
-    /* After driver initialization, retain a small MTU with a valid peer MSS.  */
-    if (NX_TCP_MSS_MINIMUM > 88)
-    {
-        status = nx_ip_interface_mtu_set(&ip_1, 0, NX_TCP_MSS_MINIMUM + 40);
-        if (status)
-            error_counter++;
-    }
-#endif
 
     /* Create the server socket. */
     status = nx_tcp_socket_create(&ip_1, &server_socket, "Server Socket", 
