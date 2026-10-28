@@ -260,11 +260,14 @@ ULONG before;
                       "next RTO recovers current head despite prior tail SACK");
                 check(socket_0.nx_tcp_socket_sack_block_count == 0, "next RTO clears post-RTO SACK too");
             }
-            socket_0.nx_tcp_socket_sack_block_count = 0;
             before = sent;
+            /* Plain ACK: leave the previous option's blocks cached, as
+               socket_packet_process does when there is no option area. */
             ack(4, 64000);
             check(sent > before && log_sequence[before] == start + 4 * MSS,
                   "withdrawn SACK resumes at the preserved tail cursor");
+            check(socket_0.nx_tcp_socket_sack_block_count == 0,
+                  "ACK entering cached SACK block invalidates that old claim");
             for (i = 5; i <= SEGMENTS; i++) { ack(i, 64000); }
         }
         check(socket_0.nx_tcp_socket_transmit_sent_count == 0 && pool.nx_packet_pool_available == SEGMENTS,

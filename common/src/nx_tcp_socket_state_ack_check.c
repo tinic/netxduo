@@ -869,6 +869,28 @@ UINT           dupack_threshold;
             /* An advancing ACK after a timeout clocks out the remaining
                old flight in slow start.  It is not another timeout: do not
                reset cwnd, increment retries, or back off the timer again. */
+#ifdef NX_ENABLE_TCP_SACK
+            if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
+            {
+            UINT sack_index;
+
+                /* A plain ACK can leave the previous packet's blocks in
+                   place.  If cumulative progress reaches a block's left
+                   edge without covering the block, that old claim cannot
+                   suppress recovery: the peer may have reneged.  Use the
+                   current ACK, including a partial DATA ACK or queued FIN,
+                   rather than deriving SND.UNA from the byte counters. */
+                for (sack_index = 0; sack_index < socket_ptr -> nx_tcp_socket_sack_block_count; sack_index++)
+                {
+                    if ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number -
+                              socket_ptr -> nx_tcp_socket_sack_left[sack_index]) >= 0)
+                    {
+                        socket_ptr -> nx_tcp_socket_sack_block_count = 0;
+                        break;
+                    }
+                }
+            }
+#endif /* NX_ENABLE_TCP_SACK */
             _nx_tcp_socket_retransmit_after_timeout(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr);
         }
 
