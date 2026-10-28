@@ -99,6 +99,8 @@ VOID  _nx_tcp_socket_block_cleanup(NX_TCP_SOCKET *socket_ptr)
 
     /* Reset fast recovery stage. */
     socket_ptr -> nx_tcp_socket_fast_recovery = NX_FALSE;
+    socket_ptr -> nx_tcp_socket_tx_rto_next = 0;
+    socket_ptr -> nx_tcp_socket_tx_rto_end = 0;
 
 #ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
 

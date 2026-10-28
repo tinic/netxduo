@@ -388,6 +388,8 @@ VOID  _nx_tcp_socket_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, UINT n
 NX_PACKET *packet_ptr;
 ULONG      window;
 ULONG      available;
+ULONG      resent_end;
+ULONG      resent_header;
 #ifdef NX_ENABLE_TCP_SACK
 ULONG      sack_left[NX_TCP_SACK_MAX_BLOCKS];
 ULONG      sack_right[NX_TCP_SACK_MAX_BLOCKS];
@@ -573,6 +575,11 @@ UINT       sack_index;
 
     /* Get available size of packet that can be sent. */
     available = socket_ptr -> nx_tcp_socket_tx_window_congestion;
+    if ((socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE) &&
+        (available > socket_ptr -> nx_tcp_socket_tx_window_advertised))
+    {
+        available = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+    }
 
 #ifdef NX_ENABLE_TCP_SACK
 
@@ -818,6 +825,17 @@ UINT       sack_index;
         /* Pickup next packet. */
         next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
 
+        if ((socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE) &&
+            ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0))
+        {
+            resent_end = ((NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr) -> nx_tcp_sequence_number;
+            resent_header = ((NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr) -> nx_tcp_header_word_3;
+            NX_CHANGE_ULONG_ENDIAN(resent_end);
+            NX_CHANGE_ULONG_ENDIAN(resent_header);
+            socket_ptr -> nx_tcp_socket_tx_rto_next = resent_end + packet_ptr -> nx_packet_length -
+                ((resent_header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
+        }
+
         /* Rebuild this segment's header and send it. */
         _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, packet_ptr);
 
@@ -856,6 +874,95 @@ UINT       sack_index;
         {
             packet_ptr = next_ptr;
         }
+    }
+}
+
+
+/* ACK-clocked slow start after an RTO.  Data beyond the old flight is sent
+   by the normal send path.  The cursor counts only this recovery's resends
+   as in flight, so data presumed lost at the RTO cannot block every send
+   until the next timer.  No SACK information from before the RTO is used. */
+VOID _nx_tcp_socket_retransmit_after_timeout(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
+{
+NX_PACKET     *packet_ptr;
+NX_PACKET     *next_ptr;
+NX_TCP_HEADER *header_ptr;
+ULONG          unacked;
+ULONG          available;
+ULONG          in_flight;
+ULONG          sequence;
+ULONG          header;
+ULONG          length;
+
+    if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) <= 0)
+    {
+        return;
+    }
+
+    unacked = socket_ptr -> nx_tcp_socket_tx_sequence - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
+    if ((INT)(unacked - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
+    {
+        socket_ptr -> nx_tcp_socket_tx_rto_next = unacked;
+    }
+    if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) <= 0)
+    {
+        return;
+    }
+
+#ifdef FEATURE_NX_IPV6
+    if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
+        (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID))
+    {
+        return;
+    }
+#endif /* FEATURE_NX_IPV6 */
+
+    available = socket_ptr -> nx_tcp_socket_tx_window_congestion;
+    if (available > socket_ptr -> nx_tcp_socket_tx_window_advertised)
+    {
+        available = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+    }
+    /* Include any new data sent beyond the old flight as well as the old
+       segments already resent.  Only [next, end) is presumed lost. */
+    in_flight = socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -
+                (socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next);
+    if (available <= in_flight)
+    {
+        return;
+    }
+    available -= in_flight;
+
+    packet_ptr = socket_ptr -> nx_tcp_socket_transmit_sent_head;
+    while (packet_ptr && (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE))
+    {
+        header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+        sequence = header_ptr -> nx_tcp_sequence_number;
+        header = header_ptr -> nx_tcp_header_word_3;
+        NX_CHANGE_ULONG_ENDIAN(sequence);
+        NX_CHANGE_ULONG_ENDIAN(header);
+        length = packet_ptr -> nx_packet_length - ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
+        next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+
+        if ((INT)(sequence - socket_ptr -> nx_tcp_socket_tx_rto_next) >= 0)
+        {
+            if (((INT)(sequence - socket_ptr -> nx_tcp_socket_tx_rto_end) >= 0) ||
+                (length == 0) || (length > available))
+            {
+                break;
+            }
+
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+            socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+            socket_ptr -> nx_tcp_socket_tx_rto_next = sequence + length;
+            available -= length;
+            _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, packet_ptr);
+        }
+        if (next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
+        {
+            break;
+        }
+        packet_ptr = next_ptr;
     }
 }
 

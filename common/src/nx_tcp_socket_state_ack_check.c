@@ -863,6 +863,14 @@ UINT           dupack_threshold;
             /* Only partial data are ACKed. Retransmit packet immediately. */
             _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_FALSE);
         }
+        else
+        {
+
+            /* An advancing ACK after a timeout clocks out the remaining
+               old flight in slow start.  It is not another timeout: do not
+               reset cwnd, increment retries, or back off the timer again. */
+            _nx_tcp_socket_retransmit_after_timeout(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr);
+        }
 
         return(NX_TRUE);
     }

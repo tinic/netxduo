@@ -2401,6 +2401,14 @@ typedef struct NX_TCP_SOCKET_STRUCT
     /* Define the port extension in the TCP socket control block. This
        is typically defined to whitespace in nx_port.h.  */
     NX_TCP_SOCKET_MODULE_EXTENSION
+
+    /* Timeout recovery resends the old flight under the ACK clock.  The
+       interval [next, end) contains data not yet resent in this recovery;
+       equal bounds mean there is nothing left to resend.  Separate from
+       SACK HighRxt: timeout recovery also works without SACK.  Appended to
+       preserve existing member offsets; consumers must rebuild for size. */
+    ULONG       nx_tcp_socket_tx_rto_next;
+    ULONG       nx_tcp_socket_tx_rto_end;
     
 } NX_TCP_SOCKET;
 
