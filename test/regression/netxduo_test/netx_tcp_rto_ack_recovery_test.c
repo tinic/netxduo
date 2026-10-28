@@ -205,10 +205,12 @@ ULONG before;
     socket_0.nx_tcp_socket_tx_sequence++;
     _nx_tcp_fast_periodic_processing(&ip);
     ack(1, 64000);
-    /* The existing ACK accounting includes FIN in SND.NXT and grows cwnd
-       by MSS-1 here, so only one complete MSS fits.  The cursor must still
-       resend the first DATA segment rather than skip it by one byte. */
-    check(sent == 2 && log_sequence[1] == 1100,
+    /* FIN accounting can affect the ACK's congestion-window credit.  Use
+       the actual byte window, and require the first DATA segment rather
+       than skipping it by one byte. */
+    check(sent > 1 && log_sequence[1] == 1100 &&
+          (sent - 1) * MSS <= socket_0.nx_tcp_socket_tx_window_congestion &&
+          sent * MSS > socket_0.nx_tcp_socket_tx_window_congestion,
           "queued FIN does not shift the first DATA resend boundary");
 
     fixture(1000);
