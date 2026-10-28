@@ -119,6 +119,8 @@ NX_INTERFACE *interface;
     ip.nx_ip_tcp_created_sockets_count = 1;
     ip.nx_ip_tcp_created_sockets_ptr = &socket_0;
     socket_0.nx_tcp_socket_created_next = &socket_0;
+    socket_0.nx_tcp_socket_bound_next = &socket_0;
+    socket_0.nx_tcp_socket_bound_previous = &socket_0;
     socket_0.nx_tcp_socket_ip_ptr = &ip;
     socket_0.nx_tcp_socket_state = NX_TCP_ESTABLISHED;
     socket_0.nx_tcp_socket_client_type = NX_TRUE;
