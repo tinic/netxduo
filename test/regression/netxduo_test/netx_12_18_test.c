@@ -63,7 +63,7 @@ static void    ntest_0_entry(ULONG thread_input);
 static void    ntest_0_connect_received(NX_TCP_SOCKET *server_socket, UINT port);
 static void    ntest_0_disconnect_received(NX_TCP_SOCKET *server_socket);
 static void    rand_12_18();
-extern void    _nx_ram_network_driver(struct NX_IP_DRIVER_STRUCT *driver_req);
+extern void    _nx_ram_network_driver_tcp(struct NX_IP_DRIVER_STRUCT *driver_req);
 extern void    _nx_ram_network_driver_1500(struct NX_IP_DRIVER_STRUCT *driver_req);
 static void    my_tcp_packet_receive_12_18(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr);
@@ -121,7 +121,7 @@ UINT       status;
     pointer = pointer + 2048;
 
     /* Create an IP instance.  */
-    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver,
+    status += nx_ip_create(&ip_1, "NetX IP Instance 1", IP_ADDRESS(1, 2, 3, 4), 0xFFFFFF00UL, &pool_0, _nx_ram_network_driver_tcp,
                           pointer, 2048, 1);
     pointer = pointer + 2048;
 
@@ -229,7 +229,8 @@ NX_PACKET  *my_packet;
         error_counter++;
 
     /*Check if the content of the callback_rcv_buffer which appended by all the received packets' payload is the data_12_18 sent before*/
-    if(!memcmp(callback_rcv_buffer, data_12_18, packet_length_12_18))
+    if((callback_rcv_length == packet_length_12_18) &&
+       !memcmp(callback_rcv_buffer, data_12_18, packet_length_12_18))
         data_counter++;
 
     advanced_packet_process_callback = NX_NULL;
@@ -297,16 +298,26 @@ ULONG        bytes_copied;
         if(my_packet -> nx_packet_length > mss_option_12_18)
             error_counter++;
 
+        /* A malformed fixture must fail rather than overrun the receive buffer. */
+        if (my_packet -> nx_packet_length > sizeof(rcv_buffer) - rcv_length)
+        {
+            error_counter++;
+            nx_packet_release(my_packet);
+            break;
+        }
+
         /* Retrieve data from packet to the receive buffer. */
         status = nx_packet_data_retrieve(my_packet, &rcv_buffer[rcv_length], &bytes_copied);
         if(status)
             error_counter++;
 
         rcv_length += bytes_copied;
+        nx_packet_release(my_packet);
     }
 
     /*Check if the content which connected by all the received packets is the data_12_18 sent from the client socket*/
-    if(!memcmp(rcv_buffer, data_12_18, packet_length_12_18))
+    if((rcv_length == packet_length_12_18) &&
+       !memcmp(rcv_buffer, data_12_18, packet_length_12_18))
         data_counter++;
 
     /* Disconnect this socket.  */
@@ -361,33 +372,56 @@ UINT       j, k = 0;
 
 static UINT    my_packet_process_12_18(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
-#if defined(__PRODUCT_NETXDUO__)
-NX_IPV4_HEADER    *ip_header_ptr = (NX_IPV4_HEADER*)(packet_ptr -> nx_packet_prepend_ptr);
-#else
-NX_IP_HEADER    *ip_header_ptr = (NX_IP_HEADER*)(packet_ptr -> nx_packet_prepend_ptr);
-#endif
+UCHAR     *data = packet_ptr -> nx_packet_prepend_ptr;
+ULONG      ip_header_length;
+ULONG      tcp_header_length;
+ULONG      payload_length;
+ULONG      fragment_word;
 
-    if((packet_ptr -> nx_packet_length) > 40)
+    /* Ignore ARP/IPv6 and count only TCP payload, excluding negotiated options. */
+    if ((packet_ptr -> nx_packet_length < 40) || ((data[0] >> 4) != 4) ||
+        (data[9] != NX_PROTOCOL_TCP))
     {
-         NX_CHANGE_ULONG_ENDIAN(ip_header_ptr -> nx_ip_header_word_1);
-
-        /*Check if the packet is fragmented by IP layer.*/
-        if(!(ip_header_ptr -> nx_ip_header_word_1 & NX_IP_FRAGMENT_MASK))
-        {
-             /*Check if the packet is fragmented by TCP layer*/
-             if((packet_ptr -> nx_packet_length - 40) > mss_option_12_18)
-                 error_counter++;
-         }
-         else
-             error_counter++;
-
-        /* Append the intercepted packet's content to the receive buffer. */
-        memcpy(&callback_rcv_buffer[callback_rcv_length], packet_ptr -> nx_packet_prepend_ptr + 40, packet_ptr -> nx_packet_length - 40);
-        callback_rcv_length = callback_rcv_length + packet_ptr -> nx_packet_length - 40;
-
-        NX_CHANGE_ULONG_ENDIAN(ip_header_ptr -> nx_ip_header_word_1);
+        return NX_TRUE;
     }
 
+    ip_header_length = (ULONG)(data[0] & 0x0F) << 2;
+    if ((ip_header_length < 20) ||
+        (packet_ptr -> nx_packet_length < ip_header_length + sizeof(NX_TCP_HEADER)))
+    {
+        error_counter++;
+        return NX_TRUE;
+    }
+    tcp_header_length = (ULONG)(data[ip_header_length + 12] >> 4) << 2;
+    if ((tcp_header_length < sizeof(NX_TCP_HEADER)) ||
+        (packet_ptr -> nx_packet_length < ip_header_length + tcp_header_length))
+    {
+        error_counter++;
+        return NX_TRUE;
+    }
+
+    payload_length = packet_ptr -> nx_packet_length - ip_header_length - tcp_header_length;
+    if (payload_length == 0)
+    {
+        return NX_TRUE;
+    }
+
+    fragment_word = ((ULONG)data[6] << 8) | data[7];
+    /* Preserve both IP nonfragmentation and TCP effective-MSS assertions. */
+    if ((fragment_word & NX_IP_FRAGMENT_MASK) ||
+        (payload_length + tcp_header_length - sizeof(NX_TCP_HEADER) > mss_option_12_18))
+    {
+        error_counter++;
+    }
+
+    if (payload_length > sizeof(callback_rcv_buffer) - callback_rcv_length)
+    {
+        error_counter++;
+        return NX_TRUE;
+    }
+    memcpy(&callback_rcv_buffer[callback_rcv_length],
+           data + ip_header_length + tcp_header_length, payload_length);
+    callback_rcv_length += (UINT)payload_length;
     return NX_TRUE;
 }
 
