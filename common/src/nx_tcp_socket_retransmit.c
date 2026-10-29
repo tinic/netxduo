@@ -279,7 +279,12 @@ UINT           compute_checksum = 1;
 
     /* Determine if the retransmitted packet is identical to the original packet.
        RFC1122, Section3.2.1.5, Page32-33. RFC1122, Section4.2.2.15, Page90-91.  */
-    if ((header_ptr -> nx_tcp_acknowledgment_number == original_acknowledgment_number) &&
+    /* A transient DATA slice was freshly allocated, not sent before: it has
+       no IPv4 header to reuse. With TCP TX checksums disabled/offloaded, its
+       checksum can stay zero even though the sequence or DATA length changed.
+       Only an original on the socket's sent queue may reuse its IP header. */
+    if ((packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next != (NX_PACKET *)NX_PACKET_ALLOCATED) &&
+        (header_ptr -> nx_tcp_acknowledgment_number == original_acknowledgment_number) &&
         (header_ptr -> nx_tcp_header_word_3 == original_header_word_3) &&
         (header_ptr -> nx_tcp_header_word_4 == original_header_word_4))
     {
