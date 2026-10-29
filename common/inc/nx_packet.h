@@ -81,7 +81,7 @@
    caller still validates its protocol/header lengths before offloading. */
 static inline ULONG _nx_packet_tcp_gso_mss(NX_PACKET *packet_ptr)
 {
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+#if defined(NX_ENABLE_INTERFACE_CAPABILITY) && !defined(NX_DISABLE_TCP_GSO)
 NX_TCP_GSO_INFO *info;
 
     if ((packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_GSO) &&
@@ -109,7 +109,7 @@ NX_TCP_GSO_INFO *info;
    incapable routes retain the ordinary path. */
 static inline ULONG _nx_packet_tcp_gso_segments(NX_PACKET *packet_ptr)
 {
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+#if defined(NX_ENABLE_INTERFACE_CAPABILITY) && !defined(NX_DISABLE_TCP_GSO)
 ULONG mss = _nx_packet_tcp_gso_mss(packet_ptr);
 ULONG tcp_header, payload;
 NX_TCP_GSO_INFO *info;

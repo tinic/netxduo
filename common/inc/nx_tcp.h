@@ -775,7 +775,7 @@ ULONG mss;
    queue limit as a byte bound as well; explicit SO_SNDBUF must not multiply. */
 static inline ULONG _nx_tcp_socket_queue_byte_credit(NX_TCP_SOCKET *socket_ptr)
 {
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+#if defined(NX_ENABLE_INTERFACE_CAPABILITY) && !defined(NX_DISABLE_TCP_GSO)
 ULONG mss, limit;
 
     if (socket_ptr -> nx_tcp_socket_connect_interface != NX_NULL &&
