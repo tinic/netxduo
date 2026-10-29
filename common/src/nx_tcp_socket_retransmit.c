@@ -739,6 +739,34 @@ UINT       sack_index;
             in_flight = 0;
         }
 
+        /* RFC 6675 SetPipe step (b): a lost original no longer occupies
+           the pipe, but its unacknowledged retransmission does. HighRxt
+           is the exclusive end of the copies already sent in this recovery.
+           Without this credit, each growing SACK refills the same window
+           before any of those copies has reached the receiver. */
+        {
+            ULONG retransmitted = socket_ptr -> nx_tcp_socket_tx_high_rxt - unacked;
+
+            if ((retransmitted != 0) &&
+                (retransmitted <= socket_ptr -> nx_tcp_socket_tx_outstanding_bytes))
+            {
+                for (sack_index = 0; sack_index < sack_blocks; sack_index++)
+                {
+                    ULONG right = sack_right[sack_index];
+
+                    if (((INT)(right - socket_ptr -> nx_tcp_socket_tx_high_rxt)) > 0)
+                    {
+                        right = socket_ptr -> nx_tcp_socket_tx_high_rxt;
+                    }
+                    if (((INT)(right - sack_left[sack_index])) > 0)
+                    {
+                        retransmitted -= right - sack_left[sack_index];
+                    }
+                }
+                in_flight += retransmitted;
+            }
+        }
+
         if (available > in_flight)
         {
             available = available - in_flight;
@@ -748,7 +776,10 @@ UINT       sack_index;
             available = 0;
         }
 
-        if (available < socket_ptr -> nx_tcp_socket_connect_mss)
+        /* Entering recovery must repair the first hole. Subsequent ACKs
+           may send only when the pipe actually has room for another copy. */
+        if ((need_fast_retransmit == NX_TRUE) &&
+            (available < socket_ptr -> nx_tcp_socket_connect_mss))
         {
             available = socket_ptr -> nx_tcp_socket_connect_mss;
         }
