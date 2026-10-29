@@ -282,7 +282,7 @@ NX_PACKET      *part;
             break;
         }
         packet_bytes = 0;
-        for (part = packet_ptr; part != NX_NULL; part = part -> nx_packet_next)
+        for (part = packet_ptr; part != NX_NULL;)
         {
             for (i = 0; i < (UINT)(part -> nx_packet_append_ptr - part -> nx_packet_prepend_ptr); i++)
             {
@@ -294,6 +294,11 @@ NX_PACKET      *part;
                 received++;
                 packet_bytes++;
             }
+#ifndef NX_DISABLE_PACKET_CHAIN
+            part = part -> nx_packet_next;
+#else
+            part = NX_NULL;
+#endif
         }
         if (packet_bytes != packet_ptr -> nx_packet_length)
             error_counter++;
