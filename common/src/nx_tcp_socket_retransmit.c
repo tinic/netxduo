@@ -401,7 +401,11 @@ UCHAR saved_header[60];
         if (offset >= chunk)
         {
             offset -= chunk;
+#ifndef NX_DISABLE_PACKET_CHAIN
             source = source -> nx_packet_next;
+#else
+            source = NX_NULL;
+#endif
             continue;
         }
         chunk -= offset;
@@ -417,7 +421,11 @@ UCHAR saved_header[60];
         }
         left -= chunk;
         offset = 0;
+#ifndef NX_DISABLE_PACKET_CHAIN
         source = source -> nx_packet_next;
+#else
+        source = NX_NULL;
+#endif
     }
     if (left != 0 || (ULONG)(copy -> nx_packet_prepend_ptr - copy -> nx_packet_data_start) < header_length)
     {
