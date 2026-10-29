@@ -2278,8 +2278,8 @@ typedef struct NX_TCP_SOCKET_STRUCT
        retransmit begins.  */
     ULONG       nx_tcp_socket_tx_high_rxt;
 
-    /* Persistent SACK holes and PRR state. The holes use one lazily allocated
-       control packet, not extra storage in every packet in the pool. */
+    /* Persistent SACK holes and PRR state. Lazily allocated control pages
+       grow with fragmented delivery, without enlarging every NX_PACKET. */
     NX_PACKET  *nx_tcp_socket_sack_scoreboard;
     NX_PACKET  *nx_tcp_socket_sack_cursor;
     ULONG       nx_tcp_socket_sack_high_ack;
@@ -2292,8 +2292,10 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_sack_rescue_rxt;
     ULONG       nx_tcp_socket_sack_delivery_bank;
     ULONG       nx_tcp_socket_sack_delivered_data;
+    ULONG       nx_tcp_socket_sack_uncertain_end;
     USHORT      nx_tcp_socket_sack_hole_count;
-    UCHAR       nx_tcp_socket_sack_hole_capacity;
+    USHORT      nx_tcp_socket_sack_hole_capacity;
+    UCHAR       nx_tcp_socket_sack_page_capacity;
     UCHAR       nx_tcp_socket_sack_scoreboard_flags;
 #endif /* NX_ENABLE_TCP_SACK */
 
