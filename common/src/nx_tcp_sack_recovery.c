@@ -588,7 +588,7 @@ VOID _nx_tcp_sack_recovery_sent(NX_TCP_SOCKET *s, ULONG seq, ULONG bytes, UINT r
     {
         s -> nx_tcp_socket_tx_high_rxt = end;
     }
-    if (s -> nx_tcp_socket_sack_scoreboard != NX_NULL)
+    if (!rescue && s -> nx_tcp_socket_sack_scoreboard != NX_NULL)
     {
         NX_SACK_HOLE *h = sack_holes(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK);
         for (i = 0; i < s -> nx_tcp_socket_sack_hole_count; i++)
