@@ -61,6 +61,8 @@ static void fragmented(ULONG start)
 UINT i;
 ULONG delivered = 0;
 ULONG available = pool.nx_packet_pool_available;
+ULONG seq, end;
+UINT kind;
 
     fixture(start);
     for (i = 0; i < 146; i++)
@@ -78,6 +80,20 @@ ULONG available = pool.nx_packet_pool_available;
     sack(start, 145, start);
     check(socket_0.nx_tcp_socket_sack_delivered_data == 0,
           "repeating the last SACK grants no duplicate credit");
+    /* Traverse repairs across every control-page boundary. Remembered
+       odd-numbered segments must never become a fabricated loss range. */
+    socket_0.nx_tcp_socket_prr_credit = FLIGHT;
+    (VOID)_nx_tcp_sack_recovery_pipe(&socket_0);
+    for (i = 0; i < 146; i++)
+    {
+        kind = _nx_tcp_sack_recovery_next(&socket_0, &seq, &end);
+        check(kind != NX_FALSE && seq == start + 2UL * i * MSS &&
+              end == start + (2UL * i + 1UL) * MSS,
+              "repair traversal skips each previously SACKed range across pages");
+        if (kind == NX_FALSE)
+            break;
+        _nx_tcp_sack_recovery_sent(&socket_0, seq, end - seq, NX_FALSE);
+    }
     socket_0.nx_tcp_socket_sack_block_count = 0;
     _nx_tcp_sack_recovery_ack(&socket_0, start + FLIGHT);
     delivered += socket_0.nx_tcp_socket_sack_delivered_data;
