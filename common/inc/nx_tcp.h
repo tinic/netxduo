@@ -673,6 +673,81 @@ UINT _nxe_tcp_socket_queue_depth_notify_set(NX_TCP_SOCKET *socket_ptr,  VOID (*t
 UINT _nxe_tcp_socket_timed_wait_callback(NX_TCP_SOCKET *socket_ptr, VOID (*tcp_timed_wait_callback)(NX_TCP_SOCKET *socket_ptr));
 UINT _nxe_tcp_socket_vlan_priority_set(NX_TCP_SOCKET *socket_ptr, UINT vlan_priority);
 
+/* RFC 6937 proportional credit, exact in DATA bytes without a 64-bit
+   multiply/divide on every recovery ACK. The normal threshold is floor(F/2).
+   For odd F, D=q*F+r gives ceil(D*floor(F/2)/F)=q*floor(F/2)+ceil(r/2).
+   The common D<F case therefore needs only a shift and a low-bit test. */
+static inline ULONG _nx_tcp_prr_proportional_credit(ULONG delivered, ULONG threshold, ULONG flight)
+{
+ULONG maximum = (ULONG)0xFFFFFFFFUL;
+ULONG product, whole, residue, fraction, remainder, bit;
+
+    if (flight == 0 || threshold == 0)
+    {
+        return(0);
+    }
+    if (threshold == flight / 2)
+    {
+        if ((flight & 1UL) == 0 || delivered < flight)
+        {
+            return((delivered >> 1) + (delivered & 1UL));
+        }
+        whole = delivered / flight;
+        residue = delivered % flight;
+        return(whole * threshold + (residue >> 1) + (residue & 1UL));
+    }
+    if (threshold == flight)
+    {
+        return(delivered);
+    }
+    if (delivered <= maximum / threshold)
+    {
+        product = delivered * threshold;
+        return(product / flight + (product % flight != 0));
+    }
+
+    /* Minimum-ssthresh or unusually large configured MSS can require the
+       general ratio. Divide out whole units first, then accumulate the
+       fractional product in at most 32 steps. Comparisons before doubling
+       or adding keep the remainder below flight without unsigned overflow. */
+    whole = delivered / flight;
+    residue = delivered % flight;
+    if (whole != 0 && threshold > maximum / whole)
+    {
+        return(maximum);
+    }
+    product = whole * threshold;
+    fraction = 0;
+    remainder = 0;
+    for (bit = (ULONG)0x80000000UL; bit != 0; bit >>= 1)
+    {
+        fraction <<= 1;
+        if (remainder >= flight - remainder)
+        {
+            remainder -= flight - remainder;
+            fraction++;
+        }
+        else
+        {
+            remainder += remainder;
+        }
+        if (threshold & bit)
+        {
+            if (remainder >= flight - residue)
+            {
+                remainder -= flight - residue;
+                fraction++;
+            }
+            else
+            {
+                remainder += residue;
+            }
+        }
+    }
+    fraction += (remainder != 0);
+    return(fraction > maximum - product ? maximum : product + fraction);
+}
+
 /* What one segment of an established connection may carry: the peer's MSS,
    less the timestamp option when the connection has one.  RFC 1323 section
    3.2 puts the option on every segment, so its twelve bytes are part of the
