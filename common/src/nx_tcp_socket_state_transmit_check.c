@@ -126,6 +126,19 @@ ULONG tx_window_current;
             tx_window_current = 0;
         }
 
+#ifdef NX_ENABLE_TCP_SACK
+        if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+        {
+            tx_window_current = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+            tx_window_current = tx_window_current > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes ?
+                                tx_window_current - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes : 0;
+            if (tx_window_current > socket_ptr -> nx_tcp_socket_prr_credit)
+            {
+                tx_window_current = socket_ptr -> nx_tcp_socket_prr_credit;
+            }
+        }
+#endif
+
         /* The same RFC 1122 4.2.3.4 test the send path applies
            (nx_tcp_socket_send_internal.c).  Without it here the suspended
            thread is woken by every acknowledgment that reopens a byte, finds

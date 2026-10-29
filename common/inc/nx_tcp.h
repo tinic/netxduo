@@ -749,6 +749,21 @@ TCP_DECLARE ULONG           _nx_tcp_transmit_timer_rate;
 
 TCP_DECLARE ULONG           _nx_tcp_2MSL_timer_rate;
 
+#ifdef NX_ENABLE_TCP_SACK
+#define NX_TCP_SACK_RECOVERY_ACTIVE(s) \
+    (((s) -> nx_tcp_socket_sack_permitted == NX_TRUE) && \
+     ((s) -> nx_tcp_socket_fast_recovery == NX_TRUE) && \
+     ((s) -> nx_tcp_socket_prr_recover_fs != 0))
+
+VOID _nx_tcp_sack_recovery_reset(NX_TCP_SOCKET *socket_ptr);
+VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *socket_ptr, ULONG ack);
+VOID _nx_tcp_sack_recovery_begin(NX_TCP_SOCKET *socket_ptr);
+VOID _nx_tcp_sack_recovery_end(NX_TCP_SOCKET *socket_ptr);
+ULONG _nx_tcp_sack_recovery_pipe(NX_TCP_SOCKET *socket_ptr);
+UINT _nx_tcp_sack_recovery_next(NX_TCP_SOCKET *socket_ptr, ULONG *seq, ULONG *end);
+VOID _nx_tcp_sack_recovery_sent(NX_TCP_SOCKET *socket_ptr, ULONG seq, ULONG bytes, UINT rescue);
+extern ULONG _nx_tcp_sack_scoreboard_allocation_failures;
+#endif
 
 #endif
 

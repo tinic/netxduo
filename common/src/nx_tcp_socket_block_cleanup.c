@@ -70,6 +70,10 @@
 VOID  _nx_tcp_socket_block_cleanup(NX_TCP_SOCKET *socket_ptr)
 {
 
+#ifdef NX_ENABLE_TCP_SACK
+    _nx_tcp_sack_recovery_reset(socket_ptr);
+#endif
+
     /* Clean up the connect IP address.  */
 
     socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version = 0;

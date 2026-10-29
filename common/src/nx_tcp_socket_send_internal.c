@@ -697,6 +697,19 @@ UINT            compute_checksum = 1;
             tx_window_current = 0;
         }
 
+#ifdef NX_ENABLE_TCP_SACK
+        if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+        {
+            tx_window_current = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+            tx_window_current = tx_window_current > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes ?
+                                tx_window_current - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes : 0;
+            if (tx_window_current > socket_ptr -> nx_tcp_socket_prr_credit)
+            {
+                tx_window_current = socket_ptr -> nx_tcp_socket_prr_credit;
+            }
+        }
+#endif
+
         /* RFC 1122 4.2.3.4 (MUST-38), sender silly-window avoidance.  It reads
            the peer's window off the socket rather than taking tx_window_current
            deliberately: the congestion window belongs in the amount sent, not
@@ -1234,6 +1247,15 @@ UINT            compute_checksum = 1;
 
             /* If trace is enabled, insert this event into the trace buffer.  */
             NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_DATA_SEND, ip_ptr, socket_ptr, send_packet, socket_ptr -> nx_tcp_socket_tx_sequence - (send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH), NX_TRACE_INTERNAL_EVENTS, 0, 0);
+
+#ifdef NX_ENABLE_TCP_SACK
+            if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+            {
+                ULONG sent_bytes = send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH;
+                socket_ptr -> nx_tcp_socket_prr_out += sent_bytes;
+                socket_ptr -> nx_tcp_socket_prr_credit -= sent_bytes;
+            }
+#endif
 
             /* Send the TCP packet to the IP component.  */
 #ifndef NX_DISABLE_IPV4

@@ -132,6 +132,17 @@ ULONG          sack_right;
             starting_tx_sequence--;
         }
 
+#ifdef NX_ENABLE_TCP_SACK
+        if (socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE &&
+            (INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) >= 0 &&
+            (INT)(ending_tx_sequence - tcp_header_ptr -> nx_tcp_acknowledgment_number) >= 0 &&
+            (socket_ptr -> nx_tcp_socket_sack_block_count != 0 ||
+             socket_ptr -> nx_tcp_socket_sack_scoreboard_flags != 0))
+        {
+            _nx_tcp_sack_recovery_ack(socket_ptr, tcp_header_ptr -> nx_tcp_acknowledgment_number);
+        }
+#endif
+
         /* Initialize ending rx sequence. */
         if (socket_ptr -> nx_tcp_socket_receive_queue_tail)
         {
@@ -399,8 +410,13 @@ ULONG          sack_right;
                              (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE))
                     {
 
-                        /* CWND += MSS  */
-                        socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
+                        /* NewReno inflates cwnd; SACK recovery uses PRR credit. */
+#ifdef NX_ENABLE_TCP_SACK
+                        if (socket_ptr -> nx_tcp_socket_sack_permitted != NX_TRUE)
+#endif
+                        {
+                            socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
+                        }
 
 #ifdef NX_ENABLE_TCP_SACK
                         /* RFC 6675 section 5 step 4: every further duplicate
@@ -410,7 +426,7 @@ ULONG          sack_right;
                            goes out now, not at the next partial
                            acknowledgment.  Nothing is resent twice
                            (nx_tcp_socket_tx_high_rxt).  */
-                        if (socket_ptr -> nx_tcp_socket_sack_block_count != 0)
+                        if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
                         {
                             _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_FALSE);
                         }
@@ -612,6 +628,9 @@ ULONG          sack_right;
                     /* All packets sent before entering fast recovery are ACKed. */
                     /* Exit fast recovery procedure. */
                     socket_ptr -> nx_tcp_socket_fast_recovery = NX_FALSE;
+#ifdef NX_ENABLE_TCP_SACK
+                    _nx_tcp_sack_recovery_end(socket_ptr);
+#endif
                     socket_ptr -> nx_tcp_socket_tx_window_congestion = socket_ptr -> nx_tcp_socket_tx_slow_start_threshold;
                 }
             }
@@ -643,6 +662,10 @@ ULONG          sack_right;
             if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE)
             {
 
+#ifdef NX_ENABLE_TCP_SACK
+                if (socket_ptr -> nx_tcp_socket_sack_permitted != NX_TRUE)
+#endif
+                {
                 /* Process cwnd in fast recovery procedure.  AmiNetXDuo: the
                    deflation stops at zero.  A partial acknowledgment that
                    fills one hole and runs up to a second can cover more than
@@ -662,6 +685,7 @@ ULONG          sack_right;
                     socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
                 }
                 socket_ptr -> nx_tcp_socket_tx_cwnd_acked = 0;
+                }
             }
             else
             {
@@ -757,6 +781,16 @@ ULONG          sack_right;
 
         if (!packet_release_count)
         {
+#ifdef NX_ENABLE_TCP_SACK
+            /* A partial-byte cumulative ACK can deliver new bytes without
+               releasing a full queue packet. It still clocks SACK recovery. */
+            if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr) &&
+                socket_ptr -> nx_tcp_socket_sack_delivered_data != 0 &&
+                (INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) > 0)
+            {
+                _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_FALSE);
+            }
+#endif
             /* Done, return to caller. */
             return(NX_TRUE);
         }
@@ -848,6 +882,14 @@ ULONG          sack_right;
                next pointer.  */
             search_ptr =  search_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
 
+#ifdef NX_ENABLE_TCP_SACK
+            if (socket_ptr -> nx_tcp_socket_sack_cursor == previous_ptr)
+            {
+                socket_ptr -> nx_tcp_socket_sack_cursor =
+                    search_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED ? NX_NULL : search_ptr;
+            }
+#endif
+
             /* Disable interrupts temporarily.  */
             TX_DISABLE
 
@@ -915,6 +957,13 @@ ULONG          sack_right;
                 TX_RESTORE
             }
         }
+
+#ifdef NX_ENABLE_TCP_SACK
+        if (socket_ptr -> nx_tcp_socket_transmit_sent_head == NX_NULL)
+        {
+            _nx_tcp_sack_recovery_reset(socket_ptr);
+        }
+#endif
 
         if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE)
         {
