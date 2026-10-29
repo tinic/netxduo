@@ -73,6 +73,49 @@
 /*    _nx_tcp_socket_packet_process         Process TCP packet for socket */
 /*                                                                        */
 /**************************************************************************/
+#ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
+/* RFC 5827 counts wire segments, not host queue entries. This bounded walk
+   is used only for fewer than four buffers and stops at four wire segments. */
+static UINT _nx_tcp_socket_early_retransmit_segments(NX_TCP_SOCKET *socket_ptr, ULONG unacked)
+{
+TX_INTERRUPT_SAVE_AREA
+NX_PACKET *packet = socket_ptr -> nx_tcp_socket_transmit_sent_head;
+NX_TCP_HEADER *header;
+ULONG begin, word, payload, mss = _nx_tcp_socket_payload_mss(socket_ptr);
+UINT segments = 0;
+
+    if (mss == 0)
+    {
+        return(NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1);
+    }
+    while (packet != NX_NULL && packet != (NX_PACKET *)NX_PACKET_ENQUEUED &&
+           segments < NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1)
+    {
+        TX_DISABLE
+        header = packet -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE ?
+                 (NX_TCP_HEADER *)packet -> nx_packet_prepend_ptr :
+                 (NX_TCP_HEADER *)(packet -> nx_packet_ip_header + packet -> nx_packet_ip_header_length);
+        begin = header -> nx_tcp_sequence_number;
+        word = header -> nx_tcp_header_word_3;
+        NX_CHANGE_ULONG_ENDIAN(begin);
+        NX_CHANGE_ULONG_ENDIAN(word);
+        payload = packet -> nx_packet_length - (ULONG)((UCHAR *)header - packet -> nx_packet_prepend_ptr) -
+                  (word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
+        TX_RESTORE
+        if ((INT)(begin + payload - unacked) > 0)
+        {
+            segments += (UINT)((payload + mss - 1) / mss);
+            if ((INT)(unacked - begin) > 0)
+            {
+                segments -= (UINT)((unacked - begin) / mss);
+            }
+        }
+        packet = packet -> nx_packet_union_next.nx_packet_tcp_queue_next;
+    }
+    return(segments);
+}
+#endif
+
 UINT  _nx_tcp_socket_state_ack_check(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *tcp_header_ptr)
 {
 
@@ -354,11 +397,14 @@ ULONG          sack_right;
                     dupack_threshold = NX_TCP_FAST_RETRANSMIT_THRESHOLD;
 
 #ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
-                    if ((socket_ptr -> nx_tcp_socket_transmit_sent_count <
-                         (ULONG)NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1) &&
-                        (socket_ptr -> nx_tcp_socket_transmit_sent_count > 1))
+                    if (socket_ptr -> nx_tcp_socket_transmit_sent_count <
+                        (ULONG)NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1)
                     {
-                        dupack_threshold = (UINT)socket_ptr -> nx_tcp_socket_transmit_sent_count - 1;
+                    UINT wire_segments = _nx_tcp_socket_early_retransmit_segments(socket_ptr, starting_tx_sequence);
+                        if (wire_segments > 1 && wire_segments < NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1)
+                        {
+                            dupack_threshold = wire_segments - 1;
+                        }
                     }
 #endif /* NX_ENABLE_TCP_EARLY_RETRANSMIT */
 

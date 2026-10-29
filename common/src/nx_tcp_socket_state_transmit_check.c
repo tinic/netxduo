@@ -72,6 +72,7 @@ VOID  _nx_tcp_socket_state_transmit_check(NX_TCP_SOCKET *socket_ptr)
 {
 
 ULONG tx_window_current;
+ULONG queue_credit;
 
     /* Now check to see if there is a thread suspended attempting to transmit.  */
     /* AmiNetXDuo: the vendor ran this block only for a suspended sender, so a
@@ -138,6 +139,12 @@ ULONG tx_window_current;
             }
         }
 #endif
+
+        queue_credit = _nx_tcp_socket_queue_byte_credit(socket_ptr);
+        if (tx_window_current > queue_credit)
+        {
+            tx_window_current = queue_credit;
+        }
 
         /* The same RFC 1122 4.2.3.4 test the send path applies
            (nx_tcp_socket_send_internal.c).  Without it here the suspended

@@ -77,6 +77,81 @@
 #endif /* NX_ENABLE_PACKET_DEBUG_INFO */
 
 
+/* A segmentation record is explicit headroom, never a wire header. The
+   caller still validates its protocol/header lengths before offloading. */
+static inline ULONG _nx_packet_tcp_gso_mss(NX_PACKET *packet_ptr)
+{
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+NX_TCP_GSO_INFO *info;
+
+    if ((packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_GSO) &&
+        packet_ptr -> nx_packet_data_start != NX_NULL &&
+        packet_ptr -> nx_packet_data_end >= packet_ptr -> nx_packet_data_start &&
+        (ULONG)(packet_ptr -> nx_packet_data_end - packet_ptr -> nx_packet_data_start) >= sizeof(NX_TCP_GSO_INFO) &&
+        packet_ptr -> nx_packet_prepend_ptr <= packet_ptr -> nx_packet_data_end &&
+        packet_ptr -> nx_packet_prepend_ptr >= packet_ptr -> nx_packet_data_start &&
+        (ULONG)(packet_ptr -> nx_packet_prepend_ptr - packet_ptr -> nx_packet_data_start) >= sizeof(NX_TCP_GSO_INFO))
+    {
+        info = (NX_TCP_GSO_INFO *)packet_ptr -> nx_packet_data_start;
+        if (info -> version == NX_TCP_GSO_VERSION && info -> flags <= NX_TCP_GSO_REPAIR)
+        {
+            return(info -> mss);
+        }
+    }
+#else
+    NX_PARAMETER_NOT_USED(packet_ptr);
+#endif
+    return(0);
+}
+
+/* Validate a complete IPv4/TCP template before bypassing physical MTU
+   handling. Control packets, fragments, options outside the TCP header and
+   incapable routes retain the ordinary path. */
+static inline ULONG _nx_packet_tcp_gso_segments(NX_PACKET *packet_ptr)
+{
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+ULONG mss = _nx_packet_tcp_gso_mss(packet_ptr);
+ULONG tcp_header, payload;
+NX_TCP_GSO_INFO *info;
+UCHAR *ip = packet_ptr -> nx_packet_prepend_ptr;
+NX_INTERFACE *interface_ptr = packet_ptr -> nx_packet_address.nx_packet_interface_ptr;
+
+    if (mss != 0 && interface_ptr != NX_NULL &&
+        (interface_ptr -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_GSO) &&
+        packet_ptr -> nx_packet_length >= 40 && packet_ptr -> nx_packet_append_ptr >= ip &&
+        (ULONG)(packet_ptr -> nx_packet_append_ptr - ip) >= 40 &&
+        ip[0] == 0x45 && ip[9] == 6 && (ip[6] & 0x3f) == 0 && ip[7] == 0 &&
+        (((ULONG)ip[2] << 8) | ip[3]) == packet_ptr -> nx_packet_length &&
+        (ip[33] & 0x27) == 0)
+    {
+        tcp_header = (ULONG)(ip[32] >> 4) * 4;
+        if (tcp_header >= 20 && tcp_header <= 60 &&
+            (ULONG)(packet_ptr -> nx_packet_append_ptr - ip) >= 20 + tcp_header &&
+            packet_ptr -> nx_packet_length > 20 + tcp_header &&
+            mss + 20 + tcp_header <= interface_ptr -> nx_interface_ip_mtu_size)
+        {
+            payload = packet_ptr -> nx_packet_length - 20 - tcp_header;
+            if (payload <= 32768UL)
+            {
+                info = (NX_TCP_GSO_INFO *)packet_ptr -> nx_packet_data_start;
+                if (info -> flags == NX_TCP_GSO_REPAIR)
+                {
+                    return(info -> length != 0 && info -> length <= mss &&
+                           (ULONG)info -> offset + info -> length <= payload ? 1UL : 0UL);
+                }
+                if (info -> offset == 0 && info -> length == 0)
+                {
+                    return((payload + mss - 1) / mss);
+                }
+            }
+        }
+    }
+#else
+    NX_PARAMETER_NOT_USED(packet_ptr);
+#endif
+    return(0);
+}
+
 /* Define packet pool management function prototypes.  */
 
 UINT _nx_packet_allocate(NX_PACKET_POOL *pool_ptr,  NX_PACKET **packet_ptr,
