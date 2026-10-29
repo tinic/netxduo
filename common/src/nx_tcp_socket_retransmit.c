@@ -389,7 +389,11 @@ UCHAR saved_header[60];
         return NX_NULL;
     }
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
-    if (_nx_packet_tcp_gso_mss(original) != 0)
+    if (_nx_packet_tcp_gso_mss(original) != 0 &&
+        original -> nx_packet_ip_version == NX_IP_VERSION_V4 &&
+        original -> nx_packet_address.nx_packet_interface_ptr != NX_NULL &&
+        (original -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_capability_flag &
+         NX_INTERFACE_CAPABILITY_TCP_GSO))
     {
         NX_TCP_GSO_INFO *info = (NX_TCP_GSO_INFO *)original -> nx_packet_data_start;
         /* The original is TX_DONE and remains queued with immutable sequence,
