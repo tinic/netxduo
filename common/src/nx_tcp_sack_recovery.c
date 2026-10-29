@@ -293,9 +293,8 @@ static VOID sack_prr_credit(NX_TCP_SOCKET *s)
     ULONG credit;
     if (pipe > threshold)
     {
-        ULONG64 product = (ULONG64)delivered * threshold;
-        credit = (ULONG)((product + s -> nx_tcp_socket_prr_recover_fs - 1UL) /
-                           s -> nx_tcp_socket_prr_recover_fs);
+        credit = _nx_tcp_prr_proportional_credit(delivered, threshold,
+                                                  s -> nx_tcp_socket_prr_recover_fs);
         credit = (credit > sent) ? credit - sent : 0;
     }
     else
