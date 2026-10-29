@@ -10,13 +10,16 @@
 
 #ifdef NX_ENABLE_TCP_SACK
 
-/* Two banks permit an atomic bounded rebuild without a large stack buffer.
-   No memory is added to NX_PACKET, and no allocation occurs per ACK. */
-#define NX_SACK_HOLES_MAX       64U
+/* Each control page has two banks for an atomic rebuild. Pages grow only
+   when fragmented delivery needs them, within a pool share and a work cap.
+   No memory is added to NX_PACKET. */
+#define NX_SACK_HOLES_PER_PAGE  64U
+#define NX_SACK_PAGES_MAX       16U
 #define NX_SACK_BANK            1U
 #define NX_SACK_INITIALIZED     2U
 #define NX_SACK_ALLOC_FAILED    4U
 #define NX_SACK_ACK_JUMP        8U
+#define NX_SACK_UNCERTAIN       16U
 
 typedef struct NX_SACK_HOLE_STRUCT
 {
@@ -46,10 +49,43 @@ static ULONG sack_data_end(NX_TCP_SOCKET *s)
     return end;
 }
 
-static NX_SACK_HOLE *sack_holes(NX_TCP_SOCKET *s, UINT bank)
+/* queue_next links independently allocated control pages, not DATA chains.
+   It exists in NX_DISABLE_PACKET_CHAIN builds too. Allocation ownership stays
+   NX_PACKET_ALLOCATED; reset unlinks each page before releasing it. */
+static NX_SACK_HOLE *sack_hole(NX_TCP_SOCKET *s, UINT bank, UINT index)
 {
-    return ((NX_SACK_HOLE *)s -> nx_tcp_socket_sack_scoreboard -> nx_packet_prepend_ptr) +
-           bank * s -> nx_tcp_socket_sack_hole_capacity;
+    NX_PACKET *page = s -> nx_tcp_socket_sack_scoreboard;
+    UINT cap = s -> nx_tcp_socket_sack_page_capacity;
+    while (index >= cap)
+    {
+        index -= cap;
+        page = page -> nx_packet_queue_next;
+    }
+    return ((NX_SACK_HOLE *)page -> nx_packet_prepend_ptr) + bank * cap + index;
+}
+
+static UINT sack_grow(NX_TCP_SOCKET *s)
+{
+    NX_PACKET *page = s -> nx_tcp_socket_sack_scoreboard, *extra;
+    NX_PACKET_POOL *pool = page -> nx_packet_pool_owner;
+    ULONG reserve = pool -> nx_packet_pool_total / 8UL;
+    ULONG limit = pool -> nx_packet_pool_total / 32UL;
+    UINT pages = 1;
+    if (reserve < 4UL)
+        reserve = 4UL;
+    if (limit > NX_SACK_PAGES_MAX)
+        limit = NX_SACK_PAGES_MAX;
+    while (page -> nx_packet_queue_next != NX_NULL)
+    {
+        pages++;
+        page = page -> nx_packet_queue_next;
+    }
+    if (pages >= limit || pool -> nx_packet_pool_available <= reserve ||
+        _nx_packet_allocate(pool, &extra, 0, NX_NO_WAIT) != NX_SUCCESS)
+        return NX_FALSE;
+    page -> nx_packet_queue_next = extra;
+    s -> nx_tcp_socket_sack_hole_capacity += s -> nx_tcp_socket_sack_page_capacity;
+    return NX_TRUE;
 }
 
 /* The wire parser rejects overlaps; sort the remaining valid blocks relative
@@ -87,9 +123,10 @@ static UINT sack_blocks(NX_TCP_SOCKET *s, NX_SACK_BLOCK *blocks)
 
 /* Append only to the inactive bank. On overflow the caller discards the
    entire update and retains its old evidence (after cumulative ACK trimming). */
-static UINT sack_append(NX_SACK_HOLE *out, UINT count, UINT cap,
+static UINT sack_append(NX_TCP_SOCKET *s, UINT bank, NX_SACK_HOLE *scratch, UINT count, UINT cap,
                         ULONG left, ULONG right, ULONG rxmit)
 {
+    NX_SACK_HOLE *out;
     if ((INT)(right - left) <= 0)
     {
         return count;
@@ -98,8 +135,9 @@ static UINT sack_append(NX_SACK_HOLE *out, UINT count, UINT cap,
     {
         return cap + 1U;
     }
-    out[count].left = left;
-    out[count].right = right;
+    out = scratch != NX_NULL ? &scratch[count] : sack_hole(s, bank, count);
+    out -> left = left;
+    out -> right = right;
     if ((INT)(rxmit - left) < 0)
     {
         rxmit = left;
@@ -108,11 +146,11 @@ static UINT sack_append(NX_SACK_HOLE *out, UINT count, UINT cap,
     {
         rxmit = right;
     }
-    out[count].rxmit = rxmit;
+    out -> rxmit = rxmit;
     return count + 1U;
 }
 
-static UINT sack_subtract(NX_SACK_HOLE *out, UINT count, UINT cap,
+static UINT sack_subtract(NX_TCP_SOCKET *s, UINT bank, UINT count, UINT cap,
                           ULONG left, ULONG right, ULONG rxmit,
                           NX_SACK_BLOCK *blocks, UINT nblocks)
 {
@@ -129,7 +167,7 @@ static UINT sack_subtract(NX_SACK_HOLE *out, UINT count, UINT cap,
         }
         if ((INT)(blocks[i].left - left) > 0)
         {
-            count = sack_append(out, count, cap, left, blocks[i].left, rxmit);
+            count = sack_append(s, bank, NX_NULL, count, cap, left, blocks[i].left, rxmit);
             if (count > cap)
             {
                 return count;
@@ -137,7 +175,7 @@ static UINT sack_subtract(NX_SACK_HOLE *out, UINT count, UINT cap,
         }
         left = blocks[i].right;
     }
-    return sack_append(out, count, cap, left, right, rxmit);
+    return sack_append(s, bank, NX_NULL, count, cap, left, right, rxmit);
 }
 
 static UINT sack_rebuild(NX_TCP_SOCKET *s, NX_SACK_BLOCK *blocks, UINT nblocks,
@@ -145,26 +183,25 @@ static UINT sack_rebuild(NX_TCP_SOCKET *s, NX_SACK_BLOCK *blocks, UINT nblocks,
 {
     UINT bank = s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK;
     UINT cap = s -> nx_tcp_socket_sack_hole_capacity;
-    NX_SACK_HOLE *in = sack_holes(s, bank);
-    NX_SACK_HOLE *out = sack_holes(s, bank ^ NX_SACK_BANK);
     UINT count = 0, i;
     ULONG ack = s -> nx_tcp_socket_sack_high_ack;
     ULONG old_fack = s -> nx_tcp_socket_sack_fack;
     if (discard)
     {
-        count = sack_subtract(out, count, cap, ack, fack, ack, blocks, nblocks);
+        count = sack_subtract(s, bank ^ NX_SACK_BANK, count, cap, ack, fack, ack, blocks, nblocks);
     }
     else
     {
         for (i = 0; i < s -> nx_tcp_socket_sack_hole_count; i++)
         {
-            ULONG left = in[i].left;
+            NX_SACK_HOLE *in = sack_hole(s, bank, i);
+            ULONG left = in -> left;
             if ((INT)(ack - left) > 0)
             {
                 left = ack;
             }
-            count = sack_subtract(out, count, cap, left, in[i].right,
-                                   in[i].rxmit, blocks, nblocks);
+            count = sack_subtract(s, bank ^ NX_SACK_BANK, count, cap, left, in -> right,
+                                   in -> rxmit, blocks, nblocks);
             if (count > cap)
             {
                 return NX_FALSE;
@@ -174,7 +211,7 @@ static UINT sack_rebuild(NX_TCP_SOCKET *s, NX_SACK_BLOCK *blocks, UINT nblocks,
         {
             old_fack = ack;
         }
-        count = sack_subtract(out, count, cap, old_fack, fack, old_fack,
+        count = sack_subtract(s, bank ^ NX_SACK_BANK, count, cap, old_fack, fack, old_fack,
                                blocks, nblocks);
     }
     if (count > cap)
@@ -189,7 +226,7 @@ static UINT sack_rebuild(NX_TCP_SOCKET *s, NX_SACK_BLOCK *blocks, UINT nblocks,
 
 /* Without a control packet, use the wire blocks as a conservative view.
    PRR's delivery high-water mark still prevents repeated credit for them. */
-static NX_SACK_HOLE *sack_view(NX_TCP_SOCKET *s, NX_SACK_HOLE *scratch,
+static VOID sack_view(NX_TCP_SOCKET *s, NX_SACK_HOLE *scratch,
                                UINT *count, ULONG *fack)
 {
     NX_SACK_BLOCK blocks[NX_TCP_SACK_MAX_BLOCKS];
@@ -199,18 +236,24 @@ static NX_SACK_HOLE *sack_view(NX_TCP_SOCKET *s, NX_SACK_HOLE *scratch,
     {
         *count = s -> nx_tcp_socket_sack_hole_count;
         *fack = s -> nx_tcp_socket_sack_fack;
-        return sack_holes(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK);
+        return;
     }
     n = sack_blocks(s, blocks);
     *count = 0;
     for (i = 0; i < n; i++)
     {
-        *count = sack_append(scratch, *count, NX_TCP_SACK_MAX_BLOCKS + 1U,
+        *count = sack_append(s, 0, scratch, *count, NX_TCP_SACK_MAX_BLOCKS + 1U,
                              left, blocks[i].left, s -> nx_tcp_socket_tx_high_rxt);
         left = blocks[i].right;
     }
     *fack = left;
-    return scratch;
+}
+
+static NX_SACK_HOLE *sack_view_hole(NX_TCP_SOCKET *s, NX_SACK_HOLE *scratch, UINT index)
+{
+    if (s -> nx_tcp_socket_sack_scoreboard == NX_NULL)
+        return &scratch[index];
+    return sack_hole(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK, index);
 }
 
 /* Derive IsLost's boundary from actual SACKed octets/ranges, not distance
@@ -224,8 +267,10 @@ static ULONG sack_lost_edge(NX_TCP_SOCKET *s, NX_SACK_HOLE *holes, UINT n, ULONG
     while (n != 0)
     {
         ULONG gap;
+        NX_SACK_HOLE *hole;
         n--;
-        gap = cursor - holes[n].right;
+        hole = sack_view_hole(s, holes, n);
+        gap = cursor - hole -> right;
         if (gap != 0)
         {
             ranges++;
@@ -234,13 +279,13 @@ static ULONG sack_lost_edge(NX_TCP_SOCKET *s, NX_SACK_HOLE *holes, UINT n, ULONG
                 edge = cursor - (threshold - bytes);
             }
             if (ranges == NX_TCP_FAST_RETRANSMIT_THRESHOLD &&
-                (INT)(holes[n].right - edge) > 0)
+                (INT)(hole -> right - edge) > 0)
             {
-                edge = holes[n].right;
+                edge = hole -> right;
             }
             bytes += gap;
         }
-        cursor = holes[n].left;
+        cursor = hole -> left;
     }
     return edge;
 }
@@ -248,11 +293,18 @@ static ULONG sack_lost_edge(NX_TCP_SOCKET *s, NX_SACK_HOLE *holes, UINT n, ULONG
 ULONG _nx_tcp_sack_recovery_pipe(NX_TCP_SOCKET *s)
 {
     NX_SACK_HOLE scratch[NX_TCP_SACK_MAX_BLOCKS + 1U];
-    NX_SACK_HOLE *holes;
+    NX_SACK_HOLE *hole;
     ULONG fack, pipe, edge;
     UINT n, i;
-    holes = sack_view(s, scratch, &n, &fack);
-    edge = sack_lost_edge(s, holes, n, fack);
+    sack_view(s, scratch, &n, &fack);
+    edge = sack_lost_edge(s, scratch, n, fack);
+    /* If storage failed, omitted SACKs cannot prove that the remaining
+       unknown original DATA left the network. Keep it in Pipe until this
+       entire uncertain flight is cumulatively acknowledged. Otherwise a
+       later free slot turns the forgotten region into a giant "lost" hole
+       and grants a catch-up burst even though its originals were delivered. */
+    if (s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_UNCERTAIN)
+        edge = s -> nx_tcp_socket_sack_high_ack;
     s -> nx_tcp_socket_sack_lost_edge = edge;
     pipe = sack_data_end(s) - fack; /* Original data above all SACK evidence. */
     if ((INT)(s -> nx_tcp_socket_tx_high_rxt - fack) > 0)
@@ -261,24 +313,26 @@ ULONG _nx_tcp_sack_recovery_pipe(NX_TCP_SOCKET *s)
     }
     for (i = 0; i < n; i++)
     {
-        ULONG left = holes[i].left;
+        ULONG left;
+        hole = sack_view_hole(s, scratch, i);
+        left = hole -> left;
         if ((INT)(edge - left) > 0)
         {
             left = edge;
         }
-        if ((INT)(holes[i].right - left) > 0)
+        if ((INT)(hole -> right - left) > 0)
         {
-            pipe += holes[i].right - left;
+            pipe += hole -> right - left;
         }
         /* SetPipe(b), independently of whether the original was lost. */
         left = s -> nx_tcp_socket_tx_high_rxt;
-        if ((INT)(left - holes[i].right) > 0)
+        if ((INT)(left - hole -> right) > 0)
         {
-            left = holes[i].right;
+            left = hole -> right;
         }
-        if ((INT)(left - holes[i].left) > 0)
+        if ((INT)(left - hole -> left) > 0)
         {
-            pipe += left - holes[i].left;
+            pipe += left - hole -> left;
         }
     }
     return pipe;
@@ -336,11 +390,11 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
         if (s -> nx_tcp_socket_sack_scoreboard != NX_NULL &&
             (INT)(s -> nx_tcp_socket_sack_fack - ack) > 0)
         {
-            NX_SACK_HOLE *h = sack_holes(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK);
             discard = NX_TRUE;
             for (i = 0; i < s -> nx_tcp_socket_sack_hole_count; i++)
             {
-                if ((INT)(ack - h[i].left) >= 0 && (INT)(h[i].right - ack) > 0)
+                NX_SACK_HOLE *h = sack_hole(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK, i);
+                if ((INT)(ack - h -> left) >= 0 && (INT)(h -> right - ack) > 0)
                 {
                     discard = NX_FALSE;
                     break;
@@ -358,6 +412,9 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
         s -> nx_tcp_socket_sack_scoreboard_flags &= (UCHAR)~NX_SACK_ACK_JUMP;
     }
     ack = s -> nx_tcp_socket_sack_high_ack;
+    if ((s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_UNCERTAIN) &&
+        (INT)(ack - s -> nx_tcp_socket_sack_uncertain_end) >= 0)
+        s -> nx_tcp_socket_sack_scoreboard_flags &= (UCHAR)~NX_SACK_UNCERTAIN;
     if (advance != 0 && s -> nx_tcp_socket_fast_recovery == NX_TRUE)
     {
         /* RFC 6298: even an ACK of a partial queued segment advances SND.UNA. */
@@ -377,12 +434,13 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
                         (2UL * (ULONG)sizeof(NX_SACK_HOLE));
             if (cap >= 2)
             {
-                if (cap > NX_SACK_HOLES_MAX)
+                if (cap > NX_SACK_HOLES_PER_PAGE)
                 {
-                    cap = NX_SACK_HOLES_MAX;
+                    cap = NX_SACK_HOLES_PER_PAGE;
                 }
                 s -> nx_tcp_socket_sack_scoreboard = packet;
-                s -> nx_tcp_socket_sack_hole_capacity = (UCHAR)cap;
+                s -> nx_tcp_socket_sack_page_capacity = (UCHAR)cap;
+                s -> nx_tcp_socket_sack_hole_capacity = (USHORT)cap;
                 s -> nx_tcp_socket_sack_hole_count = 0;
                 s -> nx_tcp_socket_sack_fack = s -> nx_tcp_socket_sack_high_ack;
             }
@@ -414,8 +472,15 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
     }
     if (s -> nx_tcp_socket_sack_scoreboard != NX_NULL)
     {
-        if (!sack_rebuild(s, blocks, n, fack, discard))
+        UINT rebuilt;
+        /* A failed rebuild touched only the inactive bank. Add one bounded
+           page and retry from the same untouched evidence. */
+        while ((rebuilt = sack_rebuild(s, blocks, n, fack, discard)) == NX_FALSE && sack_grow(s))
+            ;
+        if (!rebuilt)
         {
+            s -> nx_tcp_socket_sack_scoreboard_flags |= NX_SACK_UNCERTAIN;
+            s -> nx_tcp_socket_sack_uncertain_end = sack_data_end(s);
             /* Still accept cumulative progress; ignore unrepresentable new
                evidence rather than overwriting or crediting it twice. */
             fack = s -> nx_tcp_socket_sack_fack;
@@ -426,11 +491,11 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
             (VOID)sack_rebuild(s, blocks, 0, fack, discard);
         }
         {
-            NX_SACK_HOLE *h = sack_holes(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK);
             sacked = s -> nx_tcp_socket_sack_fack - s -> nx_tcp_socket_sack_high_ack;
             for (i = 0; i < s -> nx_tcp_socket_sack_hole_count; i++)
             {
-                sacked -= h[i].right - h[i].left;
+                NX_SACK_HOLE *h = sack_hole(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK, i);
+                sacked -= h -> right - h -> left;
             }
         }
     }
@@ -498,11 +563,13 @@ UINT _nx_tcp_sack_recovery_next(NX_TCP_SOCKET *s, ULONG *seq, ULONG *end)
     NX_SACK_HOLE *h;
     ULONG fack;
     UINT n, i;
-    h = sack_view(s, scratch, &n, &fack);
+    sack_view(s, scratch, &n, &fack);
     for (i = 0; i < n; i++)
     {
-        ULONG left = h[i].rxmit;
-        ULONG limit = h[i].right;
+        ULONG left, limit;
+        h = sack_view_hole(s, scratch, i);
+        left = h -> rxmit;
+        limit = h -> right;
         if ((INT)(s -> nx_tcp_socket_tx_high_rxt - left) > 0)
         {
             left = s -> nx_tcp_socket_tx_high_rxt;
@@ -539,15 +606,17 @@ UINT _nx_tcp_sack_recovery_next(NX_TCP_SOCKET *s, ULONG *seq, ULONG *end)
     {
         for (i = 0; i < n; i++)
         {
-            ULONG left = h[i].rxmit;
+            ULONG left;
+            h = sack_view_hole(s, scratch, i);
+            left = h -> rxmit;
             if ((INT)(s -> nx_tcp_socket_tx_high_rxt - left) > 0)
             {
                 left = s -> nx_tcp_socket_tx_high_rxt;
             }
-            if ((INT)(h[i].right - left) > 0)
+            if ((INT)(h -> right - left) > 0)
             {
                 *seq = left;
-                *end = h[i].right;
+                *end = h -> right;
                 return NX_TRUE;
             }
         }
@@ -597,14 +666,14 @@ VOID _nx_tcp_sack_recovery_sent(NX_TCP_SOCKET *s, ULONG seq, ULONG bytes, UINT r
     }
     if (!rescue && s -> nx_tcp_socket_sack_scoreboard != NX_NULL)
     {
-        NX_SACK_HOLE *h = sack_holes(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK);
         for (i = 0; i < s -> nx_tcp_socket_sack_hole_count; i++)
         {
-            if ((INT)(seq - h[i].rxmit) <= 0 &&
-                (INT)(end - h[i].left) > 0 && (INT)(h[i].right - seq) > 0 &&
-                (INT)(end - h[i].rxmit) > 0)
+            NX_SACK_HOLE *h = sack_hole(s, s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK, i);
+            if ((INT)(seq - h -> rxmit) <= 0 &&
+                (INT)(end - h -> left) > 0 && (INT)(h -> right - seq) > 0 &&
+                (INT)(end - h -> rxmit) > 0)
             {
-                h[i].rxmit = (INT)(end - h[i].right) > 0 ? h[i].right : end;
+                h -> rxmit = (INT)(end - h -> right) > 0 ? h -> right : end;
             }
         }
     }
@@ -624,13 +693,18 @@ VOID _nx_tcp_sack_recovery_reset(NX_TCP_SOCKET *s)
     s -> nx_tcp_socket_sack_cursor = NX_NULL;
     s -> nx_tcp_socket_sack_hole_count = 0;
     s -> nx_tcp_socket_sack_hole_capacity = 0;
+    s -> nx_tcp_socket_sack_page_capacity = 0;
+    s -> nx_tcp_socket_sack_uncertain_end = 0;
     s -> nx_tcp_socket_sack_scoreboard_flags = 0;
     s -> nx_tcp_socket_sack_delivery_bank = 0;
     s -> nx_tcp_socket_sack_delivered_data = 0;
     _nx_tcp_sack_recovery_end(s);
-    if (packet != NX_NULL)
+    while (packet != NX_NULL)
     {
+        NX_PACKET *next = packet -> nx_packet_queue_next;
+        packet -> nx_packet_queue_next = NX_NULL;
         _nx_packet_release(packet);
+        packet = next;
     }
 }
 
