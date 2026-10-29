@@ -2292,6 +2292,7 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_sack_rescue_rxt;
     ULONG       nx_tcp_socket_sack_delivery_bank;
     ULONG       nx_tcp_socket_sack_delivered_data;
+    ULONG       nx_tcp_socket_sack_uncertain_start;
     ULONG       nx_tcp_socket_sack_uncertain_end;
     USHORT      nx_tcp_socket_sack_hole_count;
     USHORT      nx_tcp_socket_sack_hole_capacity;

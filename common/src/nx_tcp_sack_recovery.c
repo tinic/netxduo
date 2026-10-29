@@ -117,6 +117,17 @@ static UINT sack_blocks(NX_TCP_SOCKET *s, NX_SACK_BLOCK *blocks)
         {
             continue;
         }
+        /* Until the uncertain flight drains, retain only evidence at or
+           below the last completely represented frontier. A later free
+           slot must not turn its omitted upper SACKs into one giant hole. */
+        if (s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_UNCERTAIN)
+        {
+            ULONG frontier = s -> nx_tcp_socket_sack_uncertain_start;
+            if ((INT)(left - frontier) >= 0)
+                continue;
+            if ((INT)(right - frontier) > 0)
+                right = frontier;
+        }
         j = count;
         while (j != 0 && (INT)(blocks[j - 1].left - left) > 0)
         {
@@ -312,8 +323,13 @@ ULONG _nx_tcp_sack_recovery_pipe(NX_TCP_SOCKET *s)
        entire uncertain flight is cumulatively acknowledged. Otherwise a
        later free slot turns the forgotten region into a giant "lost" hole
        and grants a catch-up burst even though its originals were delivered. */
-    if (s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_UNCERTAIN)
-        edge = s -> nx_tcp_socket_sack_high_ack;
+    if ((s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_UNCERTAIN) &&
+        (INT)(edge - s -> nx_tcp_socket_sack_uncertain_start) > 0)
+    {
+        edge = s -> nx_tcp_socket_sack_uncertain_start;
+        if ((INT)(s -> nx_tcp_socket_sack_high_ack - edge) > 0)
+            edge = s -> nx_tcp_socket_sack_high_ack;
+    }
     s -> nx_tcp_socket_sack_lost_edge = edge;
     pipe = sack_data_end(s) - fack; /* Original data above all SACK evidence. */
     if ((INT)(s -> nx_tcp_socket_tx_high_rxt - fack) > 0)
@@ -488,6 +504,8 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
             ;
         if (!rebuilt)
         {
+            if (!(s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_UNCERTAIN))
+                s -> nx_tcp_socket_sack_uncertain_start = s -> nx_tcp_socket_sack_fack;
             s -> nx_tcp_socket_sack_scoreboard_flags |= NX_SACK_UNCERTAIN;
             s -> nx_tcp_socket_sack_uncertain_end = sack_data_end(s);
             /* Still accept cumulative progress; ignore unrepresentable new
@@ -601,6 +619,22 @@ UINT _nx_tcp_sack_recovery_next(NX_TCP_SOCKET *s, ULONG *seq, ULONG *end)
         *end = sack_data_end(s);
         return NX_TRUE;
     }
+    /* Once the retained prefix drains, the cumulative gap is certain but
+       the upper SACK history is not. Repair at most this one missing MSS
+       before a waiting writer, without fabricating an upper loss range or
+       bypassing the caller's PRR/rwnd/ownership checks. HighRxt prevents
+       another copy until a cumulative ACK advances past this repair. */
+    if ((s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_UNCERTAIN) &&
+        (INT)(s -> nx_tcp_socket_sack_high_ack - s -> nx_tcp_socket_sack_uncertain_start) >= 0 &&
+        (INT)(s -> nx_tcp_socket_sack_high_ack - s -> nx_tcp_socket_tx_high_rxt) >= 0 &&
+        (INT)(sack_data_end(s) - s -> nx_tcp_socket_sack_high_ack) > 0)
+    {
+        *seq = s -> nx_tcp_socket_sack_high_ack;
+        *end = sack_data_end(s);
+        if (*end - *seq > s -> nx_tcp_socket_connect_mss)
+            *end = *seq + s -> nx_tcp_socket_connect_mss;
+        return NX_TRUE;
+    }
     /* NextSeg(2): a suspended writer owns unsent data. Leave its credit
        available so state_transmit_check can resume it before speculative RTX. */
     if (s -> nx_tcp_socket_transmit_suspension_list != NX_NULL &&
@@ -703,6 +737,7 @@ VOID _nx_tcp_sack_recovery_reset(NX_TCP_SOCKET *s)
     s -> nx_tcp_socket_sack_hole_count = 0;
     s -> nx_tcp_socket_sack_hole_capacity = 0;
     s -> nx_tcp_socket_sack_page_capacity = 0;
+    s -> nx_tcp_socket_sack_uncertain_start = 0;
     s -> nx_tcp_socket_sack_uncertain_end = 0;
     s -> nx_tcp_socket_sack_scoreboard_flags = 0;
     s -> nx_tcp_socket_sack_delivery_bank = 0;

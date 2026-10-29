@@ -107,6 +107,8 @@ static void exhausted(ULONG start)
 UINT i, count = 0;
 ULONG available = pool.nx_packet_pool_available;
 ULONG minimum_pipe;
+ULONG seq, end;
+UINT kind;
 
     fixture(start);
     for (i = 0; i < 64; i++)
@@ -118,9 +120,45 @@ ULONG minimum_pipe;
     /* Freeing four bottom holes must not make the forgotten upper flight
        look like one newly lost range and collapse SetPipe. */
     sack(start, 145, start + 8UL * MSS);
-    minimum_pipe = FLIGHT - 8UL * MSS - socket_0.nx_tcp_socket_sack_delivery_bank;
+    /* The retained prefix still has genuine loss evidence. Only the upper
+       [128*MSS, FLIGHT) region is unknown and must remain original flight. */
+    minimum_pipe = FLIGHT - 128UL * MSS;
     check(_nx_tcp_sack_recovery_pipe(&socket_0) >= minimum_pipe,
-          "missing SACK storage keeps unknown original DATA in the pipe");
+          "missing SACK storage keeps the entire unknown upper flight in Pipe");
+    check(socket_0.nx_tcp_socket_sack_fack == start + 128UL * MSS,
+          "omitted upper SACKs do not become a fabricated hole after slots free");
+    check((INT)(socket_0.nx_tcp_socket_sack_lost_edge - (start + 8UL * MSS)) > 0,
+          "overflow retains real loss evidence below the frozen frontier");
+    socket_0.nx_tcp_socket_prr_out = MSS;
+    socket_0.nx_tcp_socket_prr_credit = MSS;
+    socket_0.nx_tcp_socket_tx_high_rxt = start + MSS;
+    socket_0.nx_tcp_socket_transmit_queue_maximum = 400;
+    socket_0.nx_tcp_socket_tx_window_advertised = FLIGHT + 2UL * MSS;
+    socket_0.nx_tcp_socket_transmit_suspension_list = &thread;
+    kind = _nx_tcp_sack_recovery_next(&socket_0, &seq, &end);
+    check(kind != NX_FALSE && seq == start + 8UL * MSS && end == start + 9UL * MSS,
+          "a waiting writer cannot suppress a known missing repair");
+    /* Beyond the retained frontier, only the cumulative gap is certain.
+       Repair it before new DATA rather than inventing a broad upper hole. */
+    sack(start, 145, start + 128UL * MSS);
+    check(socket_0.nx_tcp_socket_sack_fack == start + 128UL * MSS,
+          "unknown upper flight remains outside the retained SACK frontier");
+    socket_0.nx_tcp_socket_prr_credit = MSS;
+    socket_0.nx_tcp_socket_tx_high_rxt = start + 128UL * MSS;
+    kind = _nx_tcp_sack_recovery_next(&socket_0, &seq, &end);
+    check(kind != NX_FALSE && seq == start + 128UL * MSS && end == start + 129UL * MSS,
+          "uncertain-flight cumulative gap progresses before a waiting writer");
+    if (kind != NX_FALSE)
+        _nx_tcp_sack_recovery_sent(&socket_0, seq, end - seq, NX_FALSE);
+    socket_0.nx_tcp_socket_prr_credit = MSS;
+    check(_nx_tcp_sack_recovery_next(&socket_0, &seq, &end) == NX_FALSE,
+          "unchanged ACK cannot repeat the uncertain-flight repair");
+    sack(start, 145, start + 130UL * MSS);
+    socket_0.nx_tcp_socket_prr_credit = MSS;
+    kind = _nx_tcp_sack_recovery_next(&socket_0, &seq, &end);
+    check(kind != NX_FALSE && seq == start + 130UL * MSS && end == start + 131UL * MSS,
+          "advancing cumulative ACK clocks the next uncertain missing range");
+    socket_0.nx_tcp_socket_transmit_suspension_list = NX_NULL;
     _nx_tcp_sack_recovery_reset(&socket_0);
     for (i = 0; i < count; i++)
         check(_nx_packet_release(held[i]) == NX_SUCCESS, "held packet is released once");
