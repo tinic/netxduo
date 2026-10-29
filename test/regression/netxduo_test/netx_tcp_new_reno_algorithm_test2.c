@@ -48,6 +48,9 @@ static CHAR                    msg[200];
 
 /* Define the counters used in the demo application...  */
 
+#ifdef NX_ENABLE_TCP_SACK
+static ULONG                   previous_sack_ack;
+#endif
 static ULONG                   error_counter;
 static ULONG                   packet_counter;
 static ULONG                   ack_counter;
@@ -212,6 +215,9 @@ NX_PACKET      *my_packet[10];
 
     /* Record the client tx_sequence.  */
     client_tx_sequnce = client_socket.nx_tcp_socket_tx_sequence;
+#ifdef NX_ENABLE_TCP_SACK
+    previous_sack_ack = client_tx_sequnce + 20;
+#endif
                          
     /* Loop to send packets.  */
     for (i = 0; i < 10; i ++)
@@ -375,7 +381,8 @@ static void    thread_1_entry(ULONG thread_input)
 
     /* Determine if the test was successful.  */
 #ifdef NX_ENABLE_TCP_SACK
-    if ((error_counter) || (packet_counter != 16) || (ack_counter < 6))
+    if ((error_counter) || (packet_counter != 16) || (ack_counter < 6) ||
+        (previous_sack_ack != client_tx_sequnce + 200))
 #else
     if ((error_counter) || (packet_counter != 16) || (ack_counter < 10))
 #endif
@@ -544,15 +551,20 @@ NX_TCP_HEADER        *tcp_header_ptr;
         }       
         /* This should be normal ACK for 3th segment in fast recovery.  */
 #ifdef NX_ENABLE_TCP_SACK
-        else if ((ack_counter == 5) || (ack_counter == 6) || (ack_counter == 7))
+        else if ((ack_counter >= 5) && (previous_sack_ack != client_tx_sequnce + 200))
         {
-            /* SACK repairs all six holes. ACKs cover through segment six, then ten.  */
-            if ((tcp_header_ptr -> nx_tcp_acknowledgment_number !=
-                 client_tx_sequnce + (ack_counter == 5 ? 120 : 200)) ||
+            /* PRR clocks repairs with ACK credit rather than sending all six
+               holes before the first repair ACK. Verify strict DATA progress
+               through this flight. The hook runs BEFORE ACK processing, so
+               even the final ACK still sees fast recovery active here; the
+               test above separately requires exit after it is processed. */
+            if (((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - previous_sack_ack) <= 0) ||
+                ((INT)(client_tx_sequnce + 200 - tcp_header_ptr -> nx_tcp_acknowledgment_number) < 0) ||
                 (client_socket.nx_tcp_socket_tx_sequence_recover != client_tx_sequnce + 199) ||
                 (client_socket.nx_tcp_socket_duplicated_ack_received != (ack_counter == 5 ? 3 : 0)) ||
-                (client_socket.nx_tcp_socket_fast_recovery != (ack_counter == 7 ? NX_FALSE : NX_TRUE)))
+                (client_socket.nx_tcp_socket_fast_recovery != NX_TRUE))
                 error_counter++;
+            previous_sack_ack = tcp_header_ptr -> nx_tcp_acknowledgment_number;
         }
 #else
         else if (ack_counter == 5)
