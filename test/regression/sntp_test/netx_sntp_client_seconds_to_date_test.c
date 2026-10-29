@@ -22,6 +22,25 @@ extern void      test_control_return(UINT status);
 #define START_UTC           1420075385
 #define SECONDS_TEN_YEARS   315360000
 
+/* Fixed UTC times on year, leap day and December boundaries. */
+static time_t    boundary_utc[] =
+{
+    1451606399,     /* 2015-12-31 23:59:59 */
+    1451606400,     /* 2016-01-01 00:00:00 (leap year) */
+    1456704000,     /* 2016-02-29 00:00:00 */
+    1483228799,     /* 2016-12-31 23:59:59 (leap year) */
+    1483228800,     /* 2017-01-01 00:00:00 */
+    1672531199,     /* 2022-12-31 23:59:59 */
+    1672531200,     /* 2023-01-01 00:00:00 */
+    1704067199,     /* 2023-12-31 23:59:59 */
+    1704067200,     /* 2024-01-01 00:00:00 (leap year) */
+    1709164800,     /* 2024-02-29 00:00:00 */
+    1735689599,     /* 2024-12-31 23:59:59 (leap year) */
+    1735689600,     /* 2025-01-01 00:00:00 */
+    2082758399,     /* 2035-12-31 23:59:59 */
+    2082758400,     /* 2036-01-01 00:00:00 */
+};
+
 
 extern UINT _nx_sntp_client_utility_convert_seconds_to_date(NX_SNTP_TIME *current_NTP_time_ptr,
                                                             UINT current_year,
@@ -66,6 +85,7 @@ void    sntp_client_thread_entry(ULONG info)
 
 UINT status;
 UINT i;
+UINT boundary_count = sizeof(boundary_utc) / sizeof(boundary_utc[0]);
 NX_SNTP_TIME sntp_time;
 NX_SNTP_DATE_TIME date_time;
 time_t utc;
@@ -75,12 +95,17 @@ struct tm *tm_value;
 
     srand(time(0));
     sntp_time.fraction = 0;
-    for (i = 0; i < LOOP; i++)
+    for (i = 0; i < LOOP + boundary_count; i++)
     {
         if (i == 0)
         {
             sntp_time.seconds = 3818415600;   /* Bug verification. */
             utc = sntp_time.seconds - NTP_UTC_DIFF;
+        }
+        else if (i <= boundary_count)
+        {
+            utc = boundary_utc[i - 1];
+            sntp_time.seconds = NTP_UTC_DIFF + utc;
         }
         else
         {
