@@ -199,7 +199,18 @@ NX_PACKET    *my_packet1;
 
     status = nx_packet_data_append(client_socket.nx_tcp_socket_transmit_sent_head, MSG + 20, 20, &pool_0, NX_IP_PERIODIC_RATE);
 
+    if (status)
+    {
+        printf("ERROR! extending the retransmission fixture\n");
+        test_control_return(1);
+        return;
+    }
+
+    /* This fixture injects another 20 outstanding DATA bytes directly into
+       an already-sent packet. Keep both ends of the tracked flight coherent:
+       SND.UNA = SND.NXT - outstanding must remain at the original sequence. */
     client_socket.nx_tcp_socket_tx_sequence += 20;
+    client_socket.nx_tcp_socket_tx_outstanding_bytes += 20;
 
     /* Increase the window size so the retransmitted packet is different from the original one. */
     client_socket.nx_tcp_socket_rx_window_current++;
@@ -228,7 +239,9 @@ NX_PACKET    *my_packet1;
     /* Determine if the test was successful.  */
     if((error_counter) || (retrans_packet_counter != 1) || (data_packet_counter != 1) || (is_different != NX_TRUE))
     {
-        printf("ERROR!\n");
+        printf("ERROR! errors=%lu data=%lu retrans=%lu different=%u\n",
+               (unsigned long)error_counter, (unsigned long)data_packet_counter,
+               (unsigned long)retrans_packet_counter, is_different);
         test_control_return(1);
     }
     else
