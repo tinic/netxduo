@@ -16,6 +16,7 @@
 #define NX_SACK_BANK            1U
 #define NX_SACK_INITIALIZED     2U
 #define NX_SACK_ALLOC_FAILED    4U
+#define NX_SACK_ACK_JUMP        8U
 
 typedef struct NX_SACK_HOLE_STRUCT
 {
@@ -349,6 +350,14 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
         }
         s -> nx_tcp_socket_sack_high_ack = ack;
     }
+    if (advance > s -> nx_tcp_socket_connect_mss)
+    {
+        s -> nx_tcp_socket_sack_scoreboard_flags |= NX_SACK_ACK_JUMP;
+    }
+    else
+    {
+        s -> nx_tcp_socket_sack_scoreboard_flags &= (UCHAR)~NX_SACK_ACK_JUMP;
+    }
     ack = s -> nx_tcp_socket_sack_high_ack;
     if (advance != 0 && s -> nx_tcp_socket_fast_recovery == NX_TRUE)
     {
@@ -544,26 +553,25 @@ UINT _nx_tcp_sack_recovery_next(NX_TCP_SOCKET *s, ULONG *seq, ULONG *end)
             }
         }
     }
-    /* RFC 6675 NextSeg(4), one rescue per RecoveryPoint. Prefer the highest
-       unsacked DATA range; it may be a retransmission lost a second time. */
-    if ((INT)(s -> nx_tcp_socket_sack_high_ack - s -> nx_tcp_socket_sack_rescue_rxt) >= 0)
+    /* Conservative tail-rescue policy: RFC 6675 NextSeg(4) allows a
+       broader speculative rescue, including already retransmitted DATA. We
+       use it only when a cumulative ACK jumps by more than an MSS and
+       leaves one never-retransmitted tail of at most an MSS, so ordinary in-flight DATA and already repaired
+       holes do not acquire extra copies. Lost retransmissions remain subject
+       to the RTO until a time-based loss detector is implemented. */
+    if ((s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_ACK_JUMP) &&
+        (INT)(s -> nx_tcp_socket_sack_high_ack - s -> nx_tcp_socket_sack_rescue_rxt) >= 0 &&
+        (INT)(s -> nx_tcp_socket_sack_high_ack - s -> nx_tcp_socket_tx_high_rxt) >= 0)
     {
         ULONG data_end = sack_data_end(s);
-        if ((INT)(data_end - fack) > 0)
+        ULONG tail = data_end - s -> nx_tcp_socket_sack_high_ack;
+        if (tail != 0 && tail <= s -> nx_tcp_socket_connect_mss &&
+            (INT)(data_end - fack) > 0)
         {
             *seq = data_end - 1UL;
             *end = data_end;
+            return 4U; /* Commit RescueRxt only after an actual transmission. */
         }
-        else if (n != 0)
-        {
-            *seq = h[n - 1].right - 1UL;
-            *end = h[n - 1].right;
-        }
-        else
-        {
-            return NX_FALSE;
-        }
-        return 4U; /* Commit RescueRxt only after an actual transmission. */
     }
     return NX_FALSE;
 }
