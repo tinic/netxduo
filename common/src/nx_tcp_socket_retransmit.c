@@ -1351,6 +1351,7 @@ ULONG          sequence;
 ULONG          header;
 ULONG          length;
 ULONG          begin;
+ULONG          packet_end;
 ULONG          wire_mss;
 NX_PACKET     *repair;
 #ifdef NX_ENABLE_TCP_SACK
@@ -1420,6 +1421,7 @@ UINT           sack_index;
         next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
 
         begin = sequence;
+        packet_end = sequence + length;
         if ((INT)(sequence + length - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
         {
             if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_next - sequence) > 0)
@@ -1494,12 +1496,15 @@ UINT           sack_index;
             socket_ptr -> nx_tcp_socket_tx_rto_next = sequence + length;
             available -= length;
             _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
-            if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE && available != 0 &&
-                (INT)(begin + packet_ptr -> nx_packet_length -
-                      ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG)) -
-                      socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
+            if ((INT)(packet_end - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
             {
-                continue; /* More eligible wire segments in this same buffer. */
+                if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE && available != 0)
+                {
+                    continue; /* More eligible DATA in this same immutable buffer. */
+                }
+                /* A pending repair or exhausted credit must leave the cursor
+                   here. Advancing to the next entry would skip unsent DATA. */
+                return;
             }
         }
         if (next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
