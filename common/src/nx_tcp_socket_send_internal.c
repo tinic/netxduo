@@ -489,7 +489,7 @@ ULONG           remaining_bytes;
 ULONG          *source_ip = NX_NULL, *dest_ip = NX_NULL;
 ULONG           send_mss;
 ULONG           queue_credit;
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+#if defined(NX_ENABLE_INTERFACE_CAPABILITY) && !defined(NX_DISABLE_IPV4)
 ULONG           gso_mss;
 #endif
 NX_PACKET      *send_packet = packet_ptr;
@@ -724,6 +724,7 @@ UINT            compute_checksum = 1;
         /* Only a whole, explicitly marked aggregate may bypass the MSS
            carve. Insufficient credit uses today's ordinary segmentation. */
         send_mss = _nx_tcp_socket_payload_mss(socket_ptr);
+#ifndef NX_DISABLE_IPV4
         gso_mss = _nx_packet_tcp_gso_mss(packet_ptr);
         if (gso_mss != 0 && gso_mss == send_mss &&
             ((NX_TCP_GSO_INFO *)packet_ptr -> nx_packet_data_start) -> flags == 0 &&
@@ -747,6 +748,7 @@ UINT            compute_checksum = 1;
             send_mss = packet_ptr -> nx_packet_length;
         }
         else
+#endif /* NX_DISABLE_IPV4 */
         {
             packet_ptr -> nx_packet_interface_capability_flag &= ~(ULONG)NX_INTERFACE_CAPABILITY_TCP_GSO;
         }
