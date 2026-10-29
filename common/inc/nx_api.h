@@ -1419,6 +1419,22 @@ typedef struct NX_IPV6_DEFAULT_ROUTER_ENTRY_STRUCT
 #define NX_INTERFACE_CAPABILITY_IGMP_RX_CHECKSUM   0x00000800
 #define NX_INTERFACE_CAPABILITY_PTP_TIMESTAMP      0x00001000
 #define NX_INTERFACE_CAPABILITY_TCPIP_OFFLOAD      0x00002000
+/* Software TCP segmentation accepted by the selected link interface. */
+#define NX_INTERFACE_CAPABILITY_TCP_GSO             0x00004000
+
+/* Explicit offload metadata in four EXTRA bytes of allocation headroom at
+   the first packet's data_start, before every TCP/IP/link header. It is not
+   included in packet_length or sent on the wire. Only packets carrying the
+   TCP_GSO capability bit contain a valid record. Ordinary packets and the
+   NX_PACKET layout are unchanged. Values use the native in-process ABI. */
+#define NX_TCP_GSO_VERSION                          1U
+typedef struct NX_TCP_GSO_INFO_STRUCT
+{
+    UCHAR version;
+    UCHAR flags;             /* Reserved: version 1 requires zero. */
+    USHORT mss;              /* Wire TCP payload MSS, excluding options. */
+} NX_TCP_GSO_INFO;
+#define NX_TCP_GSO_PACKET                           (NX_TCP_PACKET + (ULONG)sizeof(NX_TCP_GSO_INFO))
 #define NX_INTERFACE_CAPABILITY_CHECKSUM_ALL       (NX_INTERFACE_CAPABILITY_IPV4_TX_CHECKSUM | \
                                                     NX_INTERFACE_CAPABILITY_IPV4_RX_CHECKSUM | \
                                                     NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM | \
