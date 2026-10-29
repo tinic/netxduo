@@ -385,6 +385,14 @@ UCHAR saved_header[60];
     {
         return NX_NULL;
     }
+    /* A fresh pool packet has no egress interface. IPv4 output explicitly
+       drops such packets, so a transient repair must retain the original
+       route/address context just as nx_packet_copy does. */
+    copy -> nx_packet_address = original -> nx_packet_address;
+    copy -> nx_packet_ip_version = original -> nx_packet_ip_version;
+#ifdef NX_IPSEC_ENABLE
+    copy -> nx_packet_ipsec_sa_ptr = original -> nx_packet_ipsec_sa_ptr;
+#endif
     source = original;
     offset = header_length + seq - begin;
     while (source != NX_NULL && left != 0)
