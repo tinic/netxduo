@@ -218,15 +218,26 @@ static void    thread_0_entry(ULONG thread_input)
 
     /* Update the seq number and send the 3rd one. */
     seq1 = client_socket.nx_tcp_socket_tx_sequence;
+    /* This fixture injects a sequence gap without sending its bytes. Keep
+       SND.UNA (SND.NXT - outstanding DATA) stable across that injection. */
+    client_socket.nx_tcp_socket_tx_outstanding_bytes += 38;
     client_socket.nx_tcp_socket_tx_sequence += 38;
     status += nx_tcp_socket_send(&client_socket, my_packet3, NX_IP_PERIODIC_RATE);
     seq2 = client_socket.nx_tcp_socket_tx_sequence;
 
     /* Restore the Seq num for packet 2. */
+    /* Rewinding the injected sequence must rebase outstanding DATA too;
+       otherwise the fixture invents an acknowledged/unacknowledged prefix. */
+    client_socket.nx_tcp_socket_tx_outstanding_bytes -=
+        client_socket.nx_tcp_socket_tx_sequence - seq1;
     client_socket.nx_tcp_socket_tx_sequence = seq1;
     status += nx_tcp_socket_send(&client_socket, my_packet2, NX_IP_PERIODIC_RATE);
 
     /* Restore the seq num for packet 23 */
+    /* Rewinding the injected sequence must rebase outstanding DATA too;
+       otherwise the fixture invents an acknowledged/unacknowledged prefix. */
+    client_socket.nx_tcp_socket_tx_outstanding_bytes -=
+        client_socket.nx_tcp_socket_tx_sequence - seq1;
     client_socket.nx_tcp_socket_tx_sequence = seq1;
 
     status += nx_tcp_socket_send(&client_socket, my_packet23, NX_IP_PERIODIC_RATE);
