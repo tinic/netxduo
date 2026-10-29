@@ -542,7 +542,22 @@ UINT kind;
             send_packet = _nx_tcp_socket_sack_slice(ip_ptr, packet, send_begin, begin, send_end - send_begin);
             if (send_packet == NX_NULL)
             {
-                return; /* No wait, no ownership or credit consumed on failure. */
+                if (payload <= _nx_tcp_socket_payload_mss(s) &&
+                    payload <= s -> nx_tcp_socket_prr_credit &&
+                    (INT)(end - (s -> nx_tcp_socket_sack_high_ack +
+                                 s -> nx_tcp_socket_tx_window_advertised)) <= 0)
+                {
+                    /* A full pool must not suppress the mandatory first
+                       repair of a byte-sized hole. Repeating this one-MSS
+                       original is safe when ALL wire bytes fit the budget. */
+                    send_packet = packet;
+                    send_begin = begin;
+                    send_end = end;
+                }
+                else
+                {
+                    return; /* No wait, ownership or credit consumed. */
+                }
             }
         }
         /* Debit before the driver call; the driver may complete immediately. */
