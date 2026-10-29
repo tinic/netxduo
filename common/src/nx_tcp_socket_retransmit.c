@@ -759,7 +759,11 @@ UINT       sack_index;
                     break;
                 }
                 offset -= bytes;
+#ifndef NX_DISABLE_PACKET_CHAIN
                 source = source -> nx_packet_next;
+#else
+                source = NX_NULL;
+#endif
                 if (source == NX_NULL)
                 {
                     return;
