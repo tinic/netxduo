@@ -66,11 +66,13 @@ static NX_SACK_HOLE *sack_hole(NX_TCP_SOCKET *s, UINT bank, UINT index)
 
 static UINT sack_grow(NX_TCP_SOCKET *s)
 {
+    TX_INTERRUPT_SAVE_AREA
     NX_PACKET *page = s -> nx_tcp_socket_sack_scoreboard, *extra;
     NX_PACKET_POOL *pool = page -> nx_packet_pool_owner;
     ULONG reserve = pool -> nx_packet_pool_total / 8UL;
     ULONG limit = pool -> nx_packet_pool_total / 32UL;
     UINT pages = 1;
+    UINT status = NX_NO_PACKET;
     if (reserve < 4UL)
         reserve = 4UL;
     if (limit > NX_SACK_PAGES_MAX)
@@ -80,8 +82,15 @@ static UINT sack_grow(NX_TCP_SOCKET *s)
         pages++;
         page = page -> nx_packet_queue_next;
     }
-    if (pages >= limit || pool -> nx_packet_pool_available <= reserve ||
-        _nx_packet_allocate(pool, &extra, 0, NX_NO_WAIT) != NX_SUCCESS)
+    if (pages >= limit)
+        return NX_FALSE;
+    /* The socket mutex does not exclude another IP instance using this
+       pool. Check its reserve and pop one NO_WAIT packet atomically. */
+    TX_DISABLE
+    if (pool -> nx_packet_pool_available > reserve)
+        status = _nx_packet_allocate(pool, &extra, 0, NX_NO_WAIT);
+    TX_RESTORE
+    if (status != NX_SUCCESS)
         return NX_FALSE;
     page -> nx_packet_queue_next = extra;
     s -> nx_tcp_socket_sack_hole_capacity += s -> nx_tcp_socket_sack_page_capacity;
