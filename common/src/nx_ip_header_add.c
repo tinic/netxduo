@@ -230,7 +230,7 @@ ULONG           val;
         /* The segmenter derives child checksums from a complete template,
            even when physical frames normally use IPv4 checksum offload. */
         compute_checksum = 1;
-        packet_ptr -> nx_packet_interface_capability_flag &= ~NX_INTERFACE_CAPABILITY_IPV4_TX_CHECKSUM;
+        packet_ptr -> nx_packet_interface_capability_flag &= ~(ULONG)NX_INTERFACE_CAPABILITY_IPV4_TX_CHECKSUM;
     }
 #endif
 

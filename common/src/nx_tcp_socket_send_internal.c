@@ -748,7 +748,7 @@ UINT            compute_checksum = 1;
         }
         else
         {
-            packet_ptr -> nx_packet_interface_capability_flag &= ~NX_INTERFACE_CAPABILITY_TCP_GSO;
+            packet_ptr -> nx_packet_interface_capability_flag &= ~(ULONG)NX_INTERFACE_CAPABILITY_TCP_GSO;
         }
 #endif
 
