@@ -638,9 +638,10 @@ NX_TCP_HEADER *header;
     check(sent == 2 && log_sequence[1] == 1000, "small nonzero window does not suppress the next RTO");
 
     /* Duplicates below the timeout's recovery point say a copy the walk
-       sent was lost.  RFC 6675 section 5.1 starts no new recovery there:
-       the walk resends from SND.UNA at once and keeps the rest of the old
-       flight, instead of leaving it to the next RTO.  */
+       sent was lost.  RFC 6675 section 5.1 starts no new recovery there,
+       and this non-SACK socket follows the same rule: the lost copy is
+       resent at once and the walk keeps the rest of the old flight,
+       instead of leaving it to the next RTO.  */
     fixture(1000);
     _nx_tcp_fast_periodic_processing(&ip);
     ack(1, 64000);
@@ -650,8 +651,8 @@ NX_TCP_HEADER *header;
     ack(1, 64000);
     check(socket_0.nx_tcp_socket_fast_recovery == NX_FALSE,
           "duplicate ACKs below the timeout recovery point start no fast recovery");
-    check(sent == before + 2 && log_sequence[before] == 1100 && log_sequence[before + 1] == 1200,
-          "a lost walk copy is resent from SND.UNA under the same window");
+    check(sent == before + 1 && log_sequence[before] == 1100,
+          "a lost walk copy alone is resent, not the copies after it");
     check((INT)(socket_0.nx_tcp_socket_tx_rto_end - socket_0.nx_tcp_socket_tx_rto_next) > 0,
           "the timeout walk keeps the rest of the old flight");
     before = sent;

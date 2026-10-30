@@ -1343,6 +1343,193 @@ UINT       sack_index;
 /*                                                                        */
 /*  FUNCTION                                               RELEASE        */
 /*                                                                        */
+/*    _nx_tcp_socket_resend_range                         PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Eclipse ThreadX Contributors                                        */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function resends queued DATA from *cursor up to end, at most    */
+/*    available bytes, in wire segments, and moves *cursor past what it    */
+/*    sent or stepped over.  It is the walk of the old flight after an    */
+/*    RTO, and the repair of one lost copy of that walk.                   */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                Pointer to IP control block   */
+/*    socket_ptr                            Pointer to TCP socket         */
+/*    cursor                                First byte not yet resent     */
+/*    end                                   End of the DATA to resend     */
+/*    available                             Bytes that may be sent        */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_packet       Resend a queued segment       */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_after_timeout                             */
+/*    _nx_tcp_socket_retransmit_lost_copy                                 */
+/*                                                                        */
+/**************************************************************************/
+static VOID _nx_tcp_socket_resend_range(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr, ULONG *cursor, ULONG end,
+                                         ULONG available)
+{
+NX_PACKET     *packet_ptr;
+NX_PACKET     *next_ptr;
+NX_TCP_HEADER *header_ptr;
+ULONG          sequence;
+ULONG          header;
+ULONG          length;
+ULONG          begin;
+ULONG          packet_end;
+ULONG          wire_mss;
+NX_PACKET     *repair;
+#ifdef NX_ENABLE_TCP_SACK
+UINT           sack_index;
+UINT           skip;
+#endif /* NX_ENABLE_TCP_SACK */
+
+    packet_ptr = socket_ptr -> nx_tcp_socket_transmit_sent_head;
+    while (packet_ptr && (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE))
+    {
+        header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+        sequence = header_ptr -> nx_tcp_sequence_number;
+        header = header_ptr -> nx_tcp_header_word_3;
+        NX_CHANGE_ULONG_ENDIAN(sequence);
+        NX_CHANGE_ULONG_ENDIAN(header);
+        length = packet_ptr -> nx_packet_length - ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
+        next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+
+        begin = sequence;
+        packet_end = sequence + length;
+        if ((INT)(sequence + length - *cursor) > 0)
+        {
+            if ((INT)(*cursor - sequence) > 0)
+            {
+                length -= *cursor - sequence;
+                sequence = *cursor;
+            }
+            if ((INT)(end - sequence) <= 0 || available == 0)
+            {
+                break;
+            }
+            if (length > end - sequence)
+            {
+                length = end - sequence;
+            }
+            wire_mss = _nx_tcp_socket_payload_mss(socket_ptr);
+            if (length > wire_mss)
+            {
+                length = wire_mss;
+            }
+            if (length > available)
+            {
+                length = available;
+            }
+
+#ifdef NX_ENABLE_TCP_SACK
+            /* The RTO discarded the old scoreboard.  A SACK received since
+               then can show that the entire remaining tail is still held
+               by the peer (RFC 6675 section 5.1).  Leave the cursor here:
+               if a later ACK withdraws that information, or another RTO
+               discards it, these queued bytes must remain recoverable.
+               An interior SACK island cannot stop the walk, because data
+               beyond it may still be missing.  No send credit is changed.
+               The walk steps over the island and stops a copy short of it:
+               section 5.1 asks the slow start to send what the peer lacks.
+               Only another RTO then repairs an island the peer reneges on,
+               as RFC 2018 section 8 allows.  */
+            skip = NX_FALSE;
+            for (sack_index = 0; sack_index < socket_ptr -> nx_tcp_socket_sack_block_count; sack_index++)
+            {
+                if ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
+                          socket_ptr -> nx_tcp_socket_sack_left[sack_index]) <= 0)
+                {
+                    continue;
+                }
+                if (((INT)(sequence - socket_ptr -> nx_tcp_socket_sack_left[sack_index]) >= 0) &&
+                    ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] - sequence) > 0))
+                {
+                    if ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
+                              end) >= 0)
+                    {
+                        return;
+                    }
+                    *cursor = socket_ptr -> nx_tcp_socket_sack_right[sack_index];
+                    skip = NX_TRUE;
+                    break;
+                }
+                if (((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - sequence) > 0) &&
+                    ((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - (sequence + length)) < 0))
+                {
+                    length = socket_ptr -> nx_tcp_socket_sack_left[sack_index] - sequence;
+                }
+            }
+            if (skip == NX_TRUE)
+            {
+                continue; /* Re-examine this buffer from the island's end. */
+            }
+#endif /* NX_ENABLE_TCP_SACK */
+
+#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
+            socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
+#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+            repair = packet_ptr;
+            if (sequence != begin || length != packet_ptr -> nx_packet_length -
+                ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG)) ||
+                _nx_packet_tcp_gso_mss(packet_ptr) != 0)
+            {
+                repair = _nx_tcp_socket_data_slice(ip_ptr, packet_ptr, sequence, begin, length);
+                if (repair == NX_NULL)
+                {
+                    ULONG whole = packet_ptr -> nx_packet_length -
+                                  ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
+                    if (whole <= wire_mss && whole <= available)
+                    {
+                        repair = packet_ptr;
+                        sequence = begin;
+                        length = whole;
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+            }
+            *cursor = sequence + length;
+            available -= length;
+            _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
+            if ((INT)(packet_end - *cursor) > 0)
+            {
+                if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE && available != 0)
+                {
+                    continue; /* More eligible DATA in this same immutable buffer. */
+                }
+                /* A pending repair or exhausted credit must leave the cursor
+                   here. Advancing to the next entry would skip unsent DATA. */
+                return;
+            }
+        }
+        if (next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
+        {
+            break;
+        }
+        packet_ptr = next_ptr;
+    }
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
 /*    _nx_tcp_socket_retransmit_after_timeout              PORTABLE C      */
 /*                                                           6.4.3        */
 /*  AUTHOR                                                                */
@@ -1368,7 +1555,7 @@ UINT       sack_index;
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
-/*    _nx_tcp_socket_retransmit_packet       Resend a queued segment       */
+/*    _nx_tcp_socket_resend_range           Resend part of the queue      */
 /*                                                                        */
 /*  CALLED BY                                                             */
 /*                                                                        */
@@ -1377,23 +1564,9 @@ UINT       sack_index;
 /**************************************************************************/
 VOID _nx_tcp_socket_retransmit_after_timeout(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
 {
-NX_PACKET     *packet_ptr;
-NX_PACKET     *next_ptr;
-NX_TCP_HEADER *header_ptr;
 ULONG          unacked;
 ULONG          available;
 ULONG          in_flight;
-ULONG          sequence;
-ULONG          header;
-ULONG          length;
-ULONG          begin;
-ULONG          packet_end;
-ULONG          wire_mss;
-NX_PACKET     *repair;
-#ifdef NX_ENABLE_TCP_SACK
-UINT           sack_index;
-UINT           skip;
-#endif /* NX_ENABLE_TCP_SACK */
 
     if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) <= 0)
     {
@@ -1446,133 +1619,74 @@ UINT           skip;
     }
     available -= in_flight;
 
-    packet_ptr = socket_ptr -> nx_tcp_socket_transmit_sent_head;
-    while (packet_ptr && (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE))
+    _nx_tcp_socket_resend_range(ip_ptr, socket_ptr, &(socket_ptr -> nx_tcp_socket_tx_rto_next),
+                                socket_ptr -> nx_tcp_socket_tx_rto_end, available);
+}
+
+
+/**************************************************************************/
+/*                                                                        */
+/*  FUNCTION                                               RELEASE        */
+/*                                                                        */
+/*    _nx_tcp_socket_retransmit_lost_copy                 PORTABLE C      */
+/*                                                           6.4.3        */
+/*  AUTHOR                                                                */
+/*                                                                        */
+/*    Eclipse ThreadX Contributors                                        */
+/*                                                                        */
+/*  DESCRIPTION                                                           */
+/*                                                                        */
+/*    This function resends the one copy of the RTO walk that duplicate    */
+/*    ACKs show lost: the wire segment at SND.UNA, stopping short of a     */
+/*    SACKed island.  The walk's cursor stays where it is, and the copies  */
+/*    it sent after this one stay counted as in flight.  As a fast         */
+/*    retransmit (RFC 5681 section 3.2) it is not limited by the window.   */
+/*                                                                        */
+/*  INPUT                                                                 */
+/*                                                                        */
+/*    ip_ptr                                Pointer to IP control block   */
+/*    socket_ptr                            Pointer to TCP socket         */
+/*                                                                        */
+/*  OUTPUT                                                                */
+/*                                                                        */
+/*    None                                                                */
+/*                                                                        */
+/*  CALLS                                                                 */
+/*                                                                        */
+/*    _nx_tcp_socket_resend_range           Resend part of the queue      */
+/*                                                                        */
+/*  CALLED BY                                                             */
+/*                                                                        */
+/*    _nx_tcp_socket_state_ack_check                                      */
+/*                                                                        */
+/**************************************************************************/
+VOID _nx_tcp_socket_retransmit_lost_copy(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
+{
+ULONG          first;
+ULONG          end;
+
+    first = _nx_tcp_socket_data_unacked(socket_ptr);
+    end = socket_ptr -> nx_tcp_socket_tx_rto_next;
+
+    /* A walk that has not passed SND.UNA sends that segment itself.  */
+    if ((INT)(end - first) <= 0)
     {
-        header_ptr = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
-        sequence = header_ptr -> nx_tcp_sequence_number;
-        header = header_ptr -> nx_tcp_header_word_3;
-        NX_CHANGE_ULONG_ENDIAN(sequence);
-        NX_CHANGE_ULONG_ENDIAN(header);
-        length = packet_ptr -> nx_packet_length - ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
-        next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
-
-        begin = sequence;
-        packet_end = sequence + length;
-        if ((INT)(sequence + length - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
-        {
-            if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_next - sequence) > 0)
-            {
-                length -= socket_ptr -> nx_tcp_socket_tx_rto_next - sequence;
-                sequence = socket_ptr -> nx_tcp_socket_tx_rto_next;
-            }
-            if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - sequence) <= 0 || available == 0)
-            {
-                break;
-            }
-            if (length > socket_ptr -> nx_tcp_socket_tx_rto_end - sequence)
-            {
-                length = socket_ptr -> nx_tcp_socket_tx_rto_end - sequence;
-            }
-            wire_mss = _nx_tcp_socket_payload_mss(socket_ptr);
-            if (length > wire_mss)
-            {
-                length = wire_mss;
-            }
-            if (length > available)
-            {
-                length = available;
-            }
-
-#ifdef NX_ENABLE_TCP_SACK
-            /* The RTO discarded the old scoreboard.  A SACK received since
-               then can show that the entire remaining tail is still held
-               by the peer (RFC 6675 section 5.1).  Leave the cursor here:
-               if a later ACK withdraws that information, or another RTO
-               discards it, these queued bytes must remain recoverable.
-               An interior SACK island cannot stop the walk, because data
-               beyond it may still be missing.  No send credit is changed.
-               The walk steps over the island and stops a copy short of it:
-               section 5.1 asks the slow start to send what the peer lacks.
-               A walk resumed from SND.UNA after a lost copy otherwise
-               resends a window of DATA the peer holds.  */
-            skip = NX_FALSE;
-            for (sack_index = 0; sack_index < socket_ptr -> nx_tcp_socket_sack_block_count; sack_index++)
-            {
-                if ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
-                          socket_ptr -> nx_tcp_socket_sack_left[sack_index]) <= 0)
-                {
-                    continue;
-                }
-                if (((INT)(sequence - socket_ptr -> nx_tcp_socket_sack_left[sack_index]) >= 0) &&
-                    ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] - sequence) > 0))
-                {
-                    if ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
-                              socket_ptr -> nx_tcp_socket_tx_rto_end) >= 0)
-                    {
-                        return;
-                    }
-                    socket_ptr -> nx_tcp_socket_tx_rto_next = socket_ptr -> nx_tcp_socket_sack_right[sack_index];
-                    skip = NX_TRUE;
-                    break;
-                }
-                if (((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - sequence) > 0) &&
-                    ((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - (sequence + length)) < 0))
-                {
-                    length = socket_ptr -> nx_tcp_socket_sack_left[sack_index] - sequence;
-                }
-            }
-            if (skip == NX_TRUE)
-            {
-                continue; /* Re-examine this buffer from the island's end. */
-            }
-#endif /* NX_ENABLE_TCP_SACK */
-
-#ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
-            socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
-#endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
-            repair = packet_ptr;
-            if (sequence != begin || length != packet_ptr -> nx_packet_length -
-                ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG)) ||
-                _nx_packet_tcp_gso_mss(packet_ptr) != 0)
-            {
-                repair = _nx_tcp_socket_data_slice(ip_ptr, packet_ptr, sequence, begin, length);
-                if (repair == NX_NULL)
-                {
-                    ULONG whole = packet_ptr -> nx_packet_length -
-                                  ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
-                    if (whole <= wire_mss && whole <= available)
-                    {
-                        repair = packet_ptr;
-                        sequence = begin;
-                        length = whole;
-                    }
-                    else
-                    {
-                        return;
-                    }
-                }
-            }
-            socket_ptr -> nx_tcp_socket_tx_rto_next = sequence + length;
-            available -= length;
-            _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
-            if ((INT)(packet_end - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
-            {
-                if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE && available != 0)
-                {
-                    continue; /* More eligible DATA in this same immutable buffer. */
-                }
-                /* A pending repair or exhausted credit must leave the cursor
-                   here. Advancing to the next entry would skip unsent DATA. */
-                return;
-            }
-        }
-        if (next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
-        {
-            break;
-        }
-        packet_ptr = next_ptr;
+        return;
     }
+    if ((end - first) > _nx_tcp_socket_payload_mss(socket_ptr))
+    {
+        end = first + _nx_tcp_socket_payload_mss(socket_ptr);
+    }
+
+#ifdef FEATURE_NX_IPV6
+    if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
+        (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID))
+    {
+        return;
+    }
+#endif /* FEATURE_NX_IPV6 */
+
+    _nx_tcp_socket_resend_range(ip_ptr, socket_ptr, &first, end, end - first);
 }
 
 

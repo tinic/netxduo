@@ -443,7 +443,8 @@ ULONG          sack_right;
                         }
 
                         /* A block of DATA above this ACK: the peer holds DATA
-                           sent after the segment at SND.UNA.  */
+                           sent after the segment at SND.UNA.  A FIN-only block
+                           is not evidence, as for sack_new_recovery.  */
                         sack_walk_lost = NX_FALSE;
                         if (socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE)
                         {
@@ -454,7 +455,9 @@ ULONG          sack_right;
                                 sack_right = socket_ptr -> nx_tcp_socket_sack_right[sack_recovery_index];
                                 if (((INT)(sack_left - tcp_header_ptr -> nx_tcp_acknowledgment_number) > 0) &&
                                     ((INT)(sack_right - sack_left) > 0) &&
-                                    ((INT)(socket_ptr -> nx_tcp_socket_tx_sequence - sack_right) >= 0))
+                                    ((INT)(socket_ptr -> nx_tcp_socket_tx_sequence - sack_right) >= 0) &&
+                                    ((INT)(starting_tx_sequence + socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -
+                                           sack_left) > 0))
                                 {
                                     sack_walk_lost = NX_TRUE;
                                     break;
@@ -494,14 +497,18 @@ ULONG          sack_right;
                                these duplicates say a copy the walk sent was
                                lost: the ACK heuristic of RFC 6582 section 4.1,
                                or a SACK of DATA above SND.UNA, which a needless
-                               copy cannot produce.  RFC 6675 section 5.1: no
+                               copy cannot produce.  A fast recovery here
+                               cleared the walk, and the rest of the old flight
+                               then waited for the next RTO, one lost copy per
+                               RTO.  With SACK, RFC 6675 section 5.1 starts no
                                new recovery before that recovery point is
-                               acknowledged.  A fast recovery here cleared the
-                               walk, and the rest of the old flight then waited
-                               for the next RTO, one lost copy per RTO.  Walk
-                               again from SND.UNA under the same window.  */
-                            socket_ptr -> nx_tcp_socket_tx_rto_next = starting_tx_sequence;
-                            _nx_tcp_socket_retransmit_after_timeout(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr);
+                               acknowledged; without SACK this follows the same
+                               rule, as Linux's loss state does.  Resend the
+                               lost copy alone and leave the walk where it is:
+                               the copies it sent after that one are still in
+                               flight, and the window was already cut by the
+                               timeout of this loss.  */
+                            _nx_tcp_socket_retransmit_lost_copy(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr);
                         }
                         else if ((socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
                                  ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - (socket_ptr -> nx_tcp_socket_previous_highest_ack +

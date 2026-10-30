@@ -29,7 +29,8 @@
    does not.  Without SACK a lost copy is told apart from a needless one
    only by RFC 6582 section 4.1's heuristic, which refuses once the
    cumulative ACK has jumped more than four segments, and such a copy waits
-   for the RTO: three RTOs there, against six for one per lost copy.  */
+   for the RTO.  There the bound is fewer RTOs than lost copies: five for
+   the six.  */
 
 #include   "nx_api.h"
 #include   "nx_tcp.h"
@@ -264,7 +265,7 @@ static const CHAR *names[] = {"tail", "outage", "lost copy"};
         printf("\nFAIL: %s case lost %lu originals and %lu copies", names[loss], dropped_new, dropped_copies);
         error_counter++;
     }
-    if (elapsed > (((sack == NX_FALSE) && (loss == CASE_LOST_COPY)) ? 3 : 2) * RTO_TICKS)
+    if (elapsed > (((sack == NX_FALSE) && (loss == CASE_LOST_COPY)) ? 5 : 2) * RTO_TICKS)
     {
         printf("\nFAIL: %s %s burst of %u segments took %lu ticks, RTO %u",
                sack ? "SACK" : "non-SACK", names[loss], BURST_SEGMENTS, elapsed, RTO_TICKS);
