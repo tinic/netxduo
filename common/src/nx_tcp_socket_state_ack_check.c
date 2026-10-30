@@ -142,7 +142,6 @@ UINT           dupack_threshold;
 #ifdef NX_ENABLE_TCP_SACK
 UINT           sack_recovery_index;
 UINT           sack_new_recovery;
-UINT           sack_walk_lost;
 ULONG          sack_left;
 ULONG          sack_right;
 #endif
@@ -441,29 +440,6 @@ ULONG          sack_right;
                                 }
                             }
                         }
-
-                        /* A block of DATA above this ACK: the peer holds DATA
-                           sent after the segment at SND.UNA.  A FIN-only block
-                           is not evidence, as for sack_new_recovery.  */
-                        sack_walk_lost = NX_FALSE;
-                        if (socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE)
-                        {
-                            for (sack_recovery_index = 0; sack_recovery_index < socket_ptr -> nx_tcp_socket_sack_block_count &&
-                                 sack_recovery_index < NX_TCP_SACK_MAX_BLOCKS; sack_recovery_index++)
-                            {
-                                sack_left = socket_ptr -> nx_tcp_socket_sack_left[sack_recovery_index];
-                                sack_right = socket_ptr -> nx_tcp_socket_sack_right[sack_recovery_index];
-                                if (((INT)(sack_left - tcp_header_ptr -> nx_tcp_acknowledgment_number) > 0) &&
-                                    ((INT)(sack_right - sack_left) > 0) &&
-                                    ((INT)(socket_ptr -> nx_tcp_socket_tx_sequence - sack_right) >= 0) &&
-                                    ((INT)(starting_tx_sequence + socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -
-                                           sack_left) > 0))
-                                {
-                                    sack_walk_lost = NX_TRUE;
-                                    break;
-                                }
-                            }
-                        }
 #endif /* NX_ENABLE_TCP_SACK */
                         if (((INT)((tcp_header_ptr -> nx_tcp_acknowledgment_number - 1) -
                                    socket_ptr -> nx_tcp_socket_tx_sequence_recover) > 0)
@@ -478,39 +454,11 @@ ULONG          sack_right;
                             /* Retransmit packet immediately. */
                             _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_TRUE);
                         }
-                        else if ((socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE) &&
-                                 ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - starting_tx_sequence) > 0) &&
-                                 ((INT)((socket_ptr -> nx_tcp_socket_tx_sequence_recover + 1) -
-                                        socket_ptr -> nx_tcp_socket_tx_rto_end) >= 0) &&
-                                 (((socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
-                                   ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - (socket_ptr -> nx_tcp_socket_previous_highest_ack +
-                                                                                            (socket_ptr -> nx_tcp_socket_connect_mss << 2))) <= 0))
-#ifdef NX_ENABLE_TCP_SACK
-                                  || (sack_walk_lost == NX_TRUE)
-#endif
-                                 ))
-                        {
-
-                            /* Below the end of the old flight a timeout is
-                               walking (the timeout set recover to the last
-                               byte sent, so that end is at most recover + 1),
-                               these duplicates say a copy the walk sent was
-                               lost: the ACK heuristic of RFC 6582 section 4.1,
-                               or a SACK of DATA above SND.UNA, which a needless
-                               copy cannot produce.  A fast recovery here
-                               cleared the walk, and the rest of the old flight
-                               then waited for the next RTO, one lost copy per
-                               RTO.  With SACK, RFC 6675 section 5.1 starts no
-                               new recovery before that recovery point is
-                               acknowledged; without SACK this follows the same
-                               rule, as Linux's loss state does.  Resend the
-                               lost copy alone and leave the walk where it is:
-                               the copies it sent after that one are still in
-                               flight, and the window was already cut by the
-                               timeout of this loss.  */
-                            _nx_tcp_socket_retransmit_lost_copy(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr);
-                        }
-                        else if ((socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
+                        /* Below the end of the old flight a timeout is walking,
+                           a lost copy of that walk is resent alone and no fast
+                           recovery starts (RFC 6675 section 5.1).  */
+                        else if ((_nx_tcp_socket_retransmit_lost_copy(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr) == NX_FALSE) &&
+                                 (socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
                                  ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - (socket_ptr -> nx_tcp_socket_previous_highest_ack +
                                                                                           (socket_ptr -> nx_tcp_socket_connect_mss << 2))) <= 0))
                         {

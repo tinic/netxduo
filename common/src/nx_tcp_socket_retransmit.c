@@ -1636,11 +1636,13 @@ ULONG          in_flight;
 /*                                                                        */
 /*  DESCRIPTION                                                           */
 /*                                                                        */
-/*    This function resends the one copy of the RTO walk that duplicate    */
-/*    ACKs show lost: the wire segment at SND.UNA, stopping short of a     */
-/*    SACKed island.  The walk's cursor stays where it is, and the copies  */
-/*    it sent after this one stay counted as in flight.  As a fast         */
-/*    retransmit (RFC 5681 section 3.2) it is not limited by the window.   */
+/*    This function is called at the duplicate ACK threshold.  Below the  */
+/*    end of the old flight an RTO is walking, when the duplicates show a  */
+/*    copy of that walk lost, it resends that copy alone: the wire segment */
+/*    at SND.UNA, stopping short of a SACKed island.  The walk's cursor    */
+/*    stays where it is, and the copies it sent after this one stay        */
+/*    counted as in flight.  As a fast retransmit (RFC 5681 section 3.2)   */
+/*    it is not limited by the window.                                     */
 /*                                                                        */
 /*  INPUT                                                                 */
 /*                                                                        */
@@ -1649,7 +1651,10 @@ ULONG          in_flight;
 /*                                                                        */
 /*  OUTPUT                                                                */
 /*                                                                        */
-/*    None                                                                */
+/*    NX_TRUE                               The ACKs were a lost copy of  */
+/*                                            the walk; start no fast     */
+/*                                            recovery                    */
+/*    NX_FALSE                              Not handled here              */
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
@@ -1660,18 +1665,69 @@ ULONG          in_flight;
 /*    _nx_tcp_socket_state_ack_check                                      */
 /*                                                                        */
 /**************************************************************************/
-VOID _nx_tcp_socket_retransmit_lost_copy(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
+UINT _nx_tcp_socket_retransmit_lost_copy(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
 {
 ULONG          first;
 ULONG          end;
+UINT           lost;
+#ifdef NX_ENABLE_TCP_SACK
+UINT           sack_index;
+#endif /* NX_ENABLE_TCP_SACK */
 
     first = _nx_tcp_socket_data_unacked(socket_ptr);
+
+    /* Only below the end of the old flight a timeout is walking.  The timeout
+       set recover to the last byte sent, so that end is at most recover + 1;
+       a cleared or stale cursor does not lie in (SND.UNA, recover + 1].  */
+    if ((socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE) ||
+        ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - first) <= 0) ||
+        ((INT)((socket_ptr -> nx_tcp_socket_tx_sequence_recover + 1) - socket_ptr -> nx_tcp_socket_tx_rto_end) < 0))
+    {
+        return(NX_FALSE);
+    }
+
+    /* The duplicates say a copy the walk sent was lost: the ACK heuristic of
+       RFC 6582 section 4.1, or a SACK of DATA above SND.UNA, which a needless
+       copy cannot produce.  A FIN-only block is not evidence.  */
+    lost = ((socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
+            ((INT)(first - (socket_ptr -> nx_tcp_socket_previous_highest_ack +
+                            (socket_ptr -> nx_tcp_socket_connect_mss << 2))) <= 0)) ? NX_TRUE : NX_FALSE;
+#ifdef NX_ENABLE_TCP_SACK
+    if ((lost == NX_FALSE) && (socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE))
+    {
+        for (sack_index = 0; (sack_index < socket_ptr -> nx_tcp_socket_sack_block_count) &&
+             (sack_index < NX_TCP_SACK_MAX_BLOCKS); sack_index++)
+        {
+            if (((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - first) > 0) &&
+                ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
+                       socket_ptr -> nx_tcp_socket_sack_left[sack_index]) > 0) &&
+                ((INT)(socket_ptr -> nx_tcp_socket_tx_sequence - socket_ptr -> nx_tcp_socket_sack_right[sack_index]) >= 0) &&
+                ((INT)(first + socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -
+                       socket_ptr -> nx_tcp_socket_sack_left[sack_index]) > 0))
+            {
+                lost = NX_TRUE;
+                break;
+            }
+        }
+    }
+#endif /* NX_ENABLE_TCP_SACK */
+    if (lost == NX_FALSE)
+    {
+        return(NX_FALSE);
+    }
+
+    /* A fast recovery here cleared the walk, and the rest of the old flight
+       then waited for the next RTO, one lost copy per RTO.  RFC 6675 section
+       5.1 starts no new recovery before the recovery point is acknowledged;
+       without SACK this follows the same rule, as Linux's loss state does.
+       The copies the walk sent after this one stay in flight, and the window
+       was already cut by the timeout of this loss.  */
     end = socket_ptr -> nx_tcp_socket_tx_rto_next;
 
     /* A walk that has not passed SND.UNA sends that segment itself.  */
     if ((INT)(end - first) <= 0)
     {
-        return;
+        return(NX_TRUE);
     }
     if ((end - first) > _nx_tcp_socket_payload_mss(socket_ptr))
     {
@@ -1682,11 +1738,12 @@ ULONG          end;
     if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
         (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID))
     {
-        return;
+        return(NX_TRUE);
     }
 #endif /* FEATURE_NX_IPV6 */
 
     _nx_tcp_socket_resend_range(ip_ptr, socket_ptr, &first, end, end - first);
+    return(NX_TRUE);
 }
 
 
