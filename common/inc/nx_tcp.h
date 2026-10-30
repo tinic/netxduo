@@ -857,6 +857,28 @@ TCP_DECLARE ULONG           _nx_tcp_transmit_timer_rate;
 
 TCP_DECLARE ULONG           _nx_tcp_2MSL_timer_rate;
 
+/* The initial window the connection's interface asks for, in place of RFC
+   3390's: min(n * SMSS, max(2 * SMSS, n * 1460)), RFC 6928 section 2 for
+   n = 10.  Nothing when the interface sets none (nx_api.h).  */
+#define NX_TCP_SOCKET_INITIAL_WINDOW(s) \
+    { \
+        NX_INTERFACE *_iw_if = (s) -> nx_tcp_socket_connect_interface; \
+        ULONG _iw_n = (_iw_if != NX_NULL) ? (ULONG)(_iw_if -> nx_interface_tcp_initial_window) : 0UL; \
+        if (_iw_n != 0UL) \
+        { \
+            ULONG _iw = _iw_n * 1460UL; \
+            if (_iw < ((s) -> nx_tcp_socket_connect_mss << 1)) \
+            { \
+                _iw = (s) -> nx_tcp_socket_connect_mss << 1; \
+            } \
+            if (_iw > _iw_n * (s) -> nx_tcp_socket_connect_mss) \
+            { \
+                _iw = _iw_n * (s) -> nx_tcp_socket_connect_mss; \
+            } \
+            (s) -> nx_tcp_socket_tx_window_congestion = _iw; \
+        } \
+    }
+
 #ifdef NX_ENABLE_TCP_SACK
 #define NX_TCP_SACK_RECOVERY_ACTIVE(s) \
     (((s) -> nx_tcp_socket_sack_permitted == NX_TRUE) && \

@@ -2926,6 +2926,15 @@ typedef struct NX_INTERFACE_STRUCT
        and the SYN-ACK offer no more.  Zero offers the buffer.  */
     ULONG nx_interface_tcp_rx_window_cap;
 
+    /* Slow start on TCP connections bound to this interface (AmiNetXDuo).
+       The initial window in segments, RFC 6928 for 10; zero keeps RFC
+       3390's.  The most one acknowledgment grows the window by in slow
+       start, in segments, RFC 3465 section 2.2's L; zero or one keeps RFC
+       5681's one segment.  Set before bringing the interface online.  */
+    UCHAR nx_interface_tcp_initial_window;
+    UCHAR nx_interface_tcp_abc_limit;
+    UCHAR nx_interface_tcp_slow_start_reserved[2];
+
     /* Define the Link Driver entry point.  */
     VOID        (*nx_interface_link_driver_entry)(struct NX_IP_DRIVER_STRUCT *);
 

@@ -139,6 +139,7 @@ VOID  _nx_tcp_socket_state_syn_received(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER
                 {
                     socket_ptr -> nx_tcp_socket_tx_window_congestion -= socket_ptr -> nx_tcp_socket_connect_mss;
                 }
+                NX_TCP_SOCKET_INITIAL_WINDOW(socket_ptr)
             }
 
 #ifndef NX_TCP_ACK_EVERY_N_PACKETS
