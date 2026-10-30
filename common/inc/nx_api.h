@@ -2277,6 +2277,27 @@ typedef struct NX_TCP_SOCKET_STRUCT
        a second time.  Set to the first unacknowledged byte when a fast
        retransmit begins.  */
     ULONG       nx_tcp_socket_tx_high_rxt;
+
+    /* Persistent SACK holes and PRR state. Lazily allocated control pages
+       grow with fragmented delivery, without enlarging every NX_PACKET. */
+    NX_PACKET  *nx_tcp_socket_sack_scoreboard;
+    NX_PACKET  *nx_tcp_socket_sack_cursor;
+    ULONG       nx_tcp_socket_sack_high_ack;
+    ULONG       nx_tcp_socket_sack_fack;
+    ULONG       nx_tcp_socket_sack_lost_edge;
+    ULONG       nx_tcp_socket_prr_recover_fs;
+    ULONG       nx_tcp_socket_prr_delivered;
+    ULONG       nx_tcp_socket_prr_out;
+    ULONG       nx_tcp_socket_prr_credit;
+    ULONG       nx_tcp_socket_sack_rescue_rxt;
+    ULONG       nx_tcp_socket_sack_delivery_bank;
+    ULONG       nx_tcp_socket_sack_delivered_data;
+    ULONG       nx_tcp_socket_sack_uncertain_start;
+    ULONG       nx_tcp_socket_sack_uncertain_end;
+    USHORT      nx_tcp_socket_sack_hole_count;
+    USHORT      nx_tcp_socket_sack_hole_capacity;
+    UCHAR       nx_tcp_socket_sack_page_capacity;
+    UCHAR       nx_tcp_socket_sack_scoreboard_flags;
 #endif /* NX_ENABLE_TCP_SACK */
 
     /* Define the TCP keepalive timer parameters.  If enabled with NX_ENABLE_TCP_KEEPALIVE,

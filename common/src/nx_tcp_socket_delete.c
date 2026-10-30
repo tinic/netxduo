@@ -103,6 +103,10 @@ NX_IP *ip_ptr;
         return(NX_STILL_BOUND);
     }
 
+#ifdef NX_ENABLE_TCP_SACK
+    _nx_tcp_sack_recovery_reset(socket_ptr);
+#endif
+
     /* Disable interrupts.  */
     TX_DISABLE
 

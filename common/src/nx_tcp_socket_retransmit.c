@@ -275,7 +275,12 @@ UINT           compute_checksum = 1;
 
     /* Determine if the retransmitted packet is identical to the original packet.
        RFC1122, Section3.2.1.5, Page32-33. RFC1122, Section4.2.2.15, Page90-91.  */
-    if ((header_ptr -> nx_tcp_acknowledgment_number == original_acknowledgment_number) &&
+    /* A transient DATA slice was freshly allocated, not sent before: it has
+       no IPv4 header to reuse. With TCP TX checksums disabled/offloaded, its
+       checksum can stay zero even though the sequence or DATA length changed.
+       Only an original on the socket's sent queue may reuse its IP header. */
+    if ((packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next != (NX_PACKET *)NX_PACKET_ALLOCATED) &&
+        (header_ptr -> nx_tcp_acknowledgment_number == original_acknowledgment_number) &&
         (header_ptr -> nx_tcp_header_word_3 == original_header_word_3) &&
         (header_ptr -> nx_tcp_header_word_4 == original_header_word_4))
     {
@@ -356,6 +361,224 @@ UINT           compute_checksum = 1;
     }
 #endif /* FEATURE_NX_IPV6 */
 }
+
+#ifdef NX_ENABLE_TCP_SACK
+/* Partial PRR credit or byte-granular SACK edges need a bounded DATA
+   slice. Preserve the queued original, including chained buffers and driver
+   ownership. A transient copy is owned/released by the normal TX driver. */
+static NX_PACKET *_nx_tcp_socket_sack_slice(NX_IP *ip_ptr, NX_PACKET *original,
+                                           ULONG seq, ULONG begin, ULONG bytes)
+{
+NX_PACKET *copy, *source;
+NX_PACKET_POOL *pool = original -> nx_packet_pool_owner;
+ULONG word = ((NX_TCP_HEADER *)original -> nx_packet_prepend_ptr) -> nx_tcp_header_word_3;
+ULONG header_length, offset, chunk, left = bytes;
+UCHAR saved_header[60];
+
+    NX_CHANGE_ULONG_ENDIAN(word);
+    header_length = (word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
+    if (header_length > sizeof(saved_header))
+    {
+        return NX_NULL;
+    }
+    memcpy(saved_header, original -> nx_packet_prepend_ptr, header_length);
+    if (pool == NX_NULL)
+    {
+        pool = ip_ptr -> nx_ip_default_packet_pool;
+    }
+    if (pool == NX_NULL || _nx_packet_allocate(pool, &copy, NX_TCP_PACKET, NX_NO_WAIT) != NX_SUCCESS)
+    {
+        return NX_NULL;
+    }
+    /* A fresh pool packet has no egress interface. IPv4 output explicitly
+       drops such packets, so a transient repair must retain the original
+       route/address context just as nx_packet_copy does. */
+    copy -> nx_packet_address = original -> nx_packet_address;
+    copy -> nx_packet_ip_version = original -> nx_packet_ip_version;
+#ifdef NX_IPSEC_ENABLE
+    copy -> nx_packet_ipsec_sa_ptr = original -> nx_packet_ipsec_sa_ptr;
+#endif
+    source = original;
+    offset = header_length + seq - begin;
+    while (source != NX_NULL && left != 0)
+    {
+        chunk = (ULONG)(source -> nx_packet_append_ptr - source -> nx_packet_prepend_ptr);
+        if (offset >= chunk)
+        {
+            offset -= chunk;
+#ifndef NX_DISABLE_PACKET_CHAIN
+            source = source -> nx_packet_next;
+#else
+            source = NX_NULL;
+#endif
+            continue;
+        }
+        chunk -= offset;
+        if (chunk > left)
+        {
+            chunk = left;
+        }
+        if (_nx_packet_data_append(copy, source -> nx_packet_prepend_ptr + offset,
+                                    chunk, pool, NX_NO_WAIT) != NX_SUCCESS)
+        {
+            _nx_packet_release(copy);
+            return NX_NULL;
+        }
+        left -= chunk;
+        offset = 0;
+#ifndef NX_DISABLE_PACKET_CHAIN
+        source = source -> nx_packet_next;
+#else
+        source = NX_NULL;
+#endif
+    }
+    if (left != 0 || (ULONG)(copy -> nx_packet_prepend_ptr - copy -> nx_packet_data_start) < header_length)
+    {
+        _nx_packet_release(copy);
+        return NX_NULL;
+    }
+    copy -> nx_packet_prepend_ptr -= header_length;
+    copy -> nx_packet_length += header_length;
+    memcpy(copy -> nx_packet_prepend_ptr, saved_header, header_length);
+    NX_CHANGE_ULONG_ENDIAN(seq);
+    ((NX_TCP_HEADER *)copy -> nx_packet_prepend_ptr) -> nx_tcp_sequence_number = seq;
+    return copy;
+}
+
+/* The IP mutex protects the TCP queue. Driver completion can restore its
+   header concurrently, so inspect ownership and header under TX_DISABLE. */
+static VOID _nx_tcp_socket_sack_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *s)
+{
+TX_INTERRUPT_SAVE_AREA
+NX_PACKET *packet, *send_packet;
+NX_TCP_HEADER *header;
+ULONG seq, limit, begin, end, word, payload, send_begin, send_end;
+UINT kind;
+
+    while (s -> nx_tcp_socket_prr_credit != 0 &&
+           (kind = _nx_tcp_sack_recovery_next(s, &seq, &limit)) != NX_FALSE)
+    {
+        packet = s -> nx_tcp_socket_sack_cursor;
+        if (packet == NX_NULL)
+        {
+            packet = s -> nx_tcp_socket_transmit_sent_head;
+        }
+        else
+        {
+            TX_DISABLE
+            header = _nx_tcp_socket_queued_header(packet);
+            begin = header -> nx_tcp_sequence_number;
+            NX_CHANGE_ULONG_ENDIAN(begin);
+            TX_RESTORE
+            if ((INT)(begin - seq) > 0)
+            {
+                packet = s -> nx_tcp_socket_transmit_sent_head;
+            }
+        }
+        while (packet != NX_NULL)
+        {
+            TX_DISABLE
+            header = _nx_tcp_socket_queued_header(packet);
+            begin = header -> nx_tcp_sequence_number;
+            word = header -> nx_tcp_header_word_3;
+            NX_CHANGE_ULONG_ENDIAN(begin);
+            NX_CHANGE_ULONG_ENDIAN(word);
+            payload = packet -> nx_packet_length -
+                      (ULONG)((UCHAR *)header - packet -> nx_packet_prepend_ptr) -
+                      (word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
+            end = begin + payload;
+            if ((INT)(end - seq) > 0)
+            {
+                /* Only completed DATA may be retransmitted. A driver-owned
+                   segment remains queued and retains its unspent PRR credit. */
+                if ((INT)(seq - begin) < 0 || payload == 0 ||
+                    packet -> nx_packet_queue_next != (NX_PACKET *)NX_DRIVER_TX_DONE)
+                {
+                    TX_RESTORE
+                    s -> nx_tcp_socket_sack_cursor = packet;
+                    return;
+                }
+                TX_RESTORE
+                break;
+            }
+            TX_RESTORE
+            packet = packet -> nx_packet_union_next.nx_packet_tcp_queue_next;
+            if (packet == (NX_PACKET *)NX_PACKET_ENQUEUED)
+            {
+                packet = NX_NULL;
+            }
+        }
+        s -> nx_tcp_socket_sack_cursor = packet;
+        if (packet == NX_NULL)
+        {
+            return;
+        }
+        send_end = (INT)(end - limit) > 0 ? limit : end;
+        if (kind == 4U)
+        {
+            /* Rescue includes the highest missing octet, within the same
+               credit bound as ordinary retransmission and new DATA. */
+            send_begin = begin;
+            if (send_end - send_begin > s -> nx_tcp_socket_prr_credit)
+            {
+                send_begin = send_end - s -> nx_tcp_socket_prr_credit;
+            }
+        }
+        else
+        {
+            send_begin = seq;
+            if (send_end - send_begin > s -> nx_tcp_socket_prr_credit)
+            {
+                send_end = send_begin + s -> nx_tcp_socket_prr_credit;
+            }
+        }
+        if ((INT)(s -> nx_tcp_socket_sack_high_ack - send_begin) > 0)
+        {
+            send_begin = s -> nx_tcp_socket_sack_high_ack;
+        }
+        if ((INT)(send_end - (s -> nx_tcp_socket_sack_high_ack +
+                              s -> nx_tcp_socket_tx_window_advertised)) > 0)
+        {
+            if (kind == 4U)
+            {
+                return; /* A rescue must contain the selected highest octet. */
+            }
+            send_end = s -> nx_tcp_socket_sack_high_ack + s -> nx_tcp_socket_tx_window_advertised;
+        }
+        if ((INT)(send_end - send_begin) <= 0)
+        {
+            return;
+        }
+        send_packet = packet;
+        if (send_begin != begin || send_end != end)
+        {
+            send_packet = _nx_tcp_socket_sack_slice(ip_ptr, packet, send_begin, begin, send_end - send_begin);
+            if (send_packet == NX_NULL)
+            {
+                if (payload <= _nx_tcp_socket_payload_mss(s) &&
+                    payload <= s -> nx_tcp_socket_prr_credit &&
+                    (INT)(end - (s -> nx_tcp_socket_sack_high_ack +
+                                 s -> nx_tcp_socket_tx_window_advertised)) <= 0)
+                {
+                    /* A full pool must not suppress the mandatory first
+                       repair of a byte-sized hole. Repeating this one-MSS
+                       original is safe when ALL wire bytes fit the budget. */
+                    send_packet = packet;
+                    send_begin = begin;
+                    send_end = end;
+                }
+                else
+                {
+                    return; /* No wait, ownership or credit consumed. */
+                }
+            }
+        }
+        /* Debit before the driver call; the driver may complete immediately. */
+        _nx_tcp_sack_recovery_sent(s, send_begin, send_end - send_begin, kind == 4U);
+        _nx_tcp_socket_retransmit_packet(ip_ptr, s, send_packet);
+    }
+}
+#endif /* NX_ENABLE_TCP_SACK */
 
 /**************************************************************************/
 /*                                                                        */
@@ -525,6 +748,30 @@ UINT       sack_index;
 
 #ifdef NX_ENABLE_TCP_SACK
 
+    /* SACK uses one coherent RFC 6675/6937 recovery controller. Non-SACK
+       peers retain the NewReno controller below. */
+    if (socket_ptr -> nx_tcp_socket_sack_permitted == NX_TRUE &&
+        (need_fast_retransmit == NX_TRUE || socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE))
+    {
+        if (need_fast_retransmit == NX_TRUE && !NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+        {
+            _nx_tcp_sack_recovery_begin(socket_ptr);
+            socket_ptr -> nx_tcp_socket_timeout = socket_ptr -> nx_tcp_socket_timeout_rate;
+        }
+#ifdef FEATURE_NX_IPV6
+        if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6 &&
+            socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID)
+        {
+            return;
+        }
+#endif
+        if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+        {
+            _nx_tcp_socket_sack_retransmit(ip_ptr, socket_ptr);
+        }
+        return;
+    }
+
     /* RFC 6675 section 5.1: a retransmission timeout says the connection has
        lost track of what the peer holds, so what it reported is dropped and
        the queue is resent from the front.  A fast retransmit, and the partial
@@ -532,6 +779,7 @@ UINT       sack_index;
        keep them.  */
     if ((need_fast_retransmit == NX_FALSE) && (socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE))
     {
+        _nx_tcp_sack_recovery_reset(socket_ptr);
         socket_ptr -> nx_tcp_socket_sack_block_count = 0;
     }
 #endif /* NX_ENABLE_TCP_SACK */
@@ -739,6 +987,34 @@ UINT       sack_index;
             in_flight = 0;
         }
 
+        /* RFC 6675 SetPipe step (b): a lost original no longer occupies
+           the pipe, but its unacknowledged retransmission does. HighRxt
+           is the exclusive end of the copies already sent in this recovery.
+           Without this credit, each growing SACK refills the same window
+           before any of those copies has reached the receiver. */
+        {
+            ULONG retransmitted = socket_ptr -> nx_tcp_socket_tx_high_rxt - unacked;
+
+            if ((retransmitted != 0) &&
+                (retransmitted <= socket_ptr -> nx_tcp_socket_tx_outstanding_bytes))
+            {
+                for (sack_index = 0; sack_index < sack_blocks; sack_index++)
+                {
+                    ULONG right = sack_right[sack_index];
+
+                    if (((INT)(right - socket_ptr -> nx_tcp_socket_tx_high_rxt)) > 0)
+                    {
+                        right = socket_ptr -> nx_tcp_socket_tx_high_rxt;
+                    }
+                    if (((INT)(right - sack_left[sack_index])) > 0)
+                    {
+                        retransmitted -= right - sack_left[sack_index];
+                    }
+                }
+                in_flight += retransmitted;
+            }
+        }
+
         if (available > in_flight)
         {
             available = available - in_flight;
@@ -748,7 +1024,10 @@ UINT       sack_index;
             available = 0;
         }
 
-        if (available < socket_ptr -> nx_tcp_socket_connect_mss)
+        /* Entering recovery must repair the first hole. Subsequent ACKs
+           may send only when the pipe actually has room for another copy. */
+        if ((need_fast_retransmit == NX_TRUE) &&
+            (available < socket_ptr -> nx_tcp_socket_connect_mss))
         {
             available = socket_ptr -> nx_tcp_socket_connect_mss;
         }

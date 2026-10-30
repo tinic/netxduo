@@ -238,6 +238,8 @@ UINT            status;
 NX_PACKET       *packet_ptr;
 ULONG           actual_status;
 UINT            i;
+ULONG           received = 0, message_bytes, packet_bytes;
+NX_PACKET      *part;
 
 
     /* Ensure the IP instance has been initialized.  */
@@ -262,21 +264,48 @@ UINT            i;
     if (status)
         error_counter++;
 
-    for (i = 0; i < 5; i++)
+    /* TCP preserves bytes, not the application's send/packet boundaries.
+       Fractional PRR repair credit can divide an original MSS-sized write. */
+    message_bytes = _nx_tcp_socket_payload_mss(&client_socket);
+    while (received < 5 * message_bytes)
     {
-
-        /* Receive a TCP message from the socket.  */
-        status =  nx_tcp_socket_receive(&server_socket, &packet_ptr, 5 * NX_IP_PERIODIC_RATE);
+        status = nx_tcp_socket_receive(&server_socket, &packet_ptr, 5 * NX_IP_PERIODIC_RATE);
         if (status)
-            error_counter++;
-        else
         {
-            if(memcmp(packet_ptr -> nx_packet_prepend_ptr, send_buff, packet_ptr -> nx_packet_length))
-                error_counter++;
-
-            nx_packet_release(packet_ptr);
+            error_counter++;
+            break;
         }
+        if (packet_ptr -> nx_packet_length == 0)
+        {
+            error_counter++;
+            nx_packet_release(packet_ptr);
+            break;
+        }
+        packet_bytes = 0;
+        for (part = packet_ptr; part != NX_NULL;)
+        {
+            for (i = 0; i < (UINT)(part -> nx_packet_append_ptr - part -> nx_packet_prepend_ptr); i++)
+            {
+                if (received >= 5 * message_bytes ||
+                    part -> nx_packet_prepend_ptr[i] != (UCHAR)send_buff[received % message_bytes])
+                {
+                    error_counter++;
+                }
+                received++;
+                packet_bytes++;
+            }
+#ifndef NX_DISABLE_PACKET_CHAIN
+            part = part -> nx_packet_next;
+#else
+            part = NX_NULL;
+#endif
+        }
+        if (packet_bytes != packet_ptr -> nx_packet_length)
+            error_counter++;
+        nx_packet_release(packet_ptr);
     }
+    if (received != 5 * message_bytes)
+        error_counter++;
 
     /* Disconnect the server socket.  */
     status =  nx_tcp_socket_disconnect(&server_socket, 5 * NX_IP_PERIODIC_RATE);

@@ -697,6 +697,19 @@ UINT            compute_checksum = 1;
             tx_window_current = 0;
         }
 
+#ifdef NX_ENABLE_TCP_SACK
+        if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+        {
+            tx_window_current = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+            tx_window_current = tx_window_current > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes ?
+                                tx_window_current - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes : 0;
+            if (tx_window_current > socket_ptr -> nx_tcp_socket_prr_credit)
+            {
+                tx_window_current = socket_ptr -> nx_tcp_socket_prr_credit;
+            }
+        }
+#endif
+
         /* RFC 1122 4.2.3.4 (MUST-38), sender silly-window avoidance.  It reads
            the peer's window off the socket rather than taking tx_window_current
            deliberately: the congestion window belongs in the amount sent, not
@@ -954,6 +967,68 @@ UINT            compute_checksum = 1;
                 /* Send the packet directly. */
                 send_packet = packet_ptr;
             }
+
+#ifdef NX_ENABLE_TCP_SACK
+            if (send_packet != packet_ptr)
+            {
+            ULONG current_credit;
+            UINT connection_status = NX_SUCCESS;
+
+                if (socket_ptr -> nx_tcp_socket_state != NX_TCP_ESTABLISHED &&
+                    socket_ptr -> nx_tcp_socket_state != NX_TCP_CLOSE_WAIT)
+                {
+                    connection_status = NX_NOT_CONNECTED;
+                }
+#ifdef FEATURE_NX_IPV6
+                else if (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6 &&
+                         socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID)
+                {
+                    connection_status = NX_NO_INTERFACE_ADDRESS;
+                }
+#endif
+                if (connection_status != NX_SUCCESS)
+                {
+                    _nx_packet_release(send_packet);
+                    if (preempted == NX_TRUE)
+                    {
+                        tx_thread_preemption_change(_tx_thread_current_ptr, old_threshold, &old_threshold);
+                    }
+                    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+                    return connection_status;
+                }
+
+                /* Allocation/append above release the IP mutex. A returning
+                   ACK or another sender may spend PRR credit in that interval.
+                   Revalidate before mutating/enqueueing the original DATA. */
+                current_credit = socket_ptr -> nx_tcp_socket_tx_window_congestion;
+                if (!NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr) &&
+                    (socket_ptr -> nx_tcp_socket_duplicated_ack_received == 1 ||
+                     socket_ptr -> nx_tcp_socket_duplicated_ack_received == 2))
+                {
+                    current_credit += socket_ptr -> nx_tcp_socket_connect_mss << 1;
+                }
+                if (current_credit > socket_ptr -> nx_tcp_socket_tx_window_advertised)
+                {
+                    current_credit = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+                }
+                if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+                {
+                    current_credit = socket_ptr -> nx_tcp_socket_tx_window_advertised;
+                }
+                current_credit = current_credit > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes ?
+                    current_credit - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes : 0;
+                if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr) &&
+                    current_credit > socket_ptr -> nx_tcp_socket_prr_credit)
+                {
+                    current_credit = socket_ptr -> nx_tcp_socket_prr_credit;
+                }
+                if (send_packet -> nx_packet_length > current_credit)
+                {
+                    _nx_packet_release(send_packet);
+                    continue; /* Original DATA and shared credit are untouched. */
+                }
+            }
+#endif
 
             /* Now the send_packet can be sent. */
             /* Set IP version. */
@@ -1234,6 +1309,15 @@ UINT            compute_checksum = 1;
 
             /* If trace is enabled, insert this event into the trace buffer.  */
             NX_TRACE_IN_LINE_INSERT(NX_TRACE_INTERNAL_TCP_DATA_SEND, ip_ptr, socket_ptr, send_packet, socket_ptr -> nx_tcp_socket_tx_sequence - (send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH), NX_TRACE_INTERNAL_EVENTS, 0, 0);
+
+#ifdef NX_ENABLE_TCP_SACK
+            if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr))
+            {
+                ULONG sent_bytes = send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH;
+                socket_ptr -> nx_tcp_socket_prr_out += sent_bytes;
+                socket_ptr -> nx_tcp_socket_prr_credit -= sent_bytes;
+            }
+#endif
 
             /* Send the TCP packet to the IP component.  */
 #ifndef NX_DISABLE_IPV4
