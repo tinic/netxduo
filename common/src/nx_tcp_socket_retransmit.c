@@ -1392,6 +1392,7 @@ ULONG          wire_mss;
 NX_PACKET     *repair;
 #ifdef NX_ENABLE_TCP_SACK
 UINT           sack_index;
+UINT           skip;
 #endif /* NX_ENABLE_TCP_SACK */
 
     if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - socket_ptr -> nx_tcp_socket_tx_rto_next) <= 0)
@@ -1490,17 +1491,40 @@ UINT           sack_index;
                if a later ACK withdraws that information, or another RTO
                discards it, these queued bytes must remain recoverable.
                An interior SACK island cannot stop the walk, because data
-               beyond it may still be missing.  No send credit is changed. */
+               beyond it may still be missing.  No send credit is changed.
+               The walk steps over the island and stops a copy short of it:
+               section 5.1 asks the slow start to send what the peer lacks.
+               A walk resumed from SND.UNA after a lost copy otherwise
+               resends a window of DATA the peer holds.  */
+            skip = NX_FALSE;
             for (sack_index = 0; sack_index < socket_ptr -> nx_tcp_socket_sack_block_count; sack_index++)
             {
-                if (((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
-                           socket_ptr -> nx_tcp_socket_sack_left[sack_index]) > 0) &&
-                    ((INT)(sequence - socket_ptr -> nx_tcp_socket_sack_left[sack_index]) >= 0) &&
-                    ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
-                           socket_ptr -> nx_tcp_socket_tx_rto_end) >= 0))
+                if ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
+                          socket_ptr -> nx_tcp_socket_sack_left[sack_index]) <= 0)
                 {
-                    return;
+                    continue;
                 }
+                if (((INT)(sequence - socket_ptr -> nx_tcp_socket_sack_left[sack_index]) >= 0) &&
+                    ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] - sequence) > 0))
+                {
+                    if ((INT)(socket_ptr -> nx_tcp_socket_sack_right[sack_index] -
+                              socket_ptr -> nx_tcp_socket_tx_rto_end) >= 0)
+                    {
+                        return;
+                    }
+                    socket_ptr -> nx_tcp_socket_tx_rto_next = socket_ptr -> nx_tcp_socket_sack_right[sack_index];
+                    skip = NX_TRUE;
+                    break;
+                }
+                if (((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - sequence) > 0) &&
+                    ((INT)(socket_ptr -> nx_tcp_socket_sack_left[sack_index] - (sequence + length)) < 0))
+                {
+                    length = socket_ptr -> nx_tcp_socket_sack_left[sack_index] - sequence;
+                }
+            }
+            if (skip == NX_TRUE)
+            {
+                continue; /* Re-examine this buffer from the island's end. */
             }
 #endif /* NX_ENABLE_TCP_SACK */
 
