@@ -719,6 +719,12 @@ UINT            compute_checksum = 1;
         {
             tx_window_current = queue_credit;
         }
+        
+        /* A stopped interface queue holds new data back (nx_tcp.h).  */
+        if (NX_TCP_SOCKET_TX_QUEUE_STOPPED(socket_ptr))
+        {
+            tx_window_current = 0;
+        }
 
 #ifdef NX_ENABLE_INTERFACE_CAPABILITY
         /* Only a whole, explicitly marked aggregate may bypass the MSS

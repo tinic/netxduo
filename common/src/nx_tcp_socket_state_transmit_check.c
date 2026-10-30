@@ -145,6 +145,12 @@ ULONG queue_credit;
         {
             tx_window_current = queue_credit;
         }
+        
+        /* A stopped interface queue holds new data back (nx_tcp.h).  */
+        if (NX_TCP_SOCKET_TX_QUEUE_STOPPED(socket_ptr))
+        {
+            tx_window_current = 0;
+        }
 
         /* The same RFC 1122 4.2.3.4 test the send path applies
            (nx_tcp_socket_send_internal.c).  Without it here the suspended

@@ -879,6 +879,15 @@ TCP_DECLARE ULONG           _nx_tcp_2MSL_timer_rate;
         } \
     }
 
+/* The connection's interface has stopped its transmit queue (nx_api.h)
+   and the connection has data outstanding: new data waits, as for a closed
+   window.  The acknowledgment of the outstanding data runs the transmit
+   check again, so a connection with nothing outstanding is never held.  */
+#define NX_TCP_SOCKET_TX_QUEUE_STOPPED(s) \
+    (((s) -> nx_tcp_socket_tx_outstanding_bytes != 0) && \
+     ((s) -> nx_tcp_socket_connect_interface != NX_NULL) && \
+     ((s) -> nx_tcp_socket_connect_interface -> nx_interface_tx_queue_stopped != 0))
+
 #ifdef NX_ENABLE_TCP_SACK
 #define NX_TCP_SACK_RECOVERY_ACTIVE(s) \
     (((s) -> nx_tcp_socket_sack_permitted == NX_TRUE) && \
