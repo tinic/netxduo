@@ -87,6 +87,20 @@ NX_PACKET   *remove_packet;
 NX_PACKET   *packet_copy;
 UINT         queued_count;
 
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    /* Do not hand a marked but invalid template to fragmentation or a legacy
+       driver. TCP retains the queue entry and can repair ordinary segments. */
+    if ((packet_ptr -> nx_packet_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_GSO) &&
+        _nx_packet_tcp_gso_segments(packet_ptr) == 0)
+    {
+#ifndef NX_DISABLE_IP_INFO
+        ip_ptr -> nx_ip_send_packets_dropped++;
+#endif
+        _nx_packet_transmit_release(packet_ptr);
+        return;
+    }
+#endif
+
     /* Add debug information. */
     NX_PACKET_DEBUG(__FILE__, __LINE__, packet_ptr);
 
@@ -230,7 +244,8 @@ UINT         queued_count;
             {
 
                 /* Determine if fragmentation is needed before queue the packet on the ARP waiting queue.  */
-                if (packet_ptr -> nx_packet_length > packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_mtu_size)
+                if ((packet_ptr -> nx_packet_length > packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_mtu_size) &&
+                    _nx_packet_tcp_gso_segments(packet_ptr) == 0)
                 {
 
 #ifndef NX_DISABLE_FRAGMENTATION
@@ -483,7 +498,8 @@ UINT         queued_count;
     {
 
         /* Determine if fragmentation is needed.  */
-        if (packet_ptr -> nx_packet_length > packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_mtu_size)
+        if ((packet_ptr -> nx_packet_length > packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_mtu_size) &&
+                    _nx_packet_tcp_gso_segments(packet_ptr) == 0)
         {
 
 #ifndef NX_DISABLE_FRAGMENTATION

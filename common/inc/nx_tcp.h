@@ -771,6 +771,39 @@ ULONG mss;
     return(mss);
 }
 
+/* GSO queue entries can represent many wire segments. Preserve the existing
+   queue limit as a byte bound as well; explicit SO_SNDBUF must not multiply. */
+static inline ULONG _nx_tcp_socket_queue_byte_credit(NX_TCP_SOCKET *socket_ptr)
+{
+#if defined(NX_ENABLE_INTERFACE_CAPABILITY) && !defined(NX_DISABLE_TCP_GSO)
+ULONG mss, limit;
+
+    if (socket_ptr -> nx_tcp_socket_connect_interface != NX_NULL &&
+        (socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_GSO))
+    {
+        mss = _nx_tcp_socket_payload_mss(socket_ptr);
+        if (mss == 0 || mss > 65535UL)
+        {
+            return(0);
+        }
+        limit = socket_ptr -> nx_tcp_socket_transmit_queue_maximum;
+        if (limit <= 32768UL)
+        {
+            limit *= mss; /* Normal queue sizes need no divide on each ACK. */
+        }
+        else
+        {
+            limit = limit > 0x7FFFFFFFUL / mss ? 0x7FFFFFFFUL : limit * mss;
+        }
+        return(limit > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes ?
+               limit - socket_ptr -> nx_tcp_socket_tx_outstanding_bytes : 0);
+    }
+#else
+    NX_PARAMETER_NOT_USED(socket_ptr);
+#endif
+    return(0x7FFFFFFFUL);
+}
+
 /* The answer _nx_tcp_socket_mss_get() gives, without the IP mutex around it:
    before ESTABLISHED the configured MSS or NX_TCP_MSS_SIZE, after it
    _nx_tcp_socket_payload_mss().  The caller must already exclude every other

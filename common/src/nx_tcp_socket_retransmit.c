@@ -237,6 +237,10 @@ UINT           compute_checksum = 1;
     {
         compute_checksum = 0;
     }
+    if (_nx_packet_tcp_gso_mss(packet_ptr) != 0)
+    {
+        compute_checksum = 0;
+    }
 #endif /* NX_ENABLE_INTERFACE_CAPABILITY */
 
 #ifdef NX_IPSEC_ENABLE
@@ -308,6 +312,15 @@ UINT           compute_checksum = 1;
         packet_ptr -> nx_packet_identical_copy = NX_FALSE;
     }
 
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    if (_nx_packet_tcp_gso_mss(packet_ptr) != 0)
+    {
+        /* A changed repair range is a different physical datagram even if
+           the immutable TCP template header did not change. Reserve a new ID. */
+        packet_ptr -> nx_packet_identical_copy = NX_FALSE;
+    }
+#endif
+
 
 #ifndef NX_DISABLE_TCP_INFO
     /* Increment the TCP retransmit count.  */
@@ -362,11 +375,10 @@ UINT           compute_checksum = 1;
 #endif /* FEATURE_NX_IPV6 */
 }
 
-#ifdef NX_ENABLE_TCP_SACK
 /* Partial PRR credit or byte-granular SACK edges need a bounded DATA
    slice. Preserve the queued original, including chained buffers and driver
    ownership. A transient copy is owned/released by the normal TX driver. */
-static NX_PACKET *_nx_tcp_socket_sack_slice(NX_IP *ip_ptr, NX_PACKET *original,
+static NX_PACKET *_nx_tcp_socket_data_slice(NX_IP *ip_ptr, NX_PACKET *original,
                                            ULONG seq, ULONG begin, ULONG bytes)
 {
 NX_PACKET *copy, *source;
@@ -381,6 +393,28 @@ UCHAR saved_header[60];
     {
         return NX_NULL;
     }
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    if (_nx_packet_tcp_gso_mss(original) != 0 &&
+        original -> nx_packet_ip_version == NX_IP_VERSION_V4 &&
+        original -> nx_packet_address.nx_packet_interface_ptr != NX_NULL &&
+        (original -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_capability_flag &
+         NX_INTERFACE_CAPABILITY_TCP_GSO))
+    {
+        NX_TCP_GSO_INFO *info = (NX_TCP_GSO_INFO *)original -> nx_packet_data_start;
+        /* The original is TX_DONE and remains queued with immutable sequence,
+           length and DATA. The segmenter emits only this explicit range, so
+           repair progress never requires another packet from a full pool. */
+        if (bytes != 0 && bytes <= info -> mss &&
+            (INT)(seq - begin) >= 0 && seq - begin + bytes <= original -> nx_packet_length - header_length)
+        {
+            info -> flags = NX_TCP_GSO_REPAIR;
+            info -> offset = (USHORT)(seq - begin);
+            info -> length = (USHORT)bytes;
+            return original;
+        }
+        return NX_NULL;
+    }
+#endif
     memcpy(saved_header, original -> nx_packet_prepend_ptr, header_length);
     if (pool == NX_NULL)
     {
@@ -445,6 +479,20 @@ UCHAR saved_header[60];
     return copy;
 }
 
+/* SND.UNA excludes a pending FIN, which consumes no DATA credit. */
+static ULONG _nx_tcp_socket_data_unacked(NX_TCP_SOCKET *s)
+{
+ULONG unacked = s -> nx_tcp_socket_tx_sequence - s -> nx_tcp_socket_tx_outstanding_bytes;
+    if (s -> nx_tcp_socket_fin_acked == NX_FALSE &&
+        (s -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1 ||
+         s -> nx_tcp_socket_state == NX_TCP_CLOSING || s -> nx_tcp_socket_state == NX_TCP_LAST_ACK))
+    {
+        unacked--;
+    }
+    return(unacked);
+}
+
+#ifdef NX_ENABLE_TCP_SACK
 /* The IP mutex protects the TCP queue. Driver completion can restore its
    header concurrently, so inspect ownership and header under TX_DISABLE. */
 static VOID _nx_tcp_socket_sack_retransmit(NX_IP *ip_ptr, NX_TCP_SOCKET *s)
@@ -532,6 +580,17 @@ UINT kind;
                 send_end = send_begin + s -> nx_tcp_socket_prr_credit;
             }
         }
+        if (send_end - send_begin > _nx_tcp_socket_payload_mss(s))
+        {
+            if (kind == 4U)
+            {
+                send_begin = send_end - _nx_tcp_socket_payload_mss(s);
+            }
+            else
+            {
+                send_end = send_begin + _nx_tcp_socket_payload_mss(s);
+            }
+        }
         if ((INT)(s -> nx_tcp_socket_sack_high_ack - send_begin) > 0)
         {
             send_begin = s -> nx_tcp_socket_sack_high_ack;
@@ -550,9 +609,9 @@ UINT kind;
             return;
         }
         send_packet = packet;
-        if (send_begin != begin || send_end != end)
+        if (send_begin != begin || send_end != end || _nx_packet_tcp_gso_mss(packet) != 0)
         {
-            send_packet = _nx_tcp_socket_sack_slice(ip_ptr, packet, send_begin, begin, send_end - send_begin);
+            send_packet = _nx_tcp_socket_data_slice(ip_ptr, packet, send_begin, begin, send_end - send_begin);
             if (send_packet == NX_NULL)
             {
                 if (payload <= _nx_tcp_socket_payload_mss(s) &&
@@ -647,7 +706,7 @@ UINT       sack_index;
         queued_header = _nx_tcp_socket_queued_header(socket_ptr -> nx_tcp_socket_transmit_sent_head);
         resent_end = queued_header -> nx_tcp_sequence_number;
         NX_CHANGE_ULONG_ENDIAN(resent_end);
-        socket_ptr -> nx_tcp_socket_tx_rto_next = resent_end;
+        socket_ptr -> nx_tcp_socket_tx_rto_next = _nx_tcp_socket_data_unacked(socket_ptr);
 
         packet_ptr = socket_ptr -> nx_tcp_socket_transmit_sent_tail;
         queued_header = _nx_tcp_socket_queued_header(packet_ptr);
@@ -683,39 +742,46 @@ UINT       sack_index;
         /* Pickup the head of the transmit queue.  */
         packet_ptr =  socket_ptr -> nx_tcp_socket_transmit_sent_head;
 
-        if (packet_ptr)
+        if (packet_ptr && socket_ptr -> nx_tcp_socket_tx_outstanding_bytes != 0)
         {
-
-        /* Get one byte from send queue. */
-        /* Pick up the pointer to the head of the TCP packet.  */
-        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-        NX_TCP_HEADER *header_ptr =  (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
-
-            NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
-            NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_sequence_number);
-
-            /* Get sequence number and first byte. */
-            socket_ptr -> nx_tcp_socket_zero_window_probe_data = *(packet_ptr -> nx_packet_prepend_ptr + ((header_ptr -> nx_tcp_header_word_3 >> 28) << 2));
-
-            /* Now set zero window probe started. */
-            socket_ptr -> nx_tcp_socket_zero_window_probe_sequence = header_ptr -> nx_tcp_sequence_number;
-
-            /* The failure count belongs to the probe, not to each attempt at
-               it: clear it only when a new probe starts, as the two places in
-               nx_tcp_socket_send_internal.c that arm one do.  Clearing it
-               here on every attempt pinned it at one, so the retry limit that
-               _nx_tcp_fast_periodic_processing() tests against it during a
-               zero window could never be reached and a peer that stopped
-               answering its probes was never given up on.  A peer that does
-               answer still clears it (nx_tcp_socket_state_ack_check.c).  */
+        NX_TCP_HEADER *header_ptr = _nx_tcp_socket_queued_header(packet_ptr);
+        NX_PACKET *source = packet_ptr;
+        UCHAR *data = (UCHAR *)header_ptr;
+        ULONG sequence = header_ptr -> nx_tcp_sequence_number;
+        ULONG word = header_ptr -> nx_tcp_header_word_3;
+        ULONG offset, bytes;
+            NX_CHANGE_ULONG_ENDIAN(sequence);
+            NX_CHANGE_ULONG_ENDIAN(word);
+            offset = (word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG) +
+                     _nx_tcp_socket_data_unacked(socket_ptr) - sequence;
+            /* An acknowledged prefix remains in an immutable aggregate.
+               Probe its first unacknowledged byte, including chained DATA. */
+            for (;;)
+            {
+                bytes = (ULONG)(source -> nx_packet_append_ptr - data);
+                if (offset < bytes)
+                {
+                    break;
+                }
+                offset -= bytes;
+#ifndef NX_DISABLE_PACKET_CHAIN
+                source = source -> nx_packet_next;
+#else
+                source = NX_NULL;
+#endif
+                if (source == NX_NULL)
+                {
+                    return;
+                }
+                data = source -> nx_packet_prepend_ptr;
+            }
+            socket_ptr -> nx_tcp_socket_zero_window_probe_data = data[offset];
+            socket_ptr -> nx_tcp_socket_zero_window_probe_sequence = _nx_tcp_socket_data_unacked(socket_ptr);
             if (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_FALSE)
             {
                 socket_ptr -> nx_tcp_socket_zero_window_probe_has_data = NX_TRUE;
                 socket_ptr -> nx_tcp_socket_zero_window_probe_failure = 0;
             }
-
-            NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_sequence_number);
-            NX_CHANGE_ULONG_ENDIAN(header_ptr -> nx_tcp_header_word_3);
         }
         else if (socket_ptr -> nx_tcp_socket_zero_window_probe_has_data == NX_FALSE)
         {
@@ -1044,11 +1110,17 @@ UINT       sack_index;
     {
 
     NX_PACKET     *next_ptr;
-#ifdef NX_ENABLE_TCP_SACK
+    NX_PACKET     *repair;
     ULONG          queued_word;
     ULONG          queued_begin;
     ULONG          queued_end;
+    ULONG          send_begin;
+    ULONG          send_end;
+    ULONG          send_bytes;
+    ULONG          wire_mss;
+#ifdef NX_ENABLE_TCP_SACK
     UINT           peer_holds_it = NX_FALSE;
+#endif
 
         /* Where this packet sits in the sequence space.  A queued packet
            that the driver has finished with holds its header at the
@@ -1064,6 +1136,7 @@ UINT       sack_index;
         queued_end = queued_begin + (packet_ptr -> nx_packet_length -
                                      ((queued_word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG)));
 
+#ifdef NX_ENABLE_TCP_SACK
         /* Resent once in this recovery already (HighRxt): the same blocks
            are no reason to resend it; a timeout, which drops them, is.  */
         if ((socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE) &&
@@ -1135,6 +1208,70 @@ UINT       sack_index;
             }
         }
 #endif /* NX_ENABLE_TCP_SACK */
+
+        /* A host buffer may span many wire segments, or retain an ACKed
+           prefix. Repairs remain ordinary MSS-sized packets, never GSO. */
+        wire_mss = _nx_tcp_socket_payload_mss(socket_ptr);
+        send_begin = _nx_tcp_socket_data_unacked(socket_ptr);
+        if ((INT)(queued_begin - send_begin) > 0)
+        {
+            send_begin = queued_begin;
+        }
+        if (queued_end - queued_begin > wire_mss || send_begin != queued_begin ||
+            _nx_packet_tcp_gso_mss(packet_ptr) != 0)
+        {
+            if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE &&
+                (INT)(socket_ptr -> nx_tcp_socket_tx_rto_next - send_begin) > 0)
+            {
+                send_begin = socket_ptr -> nx_tcp_socket_tx_rto_next;
+            }
+            send_bytes = available < wire_mss ? available : wire_mss;
+            if ((INT)(queued_end - send_begin) <= 0 || send_bytes == 0)
+            {
+                break;
+            }
+            if (send_bytes > queued_end - send_begin)
+            {
+                send_bytes = queued_end - send_begin;
+            }
+            send_end = send_begin + send_bytes;
+            repair = _nx_tcp_socket_data_slice(ip_ptr, packet_ptr, send_begin, queued_begin, send_bytes);
+            if (repair == NX_NULL)
+            {
+                if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE &&
+                    queued_end - queued_begin <= wire_mss &&
+                    queued_end - queued_begin <= available && send_end == queued_end)
+                {
+                    /* With no spare buffer, an ordinary one-MSS original can
+                       safely repeat its ACKed prefix. Charge all wire bytes. */
+                    repair = packet_ptr;
+                    send_bytes = queued_end - queued_begin;
+                }
+                else
+                {
+                    break; /* No ownership or recovery credit consumed. */
+                }
+            }
+            available -= send_bytes;
+            if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_FALSE)
+            {
+                socket_ptr -> nx_tcp_socket_tx_rto_next = send_end;
+            }
+#ifdef NX_ENABLE_TCP_SACK
+            socket_ptr -> nx_tcp_socket_tx_high_rxt = send_end;
+#endif
+            _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
+            if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE || send_end < queued_end)
+            {
+                break;
+            }
+            packet_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+            if (packet_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
+            {
+                break;
+            }
+            continue;
+        }
 
         if (packet_ptr -> nx_packet_length > (available + NX_TCP_SEGMENT_HEADER_LENGTH))
         {
@@ -1249,6 +1386,10 @@ ULONG          in_flight;
 ULONG          sequence;
 ULONG          header;
 ULONG          length;
+ULONG          begin;
+ULONG          packet_end;
+ULONG          wire_mss;
+NX_PACKET     *repair;
 #ifdef NX_ENABLE_TCP_SACK
 UINT           sack_index;
 #endif /* NX_ENABLE_TCP_SACK */
@@ -1263,9 +1404,7 @@ UINT           sack_index;
         socket_ptr -> nx_tcp_socket_tx_rto_next = socket_ptr -> nx_tcp_socket_tx_rto_end;
         return;
     }
-    header_ptr = _nx_tcp_socket_queued_header(socket_ptr -> nx_tcp_socket_transmit_sent_head);
-    unacked = header_ptr -> nx_tcp_sequence_number;
-    NX_CHANGE_ULONG_ENDIAN(unacked);
+    unacked = _nx_tcp_socket_data_unacked(socket_ptr);
     if ((INT)(unacked - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
     {
         socket_ptr -> nx_tcp_socket_tx_rto_next = unacked;
@@ -1317,12 +1456,31 @@ UINT           sack_index;
         length = packet_ptr -> nx_packet_length - ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
         next_ptr = packet_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
 
-        if ((INT)(sequence - socket_ptr -> nx_tcp_socket_tx_rto_next) >= 0)
+        begin = sequence;
+        packet_end = sequence + length;
+        if ((INT)(sequence + length - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
         {
-            if (((INT)(sequence - socket_ptr -> nx_tcp_socket_tx_rto_end) >= 0) ||
-                (length == 0) || (length > available))
+            if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_next - sequence) > 0)
+            {
+                length -= socket_ptr -> nx_tcp_socket_tx_rto_next - sequence;
+                sequence = socket_ptr -> nx_tcp_socket_tx_rto_next;
+            }
+            if ((INT)(socket_ptr -> nx_tcp_socket_tx_rto_end - sequence) <= 0 || available == 0)
             {
                 break;
+            }
+            if (length > socket_ptr -> nx_tcp_socket_tx_rto_end - sequence)
+            {
+                length = socket_ptr -> nx_tcp_socket_tx_rto_end - sequence;
+            }
+            wire_mss = _nx_tcp_socket_payload_mss(socket_ptr);
+            if (length > wire_mss)
+            {
+                length = wire_mss;
+            }
+            if (length > available)
+            {
+                length = available;
             }
 
 #ifdef NX_ENABLE_TCP_SACK
@@ -1349,9 +1507,41 @@ UINT           sack_index;
 #ifdef NX_ENABLE_TCP_RTT_ESTIMATOR
             socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
 #endif /* NX_ENABLE_TCP_RTT_ESTIMATOR */
+            repair = packet_ptr;
+            if (sequence != begin || length != packet_ptr -> nx_packet_length -
+                ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG)) ||
+                _nx_packet_tcp_gso_mss(packet_ptr) != 0)
+            {
+                repair = _nx_tcp_socket_data_slice(ip_ptr, packet_ptr, sequence, begin, length);
+                if (repair == NX_NULL)
+                {
+                    ULONG whole = packet_ptr -> nx_packet_length -
+                                  ((header >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG));
+                    if (whole <= wire_mss && whole <= available)
+                    {
+                        repair = packet_ptr;
+                        sequence = begin;
+                        length = whole;
+                    }
+                    else
+                    {
+                        return;
+                    }
+                }
+            }
             socket_ptr -> nx_tcp_socket_tx_rto_next = sequence + length;
             available -= length;
-            _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, packet_ptr);
+            _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
+            if ((INT)(packet_end - socket_ptr -> nx_tcp_socket_tx_rto_next) > 0)
+            {
+                if (packet_ptr -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE && available != 0)
+                {
+                    continue; /* More eligible DATA in this same immutable buffer. */
+                }
+                /* A pending repair or exhausted credit must leave the cursor
+                   here. Advancing to the next entry would skip unsent DATA. */
+                return;
+            }
         }
         if (next_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED)
         {
@@ -1430,6 +1620,9 @@ UINT           sack_index;
 VOID  _nx_tcp_socket_retransmit_tail(NX_IP *ip_ptr, NX_TCP_SOCKET *socket_ptr)
 {
 NX_PACKET *packet_ptr;
+NX_PACKET *repair;
+NX_TCP_HEADER *header;
+ULONG begin, end, word, length, first, unacked;
 
 
     packet_ptr = socket_ptr -> nx_tcp_socket_transmit_sent_tail;
@@ -1448,7 +1641,41 @@ NX_PACKET *packet_ptr;
        does not say which copy it answers.  */
     socket_ptr -> nx_tcp_socket_rtt_timing = NX_FALSE;
 
-    _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, packet_ptr);
+    header = (NX_TCP_HEADER *)packet_ptr -> nx_packet_prepend_ptr;
+    begin = header -> nx_tcp_sequence_number;
+    word = header -> nx_tcp_header_word_3;
+    NX_CHANGE_ULONG_ENDIAN(begin);
+    NX_CHANGE_ULONG_ENDIAN(word);
+    length = packet_ptr -> nx_packet_length - (word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
+    end = begin + length;
+    first = length > _nx_tcp_socket_payload_mss(socket_ptr) ?
+            end - _nx_tcp_socket_payload_mss(socket_ptr) : begin;
+    unacked = _nx_tcp_socket_data_unacked(socket_ptr);
+    if ((INT)(unacked - first) > 0)
+    {
+        first = unacked;
+    }
+    repair = packet_ptr;
+    if (first != begin || _nx_packet_tcp_gso_mss(packet_ptr) != 0)
+    {
+        if ((INT)(end - first) <= 0)
+        {
+            return;
+        }
+        repair = _nx_tcp_socket_data_slice(ip_ptr, packet_ptr, first, begin, end - first);
+        if (repair == NX_NULL)
+        {
+            if (length <= _nx_tcp_socket_payload_mss(socket_ptr))
+            {
+                repair = packet_ptr; /* One complete wire segment is a valid probe. */
+            }
+            else
+            {
+                return;
+            }
+        }
+    }
+    _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
 }
 
 #endif /* NX_ENABLE_TCP_LOSS_PROBE && NX_ENABLE_TCP_RTT_ESTIMATOR */

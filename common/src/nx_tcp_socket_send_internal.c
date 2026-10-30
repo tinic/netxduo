@@ -488,6 +488,10 @@ ULONG           tx_window_current;
 ULONG           remaining_bytes;
 ULONG          *source_ip = NX_NULL, *dest_ip = NX_NULL;
 ULONG           send_mss;
+ULONG           queue_credit;
+#if defined(NX_ENABLE_INTERFACE_CAPABILITY) && !defined(NX_DISABLE_IPV4)
+ULONG           gso_mss;
+#endif
 NX_PACKET      *send_packet = packet_ptr;
 NX_PACKET      *current_packet;
 UCHAR          *current_ptr;
@@ -707,6 +711,46 @@ UINT            compute_checksum = 1;
             {
                 tx_window_current = socket_ptr -> nx_tcp_socket_prr_credit;
             }
+        }
+#endif
+
+        queue_credit = _nx_tcp_socket_queue_byte_credit(socket_ptr);
+        if (tx_window_current > queue_credit)
+        {
+            tx_window_current = queue_credit;
+        }
+
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+        /* Only a whole, explicitly marked aggregate may bypass the MSS
+           carve. Insufficient credit uses today's ordinary segmentation. */
+        send_mss = _nx_tcp_socket_payload_mss(socket_ptr);
+#ifndef NX_DISABLE_IPV4
+        gso_mss = _nx_packet_tcp_gso_mss(packet_ptr);
+        if (gso_mss != 0 && gso_mss == send_mss &&
+            ((NX_TCP_GSO_INFO *)packet_ptr -> nx_packet_data_start) -> flags == 0 &&
+            ((NX_TCP_GSO_INFO *)packet_ptr -> nx_packet_data_start) -> offset == 0 &&
+            ((NX_TCP_GSO_INFO *)packet_ptr -> nx_packet_data_start) -> length == 0 &&
+            socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V4 &&
+            socket_ptr -> nx_tcp_socket_connect_interface != NX_NULL &&
+            (socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_GSO) &&
+            socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v4 !=
+                socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_ip_address &&
+            (socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_address.v4 >> 24) != 127 &&
+            gso_mss + sizeof(NX_IPV4_HEADER) + NX_TCP_SEGMENT_HEADER_LENGTH <=
+                socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_ip_mtu_size &&
+            (ULONG)(packet_ptr -> nx_packet_prepend_ptr - packet_ptr -> nx_packet_data_start) >= data_offset + sizeof(NX_TCP_GSO_INFO) &&
+            packet_ptr -> nx_packet_length <= 32768UL && packet_ptr -> nx_packet_length <= tx_window_current
+#ifdef NX_IPSEC_ENABLE
+            && socket_ptr -> nx_tcp_socket_egress_sa == NX_NULL
+#endif
+           )
+        {
+            send_mss = packet_ptr -> nx_packet_length;
+        }
+        else
+#endif /* NX_DISABLE_IPV4 */
+        {
+            packet_ptr -> nx_packet_interface_capability_flag &= ~(ULONG)NX_INTERFACE_CAPABILITY_TCP_GSO;
         }
 #endif
 
@@ -1022,6 +1066,11 @@ UINT            compute_checksum = 1;
                 {
                     current_credit = socket_ptr -> nx_tcp_socket_prr_credit;
                 }
+                queue_credit = _nx_tcp_socket_queue_byte_credit(socket_ptr);
+                if (current_credit > queue_credit)
+                {
+                    current_credit = queue_credit;
+                }
                 if (send_packet -> nx_packet_length > current_credit)
                 {
                     _nx_packet_release(send_packet);
@@ -1136,6 +1185,10 @@ UINT            compute_checksum = 1;
             if (socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_capability_flag & NX_INTERFACE_CAPABILITY_TCP_TX_CHECKSUM)
             {
                 compute_checksum = 0;
+            }
+            if (_nx_packet_tcp_gso_mss(send_packet) != 0)
+            {
+                compute_checksum = 0; /* Segmenter computes each physical TCP checksum. */
             }
 #endif /* NX_ENABLE_INTERFACE_CAPABILITY */
 

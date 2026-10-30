@@ -86,6 +86,13 @@
 #define NX_ENABLE_INTERFACE_CAPABILITY
 */
 
+/* Define to omit software TCP segmentation without disabling other interface
+   capabilities or changing the packet/socket layouts. Writes use ordinary
+   MSS segmentation. */
+/*
+#define NX_DISABLE_TCP_GSO
+*/
+
 
 /* Configuration options for IP */
 

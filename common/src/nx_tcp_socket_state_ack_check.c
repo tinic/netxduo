@@ -73,6 +73,49 @@
 /*    _nx_tcp_socket_packet_process         Process TCP packet for socket */
 /*                                                                        */
 /**************************************************************************/
+#ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
+/* RFC 5827 counts wire segments, not host queue entries. This bounded walk
+   is used only for fewer than four buffers and stops at four wire segments. */
+static UINT _nx_tcp_socket_early_retransmit_segments(NX_TCP_SOCKET *socket_ptr, ULONG unacked)
+{
+TX_INTERRUPT_SAVE_AREA
+NX_PACKET *packet = socket_ptr -> nx_tcp_socket_transmit_sent_head;
+NX_TCP_HEADER *header;
+ULONG begin, word, payload, mss = _nx_tcp_socket_payload_mss(socket_ptr);
+UINT segments = 0;
+
+    if (mss == 0)
+    {
+        return(NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1);
+    }
+    while (packet != NX_NULL && packet != (NX_PACKET *)NX_PACKET_ENQUEUED &&
+           segments < NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1)
+    {
+        TX_DISABLE
+        header = packet -> nx_packet_queue_next == (NX_PACKET *)NX_DRIVER_TX_DONE ?
+                 (NX_TCP_HEADER *)packet -> nx_packet_prepend_ptr :
+                 (NX_TCP_HEADER *)(packet -> nx_packet_ip_header + packet -> nx_packet_ip_header_length);
+        begin = header -> nx_tcp_sequence_number;
+        word = header -> nx_tcp_header_word_3;
+        NX_CHANGE_ULONG_ENDIAN(begin);
+        NX_CHANGE_ULONG_ENDIAN(word);
+        payload = packet -> nx_packet_length - (ULONG)((UCHAR *)header - packet -> nx_packet_prepend_ptr) -
+                  (word >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
+        TX_RESTORE
+        if ((INT)(begin + payload - unacked) > 0)
+        {
+            segments += (UINT)((payload + mss - 1) / mss);
+            if ((INT)(unacked - begin) > 0)
+            {
+                segments -= (UINT)((unacked - begin) / mss);
+            }
+        }
+        packet = packet -> nx_packet_union_next.nx_packet_tcp_queue_next;
+    }
+    return(segments);
+}
+#endif
+
 UINT  _nx_tcp_socket_state_ack_check(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *tcp_header_ptr)
 {
 
@@ -94,7 +137,6 @@ ULONG          tcp_payload_length;
 #if defined(NX_ENABLE_TCP_RTT_ESTIMATOR) && defined(NX_ENABLE_TCP_TIMESTAMP)
 ULONG          ts_now;
 #endif
-UINT           wrapped_flag = NX_FALSE;
 UINT           dupack_threshold;
 #ifdef NX_ENABLE_TCP_SACK
 UINT           sack_recovery_index;
@@ -130,6 +172,20 @@ ULONG          sack_right;
              (socket_ptr -> nx_tcp_socket_state == NX_TCP_LAST_ACK)))
         {
             starting_tx_sequence--;
+        }
+
+        /* Cumulative DATA progress is independent of packet retirement. A
+           queued buffer can span several wire segments and remains immutable
+           until its last byte is acknowledged and the driver returns it. */
+        acked_bytes = 0;
+        if ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) > 0 &&
+            (INT)(ending_tx_sequence - tcp_header_ptr -> nx_tcp_acknowledgment_number) >= 0)
+        {
+            acked_bytes = tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence;
+            if (acked_bytes > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes)
+            {
+                acked_bytes = socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
+            }
         }
 
 #ifdef NX_ENABLE_TCP_SACK
@@ -341,11 +397,14 @@ ULONG          sack_right;
                     dupack_threshold = NX_TCP_FAST_RETRANSMIT_THRESHOLD;
 
 #ifdef NX_ENABLE_TCP_EARLY_RETRANSMIT
-                    if ((socket_ptr -> nx_tcp_socket_transmit_sent_count <
-                         (ULONG)NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1) &&
-                        (socket_ptr -> nx_tcp_socket_transmit_sent_count > 1))
+                    if (socket_ptr -> nx_tcp_socket_transmit_sent_count <
+                        (ULONG)NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1)
                     {
-                        dupack_threshold = (UINT)socket_ptr -> nx_tcp_socket_transmit_sent_count - 1;
+                    UINT wire_segments = _nx_tcp_socket_early_retransmit_segments(socket_ptr, starting_tx_sequence);
+                        if (wire_segments > 1 && wire_segments < NX_TCP_FAST_RETRANSMIT_THRESHOLD + 1)
+                        {
+                            dupack_threshold = wire_segments - 1;
+                        }
                     }
 #endif /* NX_ENABLE_TCP_EARLY_RETRANSMIT */
 
@@ -433,20 +492,6 @@ ULONG          sack_right;
 #endif /* NX_ENABLE_TCP_SACK */
                     }
                 }
-
-                /* Determine if the transmit queue has wrapped.  */
-                if (ending_tx_sequence > starting_tx_sequence)
-                {
-
-                    /* Clear the wrapped flag.  */
-                    wrapped_flag =  NX_FALSE;
-                }
-                else
-                {
-
-                    /* Set the wrapped flag.  */
-                    wrapped_flag =  NX_TRUE;
-                }
             }
 
             /* Initialize the packet release count.  */
@@ -457,6 +502,9 @@ ULONG          sack_right;
             previous_ptr =  NX_NULL;
             while (search_ptr)
             {
+
+                /* Driver completion can restore prepend/length concurrently. */
+                TX_DISABLE
 
                 /* Determine if the packet has been transmitted.  */
                 /*lint -e{923} suppress cast of ULONG to pointer.  */
@@ -493,73 +541,15 @@ ULONG          sack_right;
                 /* Calculate the ending packet sequence.  */
                 ending_packet_sequence =  search_sequence + tcp_payload_length;
 
-                /* Determine if the transmit window is wrapped.  */
-                if (wrapped_flag == NX_FALSE)
+                TX_RESTORE
+
+                /* Only a valid cumulative ACK covering the entire buffer can
+                   retire it. Signed differences also handle sequence wrap. */
+                if ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) < 0 ||
+                    (INT)(ending_tx_sequence - tcp_header_ptr -> nx_tcp_acknowledgment_number) < 0 ||
+                    (INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - ending_packet_sequence) < 0)
                 {
-
-                    /* No, the transmit window is not wrapped. Perform a simple compare to determine if the ACK
-                       covers the current search packet.  */
-
-                    /* Is this ACK before the current search packet or after the transmit sequence?  */
-                    if ((tcp_header_ptr -> nx_tcp_acknowledgment_number < ending_packet_sequence) ||
-                        (tcp_header_ptr -> nx_tcp_acknowledgment_number > ending_tx_sequence))
-                    {
-
-                        /* The ACK is less than the current packet, just get out of the loop!  */
-                        break;
-                    }
-                }
-                else
-                {
-
-                    /* Yes, the transmit window has wrapped.  We need to now check for all the wrap conditions to
-                       determine if ACK covers the current search packet.  */
-
-                    /* Is the search packet's ending sequence number in the wrapped part of the window.  */
-                    if (ending_packet_sequence < starting_tx_sequence)
-                    {
-
-                        /* The search packet ends in the wrapped portion of the window.  Determine if the ACK
-                           sequence in the wrapped portion as well.  */
-                        if (tcp_header_ptr -> nx_tcp_acknowledgment_number < starting_tx_sequence)
-                        {
-
-                            /* Yes, the ACK sequence is in the wrapped portion as well. Simply compare the ACK
-                               sequence with the search packet sequence.  */
-                            if (tcp_header_ptr -> nx_tcp_acknowledgment_number < ending_packet_sequence)
-                            {
-
-                                /* ACK does not cover the search packet. Break out of the loop.  */
-                                break;
-                            }
-                        }
-                        else
-                        {
-
-                            /* The ACK sequence is in the non-wrapped portion of the window and the ending sequence
-                               of the search packet is in the wrapped portion - so the ACK doesn't cover the search
-                               packet.  Break out of the loop!  */
-                            break;
-                        }
-                    }
-                    else
-                    {
-
-                        /* The search packet is in the non-wrapped portion of the window.  Determine if the ACK
-                           sequence is in the non-wrapped portion as well.  */
-                        if (tcp_header_ptr -> nx_tcp_acknowledgment_number >= starting_tx_sequence)
-                        {
-
-                            /* Yes, the ACK sequence is in the non-wrapped portion of the window. Simply compare the ACK
-                               sequence with the search packet sequence.  */
-                            if (tcp_header_ptr -> nx_tcp_acknowledgment_number < ending_packet_sequence)
-                            {
-
-                                /* ACK does not cover the search packet. Break out of the loop.  */
-                                break;
-                            }
-                        }
-                    }
+                    break;
                 }
 
                 /* At this point we know that the ACK received covers the search packet.  */
@@ -610,7 +600,7 @@ ULONG          sack_right;
                 _nx_tcp_packet_send_ack(socket_ptr, ending_tx_sequence);
             }
         }
-        else
+        if (acked_bytes != 0)
         {
 
             /* Congestion window adjustment during slow start and congestion avoidance is executed
@@ -648,16 +638,6 @@ ULONG          sack_right;
 
             /* Set previous cumulative acknowlesgement. */
             socket_ptr -> nx_tcp_socket_previous_highest_ack = starting_tx_sequence;
-
-            /* Calculate ACKed length. */
-            acked_bytes = tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence;
-
-            /* An ACK can cover the FIN as well as the remaining DATA.  The
-               FIN sequence byte must not earn DATA congestion credit. */
-            if (acked_bytes > socket_ptr -> nx_tcp_socket_tx_outstanding_bytes)
-            {
-                acked_bytes = socket_ptr -> nx_tcp_socket_tx_outstanding_bytes;
-            }
 
             if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE)
             {
@@ -739,6 +719,16 @@ ULONG          sack_right;
             }
         }
 
+        /* Retiring storage must not subtract these bytes again. Restart the
+           progress clock even when the ACK is inside the queued head. */
+        if (acked_bytes != 0)
+        {
+            socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -= acked_bytes;
+            socket_ptr -> nx_tcp_socket_timeout = socket_ptr -> nx_tcp_socket_timeout_rate;
+            socket_ptr -> nx_tcp_socket_timeout_retries = 0;
+            socket_ptr -> nx_tcp_socket_stall_ticks = 0;
+        }
+
         /* Update the window only when
          * 1. SND.UNA < SEG.ACK =< SND.NXT or
          * 2. SND.WL1 < SEG.SEQ or
@@ -779,184 +769,139 @@ ULONG          sack_right;
             socket_ptr -> nx_tcp_socket_zero_window_probe_failure = 0;
         }
 
-        if (!packet_release_count)
+        if (!packet_release_count && acked_bytes == 0)
         {
-#ifdef NX_ENABLE_TCP_SACK
-            /* A partial-byte cumulative ACK can deliver new bytes without
-               releasing a full queue packet. It still clocks SACK recovery. */
-            if (NX_TCP_SACK_RECOVERY_ACTIVE(socket_ptr) &&
-                socket_ptr -> nx_tcp_socket_sack_delivered_data != 0 &&
-                (INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - starting_tx_sequence) > 0)
-            {
-                _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_FALSE);
-            }
-#endif
-            /* Done, return to caller. */
             return(NX_TRUE);
         }
 
-        /* Once we get this line, packet_release_count is non-zero,
-           which indicates the transmit_sent_count value will be reduced. */
-
+        if (packet_release_count != 0)
+        {
 #ifdef NX_ENABLE_TCP_QUEUE_DEPTH_UPDATE_NOTIFY
 
-        /* Is NetX Duo set up with a transmit socket queue depth update? */
-        if (socket_ptr -> nx_tcp_socket_queue_depth_notify)
-        {
-
-            /* Yes it is. Verify that the packets on the transmit queue exceed the max queue depth, and that
-               the packets to release bring that queue size below the max queue depth. */
-            if ((socket_ptr -> nx_tcp_socket_transmit_sent_count >= socket_ptr -> nx_tcp_socket_transmit_queue_maximum) &&
-                ((socket_ptr -> nx_tcp_socket_transmit_sent_count - packet_release_count) < socket_ptr -> nx_tcp_socket_transmit_queue_maximum))
+            /* Is NetX Duo set up with a transmit socket queue depth update? */
+            if (socket_ptr -> nx_tcp_socket_queue_depth_notify)
             {
 
-                /* Yes to both; Call the queue depth notify callback. */
-                (socket_ptr -> nx_tcp_socket_queue_depth_notify)(socket_ptr);
+                /* Yes it is. Verify that the packets on the transmit queue exceed the max queue depth, and that
+                   the packets to release bring that queue size below the max queue depth. */
+                if ((socket_ptr -> nx_tcp_socket_transmit_sent_count >= socket_ptr -> nx_tcp_socket_transmit_queue_maximum) &&
+                    ((socket_ptr -> nx_tcp_socket_transmit_sent_count - packet_release_count) < socket_ptr -> nx_tcp_socket_transmit_queue_maximum))
+                {
+
+                    /* Yes to both; Call the queue depth notify callback. */
+                    (socket_ptr -> nx_tcp_socket_queue_depth_notify)(socket_ptr);
+                }
             }
-        }
 #endif
 
-        /* Save the front of the of the transmit queue.  */
-        search_ptr =  socket_ptr -> nx_tcp_socket_transmit_sent_head;
+            /* Save the front of the of the transmit queue.  */
+            search_ptr =  socket_ptr -> nx_tcp_socket_transmit_sent_head;
 
-        /* Okay so now the packet after the previous pointer needs to be the front of the
-           queue.  */
-        if (previous_ptr != socket_ptr -> nx_tcp_socket_transmit_sent_tail)
-        {
-
-            /* Just update the head pointer.  */
-            socket_ptr -> nx_tcp_socket_transmit_sent_head  =  previous_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
-
-            /* And decrease the transmit queue count accordingly.  */
-            socket_ptr -> nx_tcp_socket_transmit_sent_count =   socket_ptr -> nx_tcp_socket_transmit_sent_count - packet_release_count;
-
-            /* Setup a new transmit timeout.  */
-            socket_ptr -> nx_tcp_socket_timeout =          socket_ptr -> nx_tcp_socket_timeout_rate;
-            socket_ptr -> nx_tcp_socket_timeout_retries =  0;
-
-            /* This acknowledgment released packets, so the connection moved.
-               The stall clock restarts with the retry count, or a transfer
-               that is making progress one segment at a time would accumulate
-               a deadline it never deserved: the timer is armed again below and
-               the fast timer would go on adding to it.  */
-            socket_ptr -> nx_tcp_socket_stall_ticks =      0;
-        }
-        else
-        {
-
-            /* The transmit list is now cleared, just set the head and tail pointers to
-               NULL.  */
-            socket_ptr -> nx_tcp_socket_transmit_sent_head  =  NX_NULL;
-            socket_ptr -> nx_tcp_socket_transmit_sent_tail  =  NX_NULL;
-
-            /* Clear the transmit queue count.  */
-            socket_ptr -> nx_tcp_socket_transmit_sent_count =  0;
-
-            /* Determine if a disconnect FIN has been sent from this side of the connection.  */
-            if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
-                (socket_ptr -> nx_tcp_socket_state == NX_TCP_CLOSING)    ||
-                (socket_ptr -> nx_tcp_socket_state == NX_TCP_LAST_ACK))
+            /* Okay so now the packet after the previous pointer needs to be the front of the
+               queue.  */
+            if (previous_ptr != socket_ptr -> nx_tcp_socket_transmit_sent_tail)
             {
 
-                /* Yes, setup timeout such that the FIN can be retried if it is lost.  */
+                /* Just update the head pointer.  */
+                socket_ptr -> nx_tcp_socket_transmit_sent_head  =  previous_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+
+                /* And decrease the transmit queue count accordingly.  */
+                socket_ptr -> nx_tcp_socket_transmit_sent_count =   socket_ptr -> nx_tcp_socket_transmit_sent_count - packet_release_count;
+
+                /* Setup a new transmit timeout.  */
                 socket_ptr -> nx_tcp_socket_timeout =          socket_ptr -> nx_tcp_socket_timeout_rate;
                 socket_ptr -> nx_tcp_socket_timeout_retries =  0;
-            }
-            else if (socket_ptr -> nx_tcp_socket_tx_window_advertised != 0)
-            {
 
-                /* Otherwise, a FIN has not been sent, simply clear the transmit timeout.  */
-                socket_ptr -> nx_tcp_socket_timeout =  0;
-            }
-        }
-
-        /* Now walk through the packets to release and set them
-           free.  */
-        while (packet_release_count--)
-        {
-
-            /* Use the previous pointer as the release pointer.  */
-            previous_ptr =  search_ptr;
-
-            /* Move to the next packet in the queue before we clip the
-               next pointer.  */
-            search_ptr =  search_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
-
-#ifdef NX_ENABLE_TCP_SACK
-            if (socket_ptr -> nx_tcp_socket_sack_cursor == previous_ptr)
-            {
-                socket_ptr -> nx_tcp_socket_sack_cursor =
-                    search_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED ? NX_NULL : search_ptr;
-            }
-#endif
-
-            /* Disable interrupts temporarily.  */
-            TX_DISABLE
-
-            /* Set the packet to allocated to indicate it is no longer part of the TCP queue.  */
-            /*lint -e{923} suppress cast of ULONG to pointer.  */
-            previous_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next =  ((NX_PACKET *)NX_PACKET_ALLOCATED);
-
-            /* Has the packet been transmitted? This is only pertinent if a retransmit of
-               the packet occurred prior to receiving the ACK. If so, the packet could be
-               in an ARP queue or in a driver queue waiting for transmission so we can't
-               release it directly at this point.  The driver or the ARP processing will
-               release it when finished.  */
-            /*lint -e{923} suppress cast of ULONG to pointer.  */
-            if (previous_ptr -> nx_packet_queue_next ==  ((NX_PACKET *)NX_DRIVER_TX_DONE))
-            {
-
-                /* Restore interrupts.  */
-                TX_RESTORE
-
-                /* Yes, the driver has already released the packet.  */
-
-                /* Open up the transmit window. */
-                /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-                search_header_ptr = (NX_TCP_HEADER *)previous_ptr -> nx_packet_prepend_ptr;
-
-                temp = search_header_ptr -> nx_tcp_header_word_3;
-                NX_CHANGE_ULONG_ENDIAN(temp);
-                header_length = (temp >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
-                if (socket_ptr -> nx_tcp_socket_tx_outstanding_bytes > (previous_ptr -> nx_packet_length - header_length))
-                {
-                    socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -= previous_ptr -> nx_packet_length - header_length;
-                }
-                else
-                {
-                    socket_ptr -> nx_tcp_socket_tx_outstanding_bytes = 0;
-                }
-                /* Release the packet.  */
-                _nx_packet_release(previous_ptr);
+                /* This acknowledgment released packets, so the connection moved.
+                   The stall clock restarts with the retry count, or a transfer
+                   that is making progress one segment at a time would accumulate
+                   a deadline it never deserved: the timer is armed again below and
+                   the fast timer would go on adding to it.  */
+                socket_ptr -> nx_tcp_socket_stall_ticks =      0;
             }
             else
             {
 
-                /* No, the driver has not released the packet.  */
-                /* Open up the transmit window. */
-                search_header_ptr =  (NX_TCP_HEADER *)(previous_ptr -> nx_packet_ip_header +
-                                                       previous_ptr -> nx_packet_ip_header_length);
+                /* The transmit list is now cleared, just set the head and tail pointers to
+                   NULL.  */
+                socket_ptr -> nx_tcp_socket_transmit_sent_head  =  NX_NULL;
+                socket_ptr -> nx_tcp_socket_transmit_sent_tail  =  NX_NULL;
 
-                temp = search_header_ptr -> nx_tcp_header_word_3;
-                NX_CHANGE_ULONG_ENDIAN(temp);
-                header_length = (temp >> NX_TCP_HEADER_SHIFT) * (ULONG)sizeof(ULONG);
-                tcp_payload_length = (previous_ptr -> nx_packet_length -
-                                      (header_length +
-                                       (ULONG)((ALIGN_TYPE)search_header_ptr -
-                                               (ALIGN_TYPE)(previous_ptr -> nx_packet_prepend_ptr))));
-                if (socket_ptr -> nx_tcp_socket_tx_outstanding_bytes > tcp_payload_length)
+                /* Clear the transmit queue count.  */
+                socket_ptr -> nx_tcp_socket_transmit_sent_count =  0;
+
+                /* Determine if a disconnect FIN has been sent from this side of the connection.  */
+                if ((socket_ptr -> nx_tcp_socket_state == NX_TCP_FIN_WAIT_1) ||
+                    (socket_ptr -> nx_tcp_socket_state == NX_TCP_CLOSING)    ||
+                    (socket_ptr -> nx_tcp_socket_state == NX_TCP_LAST_ACK))
                 {
-                    socket_ptr -> nx_tcp_socket_tx_outstanding_bytes -= tcp_payload_length;
+
+                    /* Yes, setup timeout such that the FIN can be retried if it is lost.  */
+                    socket_ptr -> nx_tcp_socket_timeout =          socket_ptr -> nx_tcp_socket_timeout_rate;
+                    socket_ptr -> nx_tcp_socket_timeout_retries =  0;
+                }
+                else if (socket_ptr -> nx_tcp_socket_tx_window_advertised != 0)
+                {
+
+                    /* Otherwise, a FIN has not been sent, simply clear the transmit timeout.  */
+                    socket_ptr -> nx_tcp_socket_timeout =  0;
+                }
+            }
+
+            /* Now walk through the packets to release and set them
+               free.  */
+            while (packet_release_count--)
+            {
+
+                /* Use the previous pointer as the release pointer.  */
+                previous_ptr =  search_ptr;
+
+                /* Move to the next packet in the queue before we clip the
+                   next pointer.  */
+                search_ptr =  search_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next;
+
+#ifdef NX_ENABLE_TCP_SACK
+                if (socket_ptr -> nx_tcp_socket_sack_cursor == previous_ptr)
+                {
+                    socket_ptr -> nx_tcp_socket_sack_cursor =
+                        search_ptr == (NX_PACKET *)NX_PACKET_ENQUEUED ? NX_NULL : search_ptr;
+                }
+#endif
+
+                /* Disable interrupts temporarily.  */
+                TX_DISABLE
+
+                /* Set the packet to allocated to indicate it is no longer part of the TCP queue.  */
+                /*lint -e{923} suppress cast of ULONG to pointer.  */
+                previous_ptr -> nx_packet_union_next.nx_packet_tcp_queue_next =  ((NX_PACKET *)NX_PACKET_ALLOCATED);
+
+                /* Has the packet been transmitted? This is only pertinent if a retransmit of
+                   the packet occurred prior to receiving the ACK. If so, the packet could be
+                   in an ARP queue or in a driver queue waiting for transmission so we can't
+                   release it directly at this point.  The driver or the ARP processing will
+                   release it when finished.  */
+                /*lint -e{923} suppress cast of ULONG to pointer.  */
+                if (previous_ptr -> nx_packet_queue_next ==  ((NX_PACKET *)NX_DRIVER_TX_DONE))
+                {
+
+                    /* Restore interrupts.  */
+                    TX_RESTORE
+
+                    /* Yes, the driver has already released the packet.  */
+
+                    /* Release the packet.  */
+                    _nx_packet_release(previous_ptr);
                 }
                 else
                 {
-                    socket_ptr -> nx_tcp_socket_tx_outstanding_bytes = 0;
-                }
 
-                /* Restore interrupts.  */
-                TX_RESTORE
+                    /* No, the driver has not released the packet.  */
+                    /* Restore interrupts.  */
+                    TX_RESTORE
+                }
             }
-        }
+
+        } /* Packet storage retirement. */
 
 #ifdef NX_ENABLE_TCP_SACK
         if (socket_ptr -> nx_tcp_socket_transmit_sent_head == NX_NULL)

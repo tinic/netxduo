@@ -27,6 +27,7 @@
 
 #include "nx_api.h"
 #include "nx_ip.h"
+#include "nx_packet.h"
 #include "nx_igmp.h"
 
 #ifdef NX_IPSEC_ENABLE
@@ -190,6 +191,18 @@ ULONG           val;
     }
 #endif
 
+#if defined(NX_ENABLE_INTERFACE_CAPABILITY) && !defined(NX_ENABLE_IP_ID_RANDOMIZATION)
+    {
+    ULONG segments = _nx_packet_tcp_gso_segments(packet_ptr);
+        if (segments > 1)
+        {
+            /* The header already reserved the first ID. Every physical
+               datagram emitted from this template owns one further ID. */
+            ip_ptr -> nx_ip_packet_id += segments - 1;
+        }
+    }
+#endif
+
 #ifdef NX_DISABLE_IP_TX_CHECKSUM
     compute_checksum = 0;
 #endif /* NX_DISABLE_IP_TX_CHECKSUM */
@@ -210,6 +223,16 @@ ULONG           val;
     }
 
 #endif /* NX_IPSEC_ENABLE */
+
+#ifdef NX_ENABLE_INTERFACE_CAPABILITY
+    if (_nx_packet_tcp_gso_segments(packet_ptr) != 0)
+    {
+        /* The segmenter derives child checksums from a complete template,
+           even when physical frames normally use IPv4 checksum offload. */
+        compute_checksum = 1;
+        packet_ptr -> nx_packet_interface_capability_flag &= ~(ULONG)NX_INTERFACE_CAPABILITY_IPV4_TX_CHECKSUM;
+    }
+#endif
 
 #if defined(NX_DISABLE_IP_TX_CHECKSUM) || defined(NX_ENABLE_INTERFACE_CAPABILITY) || defined(NX_IPSEC_ENABLE)
     if (compute_checksum)
