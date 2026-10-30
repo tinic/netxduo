@@ -134,6 +134,7 @@ ULONG          ending_tx_sequence;
 ULONG          ending_rx_sequence;
 ULONG          acked_bytes;
 ULONG          tcp_payload_length;
+ULONG          abc_limit;
 #if defined(NX_ENABLE_TCP_RTT_ESTIMATOR) && defined(NX_ENABLE_TCP_TIMESTAMP)
 ULONG          ts_now;
 #endif
@@ -701,9 +702,19 @@ ULONG          sack_right;
                     socket_ptr -> nx_tcp_socket_tx_cwnd_acked = 0;
 
                     /* In Slow start phase:
-                       cwnd += min (N, SMSS),
-                       where N is the number of ACKed bytes. */
-                    if (acked_bytes < socket_ptr -> nx_tcp_socket_connect_mss)
+                       cwnd += min (N, L),
+                       where N is the number of ACKed bytes and L is one SMSS
+                       (RFC 5681), or the interface's RFC 3465 section 2.2
+                       limit in segments (nx_interface_tcp_abc_limit).  A
+                       receiver that acknowledges several segments at once
+                       otherwise slows slow start by as many. */
+                    abc_limit = socket_ptr -> nx_tcp_socket_connect_mss;
+                    if ((socket_ptr -> nx_tcp_socket_connect_interface != NX_NULL) &&
+                        (socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_tcp_abc_limit > 1))
+                    {
+                        abc_limit *= socket_ptr -> nx_tcp_socket_connect_interface -> nx_interface_tcp_abc_limit;
+                    }
+                    if (acked_bytes < abc_limit)
                     {
 
                         /* In Slow start phase. Increase the cwnd by acked bytes.*/
@@ -712,8 +723,8 @@ ULONG          sack_right;
                     else
                     {
 
-                        /* In Slow start phase. Increase the cwnd by full MSS for every ack.*/
-                        socket_ptr -> nx_tcp_socket_tx_window_congestion += socket_ptr -> nx_tcp_socket_connect_mss;
+                        /* In Slow start phase. Increase the cwnd by L for every ack.*/
+                        socket_ptr -> nx_tcp_socket_tx_window_congestion += abc_limit;
                     }
                 }
             }

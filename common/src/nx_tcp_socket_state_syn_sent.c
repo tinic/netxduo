@@ -174,6 +174,7 @@ VOID  _nx_tcp_socket_state_syn_sent(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *tc
             {
                 socket_ptr -> nx_tcp_socket_tx_window_congestion -= socket_ptr -> nx_tcp_socket_connect_mss;
             }
+            NX_TCP_SOCKET_INITIAL_WINDOW(socket_ptr)
         }
 
         /* Send the ACK.  */
@@ -278,6 +279,7 @@ VOID  _nx_tcp_socket_state_syn_sent(NX_TCP_SOCKET *socket_ptr, NX_TCP_HEADER *tc
         {
             socket_ptr -> nx_tcp_socket_tx_window_congestion -= socket_ptr -> nx_tcp_socket_connect_mss;
         }
+        NX_TCP_SOCKET_INITIAL_WINDOW(socket_ptr)
 
         /* Set the Initial transmit outstanding byte count. */
         socket_ptr -> nx_tcp_socket_tx_outstanding_bytes = 0;

@@ -2309,6 +2309,11 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_prr_out;
     ULONG       nx_tcp_socket_prr_credit;
     ULONG       nx_tcp_socket_sack_rescue_rxt;
+
+    /* The highest DATA sent when the last retransmission of this recovery
+       went out: once SACKs pass it, every retransmission before it was lost
+       (nx_tcp_sack_recovery.c, RFC 8985).  */
+    ULONG       nx_tcp_socket_sack_rxt_mark;
     ULONG       nx_tcp_socket_sack_delivery_bank;
     ULONG       nx_tcp_socket_sack_delivered_data;
     ULONG       nx_tcp_socket_sack_uncertain_start;
@@ -2920,6 +2925,15 @@ typedef struct NX_INTERFACE_STRUCT
        until its own cap is settled (nx_tcp_socket_rx_window_cap 0); the SYN
        and the SYN-ACK offer no more.  Zero offers the buffer.  */
     ULONG nx_interface_tcp_rx_window_cap;
+
+    /* Slow start on TCP connections bound to this interface (AmiNetXDuo).
+       The initial window in segments, RFC 6928 for 10; zero keeps RFC
+       3390's.  The most one acknowledgment grows the window by in slow
+       start, in segments, RFC 3465 section 2.2's L; zero or one keeps RFC
+       5681's one segment.  Set before bringing the interface online.  */
+    UCHAR nx_interface_tcp_initial_window;
+    UCHAR nx_interface_tcp_abc_limit;
+    UCHAR nx_interface_tcp_slow_start_reserved[2];
 
     /* Define the Link Driver entry point.  */
     VOID        (*nx_interface_link_driver_entry)(struct NX_IP_DRIVER_STRUCT *);

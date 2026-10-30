@@ -310,6 +310,35 @@ static ULONG sack_lost_edge(NX_TCP_SOCKET *s, NX_SACK_HOLE *holes, UINT n, ULONG
     return edge;
 }
 
+/* RFC 8985 (RACK) loss detection of retransmissions, in sequence terms for
+   a FIFO path: every retransmission sent before the last one is lost once a
+   full segment of DATA sent after that last one has been SACKed.  Their
+   ranges become eligible again and HighRxt (RFC 6675) drops to the lowest,
+   so NextSeg repairs them on this ACK rather than at the RTO.  The ranges
+   above keep their own retransmission cursors and are not sent twice. */
+static VOID sack_lost_retransmit(NX_TCP_SOCKET *s)
+{
+    UINT bank = s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_BANK;
+    UINT i;
+    if ((INT)(s -> nx_tcp_socket_sack_fack - s -> nx_tcp_socket_sack_rxt_mark) <
+        (INT)s -> nx_tcp_socket_connect_mss)
+    {
+        return;
+    }
+    for (i = 0; i < s -> nx_tcp_socket_sack_hole_count; i++)
+    {
+        NX_SACK_HOLE *h = sack_hole(s, bank, i);
+        if ((INT)(h -> rxmit - h -> left) > 0)
+        {
+            h -> rxmit = h -> left;
+            if ((INT)(s -> nx_tcp_socket_tx_high_rxt - h -> left) > 0)
+            {
+                s -> nx_tcp_socket_tx_high_rxt = h -> left;
+            }
+        }
+    }
+}
+
 ULONG _nx_tcp_sack_recovery_pipe(NX_TCP_SOCKET *s)
 {
     NX_SACK_HOLE scratch[NX_TCP_SACK_MAX_BLOCKS + 1U];
@@ -540,6 +569,10 @@ VOID _nx_tcp_sack_recovery_ack(NX_TCP_SOCKET *s, ULONG ack)
     s -> nx_tcp_socket_sack_delivered_data = (estimate > bank) ? estimate - bank : 0;
     bank = (bank > advance) ? bank - advance : 0;
     s -> nx_tcp_socket_sack_delivery_bank = (sacked > bank) ? sacked : bank;
+    if (NX_TCP_SACK_RECOVERY_ACTIVE(s) && s -> nx_tcp_socket_sack_scoreboard != NX_NULL)
+    {
+        sack_lost_retransmit(s);
+    }
     if (NX_TCP_SACK_RECOVERY_ACTIVE(s) && s -> nx_tcp_socket_sack_delivered_data != 0)
     {
         s -> nx_tcp_socket_prr_delivered += s -> nx_tcp_socket_sack_delivered_data;
@@ -570,6 +603,7 @@ VOID _nx_tcp_sack_recovery_begin(NX_TCP_SOCKET *s)
     s -> nx_tcp_socket_tx_sequence_recover = sack_data_end(s) - 1UL;
     s -> nx_tcp_socket_tx_high_rxt = s -> nx_tcp_socket_sack_high_ack;
     s -> nx_tcp_socket_sack_rescue_rxt = s -> nx_tcp_socket_sack_high_ack;
+    s -> nx_tcp_socket_sack_rxt_mark = sack_data_end(s);
     s -> nx_tcp_socket_prr_recover_fs = fs;
     s -> nx_tcp_socket_prr_delivered = s -> nx_tcp_socket_sack_delivered_data;
     s -> nx_tcp_socket_prr_out = 0;
@@ -668,8 +702,9 @@ UINT _nx_tcp_sack_recovery_next(NX_TCP_SOCKET *s, ULONG *seq, ULONG *end)
        broader speculative rescue, including already retransmitted DATA. We
        use it only when a cumulative ACK jumps by more than an MSS and
        leaves one never-retransmitted tail of at most an MSS, so ordinary in-flight DATA and already repaired
-       holes do not acquire extra copies. Lost retransmissions remain subject
-       to the RTO until a time-based loss detector is implemented. */
+       holes do not acquire extra copies. A lost retransmission is repaired
+       once later DATA is SACKed past it (sack_lost_retransmit); one with no
+       DATA sent after it still waits for the RTO. */
     if ((s -> nx_tcp_socket_sack_scoreboard_flags & NX_SACK_ACK_JUMP) &&
         (INT)(s -> nx_tcp_socket_sack_high_ack - s -> nx_tcp_socket_sack_rescue_rxt) >= 0 &&
         (INT)(s -> nx_tcp_socket_sack_high_ack - s -> nx_tcp_socket_tx_high_rxt) >= 0)
@@ -706,6 +741,10 @@ VOID _nx_tcp_sack_recovery_sent(NX_TCP_SOCKET *s, ULONG seq, ULONG bytes, UINT r
     if (!rescue && (INT)(end - s -> nx_tcp_socket_tx_high_rxt) > 0)
     {
         s -> nx_tcp_socket_tx_high_rxt = end;
+    }
+    if (!rescue)
+    {
+        s -> nx_tcp_socket_sack_rxt_mark = sack_data_end(s);
     }
     if (!rescue && s -> nx_tcp_socket_sack_scoreboard != NX_NULL)
     {
