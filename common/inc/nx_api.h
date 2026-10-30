@@ -2309,6 +2309,11 @@ typedef struct NX_TCP_SOCKET_STRUCT
     ULONG       nx_tcp_socket_prr_out;
     ULONG       nx_tcp_socket_prr_credit;
     ULONG       nx_tcp_socket_sack_rescue_rxt;
+
+    /* The highest DATA sent when the last retransmission of this recovery
+       went out: once SACKs pass it, every retransmission before it was lost
+       (nx_tcp_sack_recovery.c, RFC 8985).  */
+    ULONG       nx_tcp_socket_sack_rxt_mark;
     ULONG       nx_tcp_socket_sack_delivery_bank;
     ULONG       nx_tcp_socket_sack_delivered_data;
     ULONG       nx_tcp_socket_sack_uncertain_start;
