@@ -30,8 +30,14 @@ static NX_TCP_SOCKET           client_socket;
 static NX_TCP_SOCKET           server_socket;
 static ULONG                   error_counter;
 static UINT                    hold_acks;
+static UINT                    drop_marked;
+static UINT                    phase;
+static UINT                    held_after_partial_ack;
 static UINT                    server_done;
 static CHAR                    send_buff[DATA_BYTES];
+
+/* The last payload byte of the one segment the client's wire loses.  */
+#define MARK                    0xA5
 
 static void    thread_0_entry(ULONG thread_input);
 static void    thread_1_entry(ULONG thread_input);
@@ -39,14 +45,19 @@ extern void    _nx_ram_network_driver_1500(struct NX_IP_DRIVER_STRUCT *driver_re
 extern UINT    (*advanced_packet_process_callback)(NX_IP *ip_ptr, NX_PACKET *packet_ptr,
                                                    UINT *operation_ptr, UINT *delay_ptr);
 
-/* The server's segments are lost while hold_acks is set: the client's data
-   stays outstanding.  */
+/* The server's segments are lost while hold_acks is set, and the client's
+   marked segment while drop_marked is: the client's data stays
+   outstanding.  */
 static UINT    packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT *operation_ptr, UINT *delay_ptr)
 {
-    NX_PARAMETER_NOT_USED(packet_ptr);
     NX_PARAMETER_NOT_USED(delay_ptr);
 
     if ((ip_ptr == &ip_1) && hold_acks)
+    {
+        *operation_ptr = NX_RAMDRIVER_OP_DROP;
+    }
+    if ((ip_ptr == &ip_0) && drop_marked && (packet_ptr -> nx_packet_length > DATA_BYTES) &&
+        (*(packet_ptr -> nx_packet_append_ptr - 1) == MARK))
     {
         *operation_ptr = NX_RAMDRIVER_OP_DROP;
     }
@@ -88,6 +99,9 @@ UINT    status;
     pointer =  (CHAR *) first_unused_memory;
     error_counter = 0;
     hold_acks = NX_FALSE;
+    drop_marked = NX_FALSE;
+    phase = 0;
+    held_after_partial_ack = NX_FALSE;
     server_done = NX_FALSE;
 
     tx_thread_create(&thread_0, "thread 0", thread_0_entry, 0,
@@ -178,19 +192,23 @@ NX_INTERFACE *interface_ptr = &ip_0.nx_ip_interface[0];
         nx_packet_release(left);
     }
 
-    /* Awake again: it goes.  */
+    /* Awake again: it goes, and the wire loses it.  */
     interface_ptr -> nx_interface_tx_queue_stopped = 0;
+    drop_marked = NX_TRUE;
+    send_buff[DATA_BYTES - 1] = (CHAR)MARK;
     if (send_data(NX_NO_WAIT, &left) != NX_SUCCESS)
     {
         error_counter++;
     }
+    send_buff[DATA_BYTES - 1] = 0;
 
-    /* A sender suspended on a stopped queue goes once the queue wakes and
-       the outstanding data is acknowledged (the retransmission's ACK).  */
+    /* A sender suspended on a stopped queue stays suspended through a partial
+       acknowledgment (the first segment's retransmission), and goes once the
+       queue wakes and the rest is acknowledged.  thread_1 watches.  */
     interface_ptr -> nx_interface_tx_queue_stopped = 1;
     hold_acks = NX_FALSE;
-    tx_thread_resume(&thread_1);
-    if (send_data(10 * NX_IP_PERIODIC_RATE, &left) != NX_SUCCESS)
+    phase = 4;
+    if (send_data(20 * NX_IP_PERIODIC_RATE, &left) != NX_SUCCESS)
     {
         error_counter++;
     }
@@ -198,7 +216,7 @@ NX_INTERFACE *interface_ptr = &ip_0.nx_ip_interface[0];
     {
         nx_packet_release(left);
     }
-    if (interface_ptr -> nx_interface_tx_queue_stopped != 0)
+    if ((interface_ptr -> nx_interface_tx_queue_stopped != 0) || !held_after_partial_ack)
     {
         error_counter++;
     }
@@ -229,6 +247,7 @@ static void    thread_1_entry(ULONG thread_input)
 {
 UINT            status;
 ULONG           actual_status;
+ULONG           i;
 
     NX_PARAMETER_NOT_USED(thread_input);
 
@@ -243,9 +262,25 @@ ULONG           actual_status;
         error_counter++;
     }
 
-    /* The client wakes the queue while it waits suspended.  */
-    tx_thread_suspend(&thread_1);
-    tx_thread_sleep(NX_IP_PERIODIC_RATE / 10);
+    /* The client is suspended on the stopped queue with two segments
+       outstanding; the first one's retransmission is acknowledged, the
+       second is lost.  It must still be suspended.  Then the queue wakes.  */
+    while (phase != 4)
+    {
+        tx_thread_sleep(1);
+    }
+    for (i = 0; (i < 10 * NX_IP_PERIODIC_RATE) &&
+                (client_socket.nx_tcp_socket_tx_outstanding_bytes != DATA_BYTES); i++)
+    {
+        tx_thread_sleep(1);
+    }
+    tx_thread_sleep(NX_IP_PERIODIC_RATE / 5);
+    if ((client_socket.nx_tcp_socket_tx_outstanding_bytes == DATA_BYTES) &&
+        (client_socket.nx_tcp_socket_transmit_suspended_count == 1))
+    {
+        held_after_partial_ack = NX_TRUE;
+    }
+    drop_marked = NX_FALSE;
     ip_0.nx_ip_interface[0].nx_interface_tx_queue_stopped = 0;
 
     while (!server_done)

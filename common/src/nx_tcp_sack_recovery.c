@@ -670,8 +670,10 @@ UINT _nx_tcp_sack_recovery_next(NX_TCP_SOCKET *s, ULONG *seq, ULONG *end)
         return NX_TRUE;
     }
     /* NextSeg(2): a suspended writer owns unsent data. Leave its credit
-       available so state_transmit_check can resume it before speculative RTX. */
+       available so state_transmit_check can resume it before speculative RTX.
+       Not while the interface queue is stopped: the check will not resume it. */
     if (s -> nx_tcp_socket_transmit_suspension_list != NX_NULL &&
+        !NX_TCP_SOCKET_TX_QUEUE_STOPPED(s) &&
         s -> nx_tcp_socket_tx_window_advertised > s -> nx_tcp_socket_tx_outstanding_bytes &&
         s -> nx_tcp_socket_transmit_sent_count < s -> nx_tcp_socket_transmit_queue_maximum)
     {
