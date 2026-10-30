@@ -2933,7 +2933,15 @@ typedef struct NX_INTERFACE_STRUCT
        5681's one segment.  Set before bringing the interface online.  */
     UCHAR nx_interface_tcp_initial_window;
     UCHAR nx_interface_tcp_abc_limit;
-    UCHAR nx_interface_tcp_slow_start_reserved[2];
+
+    /* Nonzero while the driver's transmit queue is too full to take more
+       new TCP data (AmiNetXDuo).  The driver sets and clears it, as Linux
+       stops and wakes a device queue.  A TCP connection on this interface
+       with data outstanding then sends no new data until it clears; the
+       acknowledgment of that data runs the check again.  Retransmissions
+       are not held.  Zero unless the driver sets it.  */
+    UCHAR nx_interface_tx_queue_stopped;
+    UCHAR nx_interface_tcp_slow_start_reserved[1];
 
     /* Define the Link Driver entry point.  */
     VOID        (*nx_interface_link_driver_entry)(struct NX_IP_DRIVER_STRUCT *);

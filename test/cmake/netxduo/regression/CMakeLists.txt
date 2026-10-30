@@ -370,6 +370,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_tcp_rto_ack_recovery_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_sack_scoreboard_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_sack_lost_retransmit_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_tx_queue_stopped_test.c
     ${SOURCE_DIR}/netxduo_test/netx_link_vlan_api_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcpip_offload_tcp_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcpip_offload_tcp_ipv6_test.c
