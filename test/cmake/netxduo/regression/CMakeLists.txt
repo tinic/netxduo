@@ -775,6 +775,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_12_17_test.c
     ${SOURCE_DIR}/netxduo_test/netx_nd_cache_under_interface_detach_test.c
     ${SOURCE_DIR}/netxduo_test/netx_icmp_invalid_source_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_ip_source_address_off_link_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_client_socket_bind_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_client_packet_leak_test.c
     ${SOURCE_DIR}/netxduo_test/netx_8_29_01_test.c

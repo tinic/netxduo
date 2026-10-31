@@ -345,11 +345,15 @@ UINT            packet_consumed;
 #ifdef NX_ENABLE_SOURCE_ADDRESS_CHECK
     /* Check whether source address is valid. */
     /* Section 3.2.1.3, page 30, RFC 1122. */
+    /* The host part is only known for the attached network. Off that network
+       a host part of all zeros or all ones is an ordinary unicast address. */
     if (if_ptr -> nx_interface_address_mapping_needed == NX_TRUE)
     {
-        if (((ip_header_ptr -> nx_ip_header_source_ip & ~(if_ptr -> nx_interface_ip_network_mask)) == ~(if_ptr -> nx_interface_ip_network_mask)) ||
-            (((ip_header_ptr -> nx_ip_header_source_ip & ~(if_ptr -> nx_interface_ip_network_mask)) == 0) &&
-             (ip_header_ptr -> nx_ip_header_source_ip != 0)) ||
+        if ((ip_header_ptr -> nx_ip_header_source_ip == NX_IP_LIMITED_BROADCAST) ||
+            (((ip_header_ptr -> nx_ip_header_source_ip & if_ptr -> nx_interface_ip_network_mask) == if_ptr -> nx_interface_ip_network) &&
+             (((ip_header_ptr -> nx_ip_header_source_ip & ~(if_ptr -> nx_interface_ip_network_mask)) == ~(if_ptr -> nx_interface_ip_network_mask)) ||
+              (((ip_header_ptr -> nx_ip_header_source_ip & ~(if_ptr -> nx_interface_ip_network_mask)) == 0) &&
+               (ip_header_ptr -> nx_ip_header_source_ip != 0)))) ||
             ((ip_header_ptr -> nx_ip_header_source_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE))
         {
 

@@ -141,6 +141,7 @@ void    netx_icmp_ping6_fragment_test_application_define(void *);
 void    netx_icmp_interface2_ping_test_application_define(void *);
 void    netx_icmp_interface2_ping6_test_application_define(void *);
 void    netx_icmp_invalid_source_test_application_define(void *); 
+void    netx_ip_source_address_off_link_test_application_define(void *);
 void    netx_icmp_cleanup_test_application_define(void *);
 void    netx_icmp_packet_receive_function_test_application_define(void *);       
 void    netx_icmp_multiple_ping_test1_application_define(void *);
@@ -1411,6 +1412,7 @@ TEST_ENTRY  test_control_tests[] =
     {netx_icmp_interface2_ping_test_application_define, TEST_TIMEOUT_LOW},    
     {netx_icmp_interface2_ping6_test_application_define, TEST_TIMEOUT_LOW},
     {netx_icmp_invalid_source_test_application_define, TEST_TIMEOUT_LOW}, 
+    {netx_ip_source_address_off_link_test_application_define, TEST_TIMEOUT_LOW},
     {netx_icmp_cleanup_test_application_define, TEST_TIMEOUT_LOW},
     {netx_icmp_packet_receive_function_test_application_define, TEST_TIMEOUT_LOW},       
     {netx_icmp_multiple_ping_test1_application_define, TEST_TIMEOUT_LOW},
