@@ -372,6 +372,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_tcp_sack_lost_retransmit_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_burst_loss_recovery_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_gso_rto_wrap_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_sack_prr_credit_race_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_tx_queue_stopped_test.c
     ${SOURCE_DIR}/netxduo_test/netx_link_vlan_api_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcpip_offload_tcp_test.c
