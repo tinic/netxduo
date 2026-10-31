@@ -1261,7 +1261,7 @@ UINT       sack_index;
             socket_ptr -> nx_tcp_socket_tx_high_rxt = send_end;
 #endif
             _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
-            if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE || send_end < queued_end)
+            if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE || (INT)(queued_end - send_end) > 0)
             {
                 break;
             }

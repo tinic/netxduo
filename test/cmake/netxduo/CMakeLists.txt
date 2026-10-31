@@ -344,9 +344,12 @@ set(optimize_build ${default_build_coverage} -O3)
 set(dhcp_default_build_coverage ${default_build_coverage} -DNX_DHCP_CLIENT_USER_CREATE_PACKET_POOL -DNX_DISABLE_ASSERT)
 set(dns_default_build_coverage ${default_build_coverage}  -DNX_DNS_CLIENT_USER_CREATE_PACKET_POOL -DNX_DNS_CLIENT_CLEAR_QUEUE)
 set(tsn_build_coverage ${default_build_coverage} ${PHY_HEADER} -DNX_ENABLE_VLAN)
-# Exercise the TCP options together at the port's production MSS minimum.
+# Exercise the TCP options together at the port's production MSS minimum,
+# with interface capabilities compiled in and none set by the RAM driver.
 set(tcp_options_build
     ${default_build_coverage}
+    ${LINK_CAP}
+    ${NO_INTERFACE_CAPABILITY}
     -DNX_ENABLE_TCP_SACK
     -DNX_ENABLE_TCP_TIMESTAMP
     -DNX_ENABLE_TCP_RTT_ESTIMATOR
