@@ -454,7 +454,11 @@ ULONG          sack_right;
                             /* Retransmit packet immediately. */
                             _nx_tcp_socket_retransmit(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr, NX_TRUE);
                         }
-                        else if ((socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
+                        /* Below the end of the old flight a timeout is walking,
+                           a lost copy of that walk is resent alone and no fast
+                           recovery starts (RFC 6675 section 5.1).  */
+                        else if ((_nx_tcp_socket_retransmit_lost_copy(socket_ptr -> nx_tcp_socket_ip_ptr, socket_ptr) == NX_FALSE) &&
+                                 (socket_ptr -> nx_tcp_socket_tx_window_congestion > socket_ptr -> nx_tcp_socket_connect_mss) &&
                                  ((INT)(tcp_header_ptr -> nx_tcp_acknowledgment_number - (socket_ptr -> nx_tcp_socket_previous_highest_ack +
                                                                                           (socket_ptr -> nx_tcp_socket_connect_mss << 2))) <= 0))
                         {

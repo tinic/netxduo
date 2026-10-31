@@ -576,7 +576,10 @@ ULONG before;
         socket_0.nx_tcp_socket_sack_right[0] = start + 6 * MSS;
         ack(i, 64000);
     }
-    check(sent == SEGMENTS && log_sequence[6] == start + 6 * MSS && log_sequence[7] == start + 7 * MSS,
+    /* RFC 6675 section 5.1: the slow start sends what the peer lacks, so
+       the SACKed island is stepped over rather than resent.  */
+    check(sent == SEGMENTS - 2 && log_sequence[3] == start + 3 * MSS &&
+          log_sequence[4] == start + 6 * MSS && log_sequence[5] == start + 7 * MSS,
           "interior SACK does not stop recovery of missing later data");
 }
 #endif /* NX_ENABLE_TCP_SACK */
@@ -634,19 +637,28 @@ NX_TCP_HEADER *header;
     _nx_tcp_fast_periodic_processing(&ip);
     check(sent == 2 && log_sequence[1] == 1000, "small nonzero window does not suppress the next RTO");
 
+    /* Duplicates below the timeout's recovery point say a copy the walk
+       sent was lost.  RFC 6675 section 5.1 starts no new recovery there,
+       and this non-SACK socket follows the same rule: the lost copy is
+       resent at once and the walk keeps the rest of the old flight,
+       instead of leaving it to the next RTO.  */
     fixture(1000);
     _nx_tcp_fast_periodic_processing(&ip);
     ack(1, 64000);
+    before = sent;
     ack(1, 64000);
     ack(1, 64000);
     ack(1, 64000);
-    check(socket_0.nx_tcp_socket_fast_recovery == NX_TRUE, "duplicate ACKs can enter new fast recovery after RTO");
-    check(socket_0.nx_tcp_socket_tx_rto_next == socket_0.nx_tcp_socket_tx_rto_end,
-          "new fast recovery discards old timeout cursor");
+    check(socket_0.nx_tcp_socket_fast_recovery == NX_FALSE,
+          "duplicate ACKs below the timeout recovery point start no fast recovery");
+    check(sent == before + 1 && log_sequence[before] == 1100,
+          "a lost walk copy alone is resent, not the copies after it");
+    check((INT)(socket_0.nx_tcp_socket_tx_rto_end - socket_0.nx_tcp_socket_tx_rto_next) > 0,
+          "the timeout walk keeps the rest of the old flight");
     before = sent;
     ack(SEGMENTS, 64000);
     check(socket_0.nx_tcp_socket_fast_recovery == NX_FALSE && sent == before,
-          "exiting fast recovery does not revive timeout resends");
+          "acknowledging the old flight ends the walk without more resends");
 
     fixture(1000);
     socket_0.nx_tcp_socket_tx_rto_next = 1000;
