@@ -1261,7 +1261,7 @@ UINT       sack_index;
             socket_ptr -> nx_tcp_socket_tx_high_rxt = send_end;
 #endif
             _nx_tcp_socket_retransmit_packet(ip_ptr, socket_ptr, repair);
-            if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE || send_end < queued_end)
+            if (socket_ptr -> nx_tcp_socket_fast_recovery == NX_TRUE || (INT)(queued_end - send_end) > 0)
             {
                 break;
             }
@@ -1830,6 +1830,14 @@ ULONG begin, end, word, length, first, unacked;
     {
         return;
     }
+
+#ifdef FEATURE_NX_IPV6
+    if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
+        (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID))
+    {
+        return;
+    }
+#endif /* FEATURE_NX_IPV6 */
 
     /* Karn's algorithm, RFC 6298 section 3.  A probe carries a sequence
        number that has already been sent, so an acknowledgment covering it

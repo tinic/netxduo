@@ -1374,7 +1374,11 @@ UINT            compute_checksum = 1;
             {
                 ULONG sent_bytes = send_packet -> nx_packet_length - NX_TCP_SEGMENT_HEADER_LENGTH;
                 socket_ptr -> nx_tcp_socket_prr_out += sent_bytes;
-                socket_ptr -> nx_tcp_socket_prr_credit -= sent_bytes;
+                /* The checksum above runs without protection, and a repair
+                   sent meanwhile may spend the credit this segment was checked
+                   against.  */
+                socket_ptr -> nx_tcp_socket_prr_credit = (socket_ptr -> nx_tcp_socket_prr_credit > sent_bytes) ?
+                                                         socket_ptr -> nx_tcp_socket_prr_credit - sent_bytes : 0;
             }
 #endif
 

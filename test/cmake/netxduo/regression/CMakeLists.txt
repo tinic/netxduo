@@ -371,6 +371,8 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_tcp_sack_scoreboard_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_sack_lost_retransmit_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_burst_loss_recovery_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_gso_rto_wrap_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_sack_prr_credit_race_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_tx_queue_stopped_test.c
     ${SOURCE_DIR}/netxduo_test/netx_link_vlan_api_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcpip_offload_tcp_test.c
@@ -708,6 +710,7 @@ set(netxduo_test_cases
     ${SOURCE_DIR}/netxduo_test/netx_icmp_ping6_fragment_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_ipv6_basic_processing_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_ipv6_address_delete_state_test.c
+    ${SOURCE_DIR}/netxduo_test/netx_tcp_ipv6_address_delete_loss_probe_test.c
     ${SOURCE_DIR}/netxduo_test/netx_ip_interface_attachment_test.c
     ${SOURCE_DIR}/netxduo_test/netx_tcp_send_fail_test2.c
     ${SOURCE_DIR}/netxduo_test/netx_1_20_test.c
