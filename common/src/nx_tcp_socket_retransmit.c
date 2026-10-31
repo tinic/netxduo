@@ -1831,6 +1831,14 @@ ULONG begin, end, word, length, first, unacked;
         return;
     }
 
+#ifdef FEATURE_NX_IPV6
+    if ((socket_ptr -> nx_tcp_socket_connect_ip.nxd_ip_version == NX_IP_VERSION_V6) &&
+        (socket_ptr -> nx_tcp_socket_ipv6_addr -> nxd_ipv6_address_state != NX_IPV6_ADDR_STATE_VALID))
+    {
+        return;
+    }
+#endif /* FEATURE_NX_IPV6 */
+
     /* Karn's algorithm, RFC 6298 section 3.  A probe carries a sequence
        number that has already been sent, so an acknowledgment covering it
        does not say which copy it answers.  */
