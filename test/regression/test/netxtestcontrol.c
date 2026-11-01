@@ -8,6 +8,7 @@
 /*                                                                         */
 /* SPDX-License-Identifier: MIT                                            */
 /***************************************************************************/
+// Portions of this file were generated with AI assistance.
 
 /* This is the test control routine the NetX TCP/IP stack.  All tests are dispatched from this routine.  */
 
@@ -747,6 +748,8 @@ void    netx_ftp_service_commands_file_write_test_application_define(void *);
 void    netx_ftp_client_pasv_denied_test_application_define(void *);
 void    netx_ftp_client_pasv_file_read_test_application_define(void *);
 void    netx_ftp_client_pasv_file_write_test_application_define(void *);
+void    netx_ftp_client_pasv_peer_address_read_test_application_define(void *);
+void    netx_ftp_client_pasv_peer_address_write_test_application_define(void *);
 void    netx_ftp_client_invalid_username_password_length_test_application_define(void *first_unused_memory); 
 void    netx_ftp_client_multiple_connection_response_test_application_define(void*);
 void    netx_ftp_client_packet_leak_test_application_define(void *first_unused_memory); 
@@ -759,6 +762,8 @@ void    netx_ftp_two_listen_test_application_define(void *first_unused_memory);
 void    netx_ftp_parse_ipv6_address_test_application_define(void *);
 void    netx_ftp_server_abnormal_packet_test_application_define(void *);
 void    netx_ftp_server_list_command_test_application_define(void *);
+void    netx_ftp_server_epsv_peer_test_application_define(void *);
+void    netx_ftp_server_pasv_peer_test_application_define(void *);
 void    netx_ftp_server_dangling_pinter_test_application_define(void *);
 void    netx_ftp_pasv_twice_test_application_define(void *);
 void    netx_ftp_disconnection_event_test_application_define(void *);
@@ -780,6 +785,7 @@ void    netx_ppp_pap_null_name_password_test_application_define(void *);
 void    netx_ppp_LCP_invalid_packet_test_application_define(void *);
 void    netx_ppp_IPCP_abnormal_packet_test_application_define(void *);
 void    netx_ppp_IPCP_nak_test_application_define(void *);
+void    netx_ppp_IPCP_option_bounds_test_application_define(void *);
 void    netx_ppp_IPCP_retransmit_test_application_define(void *);
 void    netx_ppp_pap_basic_test_application_define(void *);
 void    netx_ppp_pfc_option_test_application_define(void *);
@@ -889,6 +895,7 @@ void    netx_snmp_abnormal_packet_test_application_define(void *);
 void    netx_dhcp_basic_test_application_define(void *);
 void    netx_dhcp_basic_restore_test_application_define(void *);
 void    netx_dhcp_unicast_test_application_define(void *);
+void    netx_dhcp_option_walk_bounds_test_application_define(void *);
 void    netx_dhcp_user_option_add_test_application_define(void *);
 void    netx_dhcp_server_improper_term_test_application_define(void *);
 void    netx_dhcp_03_01_01_test_application_define(void *);
@@ -2024,6 +2031,8 @@ TEST_ENTRY  test_control_tests[] =
     {netx_ftp_client_pasv_denied_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_client_pasv_file_read_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_client_pasv_file_write_test_application_define, TEST_TIMEOUT_LOW},
+    {netx_ftp_client_pasv_peer_address_read_test_application_define, TEST_TIMEOUT_LOW},
+    {netx_ftp_client_pasv_peer_address_write_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_client_invalid_username_password_length_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_client_multiple_connection_response_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_client_packet_leak_test_application_define, TEST_TIMEOUT_LOW},
@@ -2036,6 +2045,8 @@ TEST_ENTRY  test_control_tests[] =
     {netx_ftp_parse_ipv6_address_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_server_abnormal_packet_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_server_list_command_test_application_define, TEST_TIMEOUT_LOW},
+    {netx_ftp_server_epsv_peer_test_application_define, TEST_TIMEOUT_LOW},
+    {netx_ftp_server_pasv_peer_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_server_dangling_pinter_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_pasv_twice_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ftp_disconnection_event_test_application_define, TEST_TIMEOUT_LOW},
@@ -2056,6 +2067,7 @@ TEST_ENTRY  test_control_tests[] =
     {netx_ppp_LCP_invalid_packet_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ppp_IPCP_abnormal_packet_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ppp_IPCP_nak_test_application_define, TEST_TIMEOUT_LOW},
+    {netx_ppp_IPCP_option_bounds_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ppp_IPCP_retransmit_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ppp_pap_basic_test_application_define, TEST_TIMEOUT_LOW},
     {netx_ppp_pfc_option_test_application_define, TEST_TIMEOUT_LOW},
@@ -2135,6 +2147,7 @@ TEST_ENTRY  test_control_tests[] =
     {netx_dhcp_basic_test_application_define, TEST_TIMEOUT_MID},
     {netx_dhcp_basic_restore_test_application_define, TEST_TIMEOUT_MID},
     {netx_dhcp_unicast_test_application_define, TEST_TIMEOUT_LOW},
+    {netx_dhcp_option_walk_bounds_test_application_define, TEST_TIMEOUT_LOW},
     {netx_dhcp_user_option_add_test_application_define, TEST_TIMEOUT_LOW},
     {netx_dhcp_server_improper_term_test_application_define, TEST_TIMEOUT_LOW},
     {netx_dhcp_coverage_test_applicaiton_define, TEST_TIMEOUT_LOW},
