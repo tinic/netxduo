@@ -19,9 +19,14 @@
 
    The default router was added by the application and has not answered, so
    it has no neighbour cache entry. The destination table is full, filled by
-   UDP datagrams to other off-link destinations. Adding the new destination
-   therefore fails. The send must give up on the packet and release it,
-   rather than use the entry the failed add did not return. */
+   UDP datagrams to other off-link destinations. In this fork a full table
+   gives up its least recently used entry (dae9b32a), so the first send adds
+   the new destination in that slot and the table stays full.
+
+   The second send makes the add fail: the router's neighbour cache entry is
+   deleted and every neighbour cache slot holds a static entry, so no entry
+   can be made for the router. The send must give up on the packet and
+   release it, rather than use the entry the failed add did not return. */
 
 #include   "tx_api.h"
 #include   "nx_api.h"
@@ -33,6 +38,7 @@ extern void    test_control_return(UINT status);
 
 #include   "nxd_bsd.h"
 #include   "nx_ipv6.h"
+#include   "nx_nd_cache.h"
 
 #define     DEMO_STACK_SIZE         4096
 #define     POOL_PACKETS            48
@@ -47,15 +53,19 @@ static NX_UDP_SOCKET           socket_0;
 static ULONG                   bsd_thread_area[DEMO_STACK_SIZE / sizeof(ULONG)];
 static UCHAR                   pool_area[(1536 + sizeof(NX_PACKET)) * POOL_PACKETS];
 static ULONG                   error_counter;
+static UCHAR                   raw_packet[48];
 
 /* This host, the router and the destination of the raw packet. */
 static ULONG                   own_address[4] =    {0x20010db8, 0, 0, 4};
 static ULONG                   router_address[4] = {0xfe800000, 0, 0, 1};
 static ULONG                   raw_destination[4] = {0x20010db8, 0x00010000, 0, 0x99};
+static ULONG                   raw_destination_2[4] = {0x20010db8, 0x00010000, 0, 0x9a};
+static ULONG                   evicted_destination[4] = {0x20010db8, 0x00010000, 0, 0x102};
 
 static void    thread_0_entry(ULONG thread_input);
 static UINT    destination_entries(void);
 static UINT    destination_found(ULONG *address);
+static int     raw_send(int sockfd, ULONG *destination, ULONG *available);
 
 
 #ifdef CTEST
@@ -107,15 +117,14 @@ static void    thread_0_entry(ULONG thread_input)
 
 UINT                 status;
 UINT                 i;
-UINT                 old_threshold;
 ULONG                available;
 int                  sockfd;
 int                  hdrincl = 1;
 int                  sent;
 NXD_ADDRESS          address;
 NX_PACKET           *packet_ptr;
-struct sockaddr_in6  remote_address;
-UCHAR                raw_packet[48];
+ULONG                neighbour[4];
+CHAR                 mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x00};
 
     NX_PARAMETER_NOT_USED(thread_input);
 
@@ -156,47 +165,43 @@ UCHAR                raw_packet[48];
         (ip_0.nx_ipv6_default_router_table[0].nx_ipv6_default_router_entry_neighbor_cache_ptr != NX_NULL))
         error_counter++;
 
-    /* An IPv6 header with no next header, from this host to the new
-       destination. */
-    memset(raw_packet, 0, sizeof(raw_packet));
-    raw_packet[0] = 0x60;
-    raw_packet[5] = 8;
-    raw_packet[6] = 59;
-    raw_packet[7] = 64;
-    for (i = 0; i < 4; i++)
-    {
-        raw_packet[8 + 4 * i] =      (UCHAR)(own_address[i] >> 24);
-        raw_packet[8 + 4 * i + 1] =  (UCHAR)(own_address[i] >> 16);
-        raw_packet[8 + 4 * i + 2] =  (UCHAR)(own_address[i] >> 8);
-        raw_packet[8 + 4 * i + 3] =  (UCHAR)own_address[i];
-        raw_packet[24 + 4 * i] =     (UCHAR)(raw_destination[i] >> 24);
-        raw_packet[24 + 4 * i + 1] = (UCHAR)(raw_destination[i] >> 16);
-        raw_packet[24 + 4 * i + 2] = (UCHAR)(raw_destination[i] >> 8);
-        raw_packet[24 + 4 * i + 3] = (UCHAR)raw_destination[i];
-    }
-
     sockfd = socket(AF_INET6, SOCK_RAW, 100);
     if ((sockfd < 0) || (setsockopt(sockfd, IPPROTO_IP, IP_RAW_IPV6_HDRINCL, &hdrincl, sizeof(hdrincl))))
         error_counter++;
 
-    memset(&remote_address, 0, sizeof(remote_address));
-    remote_address.sin6_family = AF_INET6;
-    for (i = 0; i < 4; i++)
-        remote_address.sin6_addr._S6_un._S6_u32[i] = htonl(raw_destination[i]);
-
-    /* The send is made with no other thread able to run, so that nothing
-       else takes or returns a packet before the pool is counted again. */
-    tx_thread_preemption_change(&thread_0, 0, &old_threshold);
-    available = pool_0.nx_packet_pool_available;
-    sent = sendto(sockfd, (CHAR *)raw_packet, sizeof(raw_packet), 0,
-                  (struct sockaddr *)&remote_address, sizeof(remote_address));
-    if (pool_0.nx_packet_pool_available != available)
+    /* The full table gives up its least recently used entry, the third UDP
+       destination (the two sends past the table size took the first two),
+       and the new destination takes its place. */
+    sent = raw_send(sockfd, raw_destination, &available);
+    if ((sent != (int)sizeof(raw_packet)) || (pool_0.nx_packet_pool_available != available) ||
+        (destination_entries() != NX_IPV6_DESTINATION_TABLE_SIZE) ||
+        (!destination_found(raw_destination)) || (destination_found(evicted_destination)))
         error_counter++;
-    tx_thread_preemption_change(&thread_0, old_threshold, &old_threshold);
 
-    /* The send returned, the packet went back to the pool, and the
-       destination was not added. */
-    if ((sent != (int)sizeof(raw_packet)) || (destination_found(raw_destination)))
+    /* No neighbour cache entry can be made for the router: its own entry is
+       deleted and every slot is given a static entry, which is never reused. */
+    nxd_nd_cache_entry_delete(&ip_0, router_address);
+    for (i = 0; i < NX_IPV6_NEIGHBOR_CACHE_SIZE; i++)
+    {
+        neighbour[0] = 0xfe800000;
+        neighbour[1] = 0;
+        neighbour[2] = 0;
+        neighbour[3] = 0x1000 + i;
+        mac[5] = (CHAR)i;
+        nxd_nd_cache_entry_set(&ip_0, neighbour, 0, mac);
+    }
+    for (i = 0; i < NX_IPV6_NEIGHBOR_CACHE_SIZE; i++)
+    {
+        if ((ip_0.nx_ipv6_nd_cache[i].nx_nd_cache_nd_status == ND_CACHE_STATE_INVALID) ||
+            (!ip_0.nx_ipv6_nd_cache[i].nx_nd_cache_is_static))
+            error_counter++;
+    }
+
+    /* The add fails. The send returned, the packet went back to the pool,
+       and the destination was not added. */
+    sent = raw_send(sockfd, raw_destination_2, &available);
+    if ((sent != (int)sizeof(raw_packet)) || (pool_0.nx_packet_pool_available != available) ||
+        (destination_found(raw_destination_2)))
         error_counter++;
 
     soc_close(sockfd);
@@ -213,6 +218,48 @@ UCHAR                raw_packet[48];
     }
 }
 
+
+/* Send an IPv6 header with no next header, from this host to destination,
+   through the raw socket. The send is made with no other thread able to
+   run, so that nothing else takes or returns a packet before the caller
+   counts the pool again; *available is the count before the send. */
+static int     raw_send(int sockfd, ULONG *destination, ULONG *available)
+{
+UINT                 i;
+UINT                 old_threshold;
+int                  sent;
+struct sockaddr_in6  remote_address;
+
+    memset(raw_packet, 0, sizeof(raw_packet));
+    raw_packet[0] = 0x60;
+    raw_packet[5] = 8;
+    raw_packet[6] = 59;
+    raw_packet[7] = 64;
+    for (i = 0; i < 4; i++)
+    {
+        raw_packet[8 + 4 * i] =      (UCHAR)(own_address[i] >> 24);
+        raw_packet[8 + 4 * i + 1] =  (UCHAR)(own_address[i] >> 16);
+        raw_packet[8 + 4 * i + 2] =  (UCHAR)(own_address[i] >> 8);
+        raw_packet[8 + 4 * i + 3] =  (UCHAR)own_address[i];
+        raw_packet[24 + 4 * i] =     (UCHAR)(destination[i] >> 24);
+        raw_packet[24 + 4 * i + 1] = (UCHAR)(destination[i] >> 16);
+        raw_packet[24 + 4 * i + 2] = (UCHAR)(destination[i] >> 8);
+        raw_packet[24 + 4 * i + 3] = (UCHAR)destination[i];
+    }
+
+    memset(&remote_address, 0, sizeof(remote_address));
+    remote_address.sin6_family = AF_INET6;
+    for (i = 0; i < 4; i++)
+        remote_address.sin6_addr._S6_un._S6_u32[i] = htonl(destination[i]);
+
+    tx_thread_preemption_change(&thread_0, 0, &old_threshold);
+    *available = pool_0.nx_packet_pool_available;
+    sent = sendto(sockfd, (CHAR *)raw_packet, sizeof(raw_packet), 0,
+                  (struct sockaddr *)&remote_address, sizeof(remote_address));
+    tx_thread_preemption_change(&thread_0, old_threshold, &old_threshold);
+
+    return(sent);
+}
 
 static UINT    destination_entries(void)
 {
