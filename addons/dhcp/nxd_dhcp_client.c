@@ -7941,75 +7941,72 @@ static ULONG _nx_dhcp_update_renewal_timeout(ULONG timeout)
 /*  CALLED BY                                                             */ 
 /*                                                                        */ 
 /*    _nx_dhcp_get_option_value             Get the value of an option    */ 
-/*    _nx_dhcp_get_option_data              Get the string of an option   */ 
+/*    _nx_dhcp_interface_user_option_retrieve                             */
+/*                                          Retrieve a user option        */
 /*                                                                        */ 
 /**************************************************************************/
 static UCHAR  *_nx_dhcp_search_buffer(UCHAR *option_message, UINT option, UINT length)
 {
 
 UCHAR   *data;
-UINT    i;
+UCHAR   *found;
+UINT    remaining;
 UINT    size;
 
-    /* Setup buffer pointer.  */
+    /* Setup buffer pointer and the number of bytes left to examine.  */
     data = option_message;
-    i = 0;
+    remaining = length;
+    found = NX_NULL;
 
-    /* Search as long as there are valid options.  A zero- or one-byte area
-       cannot hold a complete option (code byte plus size byte), so the loop
-       needs two bytes at index i.  The old `i < length - 1` underflows to
-       UINT_MAX for length == 0 and walks an empty area; `i + 1 < length`
-       rejects it the same way it already rejected length == 1. */
-    while ((i + 1) < length)
+    /* Search while an option's code and length bytes are both in the buffer.  */
+    while ((found == NX_NULL) && (remaining > 1U))
     {
-        /* Jump out when it reaches END option */
+
+        /* The END option ends the search.  */
         if (*data == NX_DHCP_OPTION_END)
         {
-            break;
+
+            remaining = 0U;
         }
 
-        /* Simply skip any padding */
+        /* Simply skip any padding.  */
         else if (*data == NX_DHCP_OPTION_PAD)
         {
 
             data++;
-            i++;
+            remaining--;
         }
-
-        /* On a match, return a pointer to the size.  */
-        else if (*data == option)
-        {
-
-            size = *(data + 1);
-
-            /* Check if the option data is in the packet.  The option's last
-               data byte is at index i + 1 + size, so it is present only when
-               i + size + 2 <= length.  Reject the option once its data would
-               extend past the end of the options area. */
-            if ((i + size + 2) > length)
-                return(NX_NULL);
-
-            /* Return a pointer to the option size byte.  */
-            return(data + 1);
-        }
-
-        /* Otherwise skip the option by adding the size to the pointer.  */
         else
         {
 
-            size = *(++data);
+            size = (UINT)data[1];
 
-            /* Skip the code byte, the size byte, and the size data bytes.  The
-               ++data above already passed the code byte, and this passes the
-               size byte plus its data, so i must advance the same full option
-               length (size + 2) to stay at the next option's code byte. */
-            data += size + 1;
-            i += size + 2;
+            /* An option whose data does not fit in the buffer ends the search.  */
+            if (size > (remaining - 2U))
+            {
+
+                remaining = 0U;
+            }
+
+            /* On a match, return a pointer to the size.  */
+            else if (*data == option)
+            {
+
+                found = &data[1];
+            }
+
+            /* Otherwise skip the code, length and data bytes.  */
+            else
+            {
+
+                data = &data[size + 2U];
+                remaining -= size + 2U;
+            }
         }
     }
 
-    /* Return NULL to indicate the option was not found.  */
-    return(NX_NULL);
+    /* Return the option's size byte, or NULL if the option was not found.  */
+    return(found);
 }
 
 
