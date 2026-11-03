@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -78,8 +80,6 @@ VOID  _nx_ip_driver_packet_send(NX_IP *ip_ptr, NX_PACKET *packet_ptr, ULONG dest
 TX_INTERRUPT_SAVE_AREA
 NX_IP_DRIVER driver_request;
 UINT         index;
-ULONG        network_mask;
-ULONG        network;
 UCHAR        loopback = NX_FALSE;
 NX_ARP      *arp_ptr;
 NX_PACKET   *last_packet;
@@ -114,14 +114,9 @@ UINT         queued_count;
     if (packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_address_mapping_needed)
     {
 
-        /* Get the network and network mask.*/
-        network_mask = packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_network_mask;
-        network = packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_network;
-
         /* Determine if an IP limited or directed broadcast is requested.  */
         if ((destination_ip == NX_IP_LIMITED_BROADCAST) ||
-            (((destination_ip & network_mask) == network) &&
-             ((destination_ip & ~network_mask) == ~network_mask)))
+            NX_IPV4_DIRECTED_BROADCAST_CHECK(packet_ptr -> nx_packet_address.nx_packet_interface_ptr, destination_ip))
         {
 
             /* Build the driver request.  */

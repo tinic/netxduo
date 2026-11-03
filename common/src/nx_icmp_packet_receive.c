@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -60,6 +62,8 @@
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
+/*    _nx_ipv4_directed_broadcast_check     Check directed broadcast      */
+/*    _nx_ipv4_network_address_check        Check network address         */
 /*    _nx_icmp_packet_process               Process ICMP packet           */
 /*    tx_event_flags_set                    Set event flags for IP helper */
 /*                                            thread                      */
@@ -124,10 +128,9 @@ NX_INTERFACE   *interface_ptr;
         /* Check for Multicast address */
         ((ip_header_ptr -> nx_ip_header_destination_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE) ||
         /* Check for subnet-directed broadcast */
-        (((ip_header_ptr -> nx_ip_header_destination_ip & interface_ptr -> nx_interface_ip_network_mask) == interface_ptr -> nx_interface_ip_network) &&
-         ((ip_header_ptr -> nx_ip_header_destination_ip & ~(interface_ptr -> nx_interface_ip_network_mask)) == ~(interface_ptr -> nx_interface_ip_network_mask))) ||
+        _nx_ipv4_directed_broadcast_check(interface_ptr, ip_header_ptr -> nx_ip_header_destination_ip) ||
         /* Check for local subnet address */
-        (ip_header_ptr -> nx_ip_header_destination_ip == interface_ptr -> nx_interface_ip_network)  ||
+        _nx_ipv4_network_address_check(interface_ptr, ip_header_ptr -> nx_ip_header_destination_ip) ||
         /* Check for limited broadcast */
         (ip_header_ptr -> nx_ip_header_destination_ip == NX_IP_LIMITED_BROADCAST)
        )

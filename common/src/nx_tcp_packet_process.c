@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -71,6 +73,8 @@
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
+/*    _nx_ipv4_directed_broadcast_check     Check directed broadcast      */
+/*    _nx_ipv4_network_address_check        Check network address         */
 /*    _nx_packet_release                    Packet release function       */
 /*    _nx_ip_checksum_compute               Calculate TCP packet checksum */
 /*    _nx_tcp_mss_option_get                Get peer MSS option           */
@@ -152,10 +156,7 @@ ULONG                        timestamp_echo = 0;
            carried.  */
         if (((*dest_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE) ||
             (*dest_ip == NX_IP_LIMITED_BROADCAST) ||
-            (((*dest_ip & interface_ptr -> nx_interface_ip_network_mask) ==
-              interface_ptr -> nx_interface_ip_network) &&
-             ((*dest_ip & ~(interface_ptr -> nx_interface_ip_network_mask)) ==
-              ~(interface_ptr -> nx_interface_ip_network_mask))))
+            NX_IPV4_DIRECTED_BROADCAST_CHECK(interface_ptr, *dest_ip))
         {
 
 #ifndef NX_DISABLE_TCP_INFO
@@ -609,10 +610,9 @@ ULONG                        timestamp_echo = 0;
                 /* Check for Multicast address */
                 ((*source_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE) ||
                 /* Check for subnet-directed broadcast */
-                (((*source_ip & interface_ptr -> nx_interface_ip_network_mask) == interface_ptr -> nx_interface_ip_network) &&
-                 ((*source_ip & ~(interface_ptr -> nx_interface_ip_network_mask)) == ~(interface_ptr -> nx_interface_ip_network_mask))) ||
+                _nx_ipv4_directed_broadcast_check(interface_ptr, *source_ip) ||
                 /* Check for local subnet address */
-                (*source_ip == interface_ptr -> nx_interface_ip_network)  ||
+                _nx_ipv4_network_address_check(interface_ptr, *source_ip) ||
                 /* Check for limited broadcast */
                 (*source_ip == NX_IP_LIMITED_BROADCAST)
                )

@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -1200,10 +1202,7 @@ NX_INTERFACE                    *interface_ptr;
         }
         
         /* Check for IP broadcast.  */
-        if(((ip_header_ptr -> nx_ip_header_destination_ip & interface_ptr -> nx_interface_ip_network_mask) ==
-            interface_ptr -> nx_interface_ip_network) &&
-            ((ip_header_ptr -> nx_ip_header_destination_ip & ~(interface_ptr -> nx_interface_ip_network_mask)) ==
-            ~(interface_ptr -> nx_interface_ip_network_mask)))
+        if (_nx_ipv4_directed_broadcast_check(interface_ptr, ip_header_ptr -> nx_ip_header_destination_ip))
         {
 
             /* Let IP packet receive process this packet. */

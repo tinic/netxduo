@@ -148,6 +148,8 @@ target_sources(${PROJECT_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ip_thread_entry.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ipv4_multicast_interface_join.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ipv4_multicast_interface_leave.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_ipv4_directed_broadcast_check.c
+	${CMAKE_CURRENT_LIST_DIR}/src/nx_ipv4_network_address_check.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ipv4_option_process.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ipv4_packet_receive.c
 	${CMAKE_CURRENT_LIST_DIR}/src/nx_ipv6_fragment_process.c
