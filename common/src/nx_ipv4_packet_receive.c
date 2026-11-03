@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -350,10 +352,9 @@ UINT            packet_consumed;
     if (if_ptr -> nx_interface_address_mapping_needed == NX_TRUE)
     {
         if ((ip_header_ptr -> nx_ip_header_source_ip == NX_IP_LIMITED_BROADCAST) ||
-            (((ip_header_ptr -> nx_ip_header_source_ip & if_ptr -> nx_interface_ip_network_mask) == if_ptr -> nx_interface_ip_network) &&
-             (((ip_header_ptr -> nx_ip_header_source_ip & ~(if_ptr -> nx_interface_ip_network_mask)) == ~(if_ptr -> nx_interface_ip_network_mask)) ||
-              (((ip_header_ptr -> nx_ip_header_source_ip & ~(if_ptr -> nx_interface_ip_network_mask)) == 0) &&
-               (ip_header_ptr -> nx_ip_header_source_ip != 0)))) ||
+            NX_IPV4_DIRECTED_BROADCAST_CHECK(if_ptr, ip_header_ptr -> nx_ip_header_source_ip) ||
+            (NX_IPV4_NETWORK_ADDRESS_CHECK(if_ptr, ip_header_ptr -> nx_ip_header_source_ip) &&
+             (ip_header_ptr -> nx_ip_header_source_ip != 0)) ||
             ((ip_header_ptr -> nx_ip_header_source_ip & NX_IP_CLASS_D_MASK) == NX_IP_CLASS_D_TYPE))
         {
 
@@ -540,10 +541,7 @@ UINT            packet_consumed;
         (ip_header_ptr -> nx_ip_header_destination_ip == 0) ||
 
         /* Check for IP broadcast.  */
-        (((ip_header_ptr -> nx_ip_header_destination_ip & if_ptr -> nx_interface_ip_network_mask) ==
-          if_ptr -> nx_interface_ip_network) &&
-         ((ip_header_ptr -> nx_ip_header_destination_ip & ~(if_ptr -> nx_interface_ip_network_mask)) ==
-          ~(if_ptr -> nx_interface_ip_network_mask))) ||
+        NX_IPV4_DIRECTED_BROADCAST_CHECK(if_ptr, ip_header_ptr -> nx_ip_header_destination_ip) ||
 
         /* Check for limited broadcast.  */
         (ip_header_ptr -> nx_ip_header_destination_ip == NX_IP_LIMITED_BROADCAST) ||

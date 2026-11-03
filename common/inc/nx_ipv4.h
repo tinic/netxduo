@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -141,6 +143,27 @@ typedef  struct NX_IPV4_HEADER_STRUCT
     ULONG nx_ip_header_destination_ip;
 } NX_IPV4_HEADER;
 
+/* A network mask of this or more bits leaves no directed broadcast and no
+   network address: a 31-bit network has two hosts (RFC 3021), a 32-bit
+   network has one.  */
+#define NX_IPV4_NO_BROADCAST_MASK           ((ULONG)0xFFFFFFFE)
+
+/* Whether ip_address is the directed broadcast of the network attached to
+   interface_ptr; _nx_ipv4_directed_broadcast_check() is this test.  The
+   macro form is for the per-packet receive checks.  */
+#define NX_IPV4_DIRECTED_BROADCAST_CHECK(interface_ptr, ip_address)                                  \
+    (((interface_ptr) -> nx_interface_ip_network_mask < NX_IPV4_NO_BROADCAST_MASK) &&                 \
+     (((ip_address) & (interface_ptr) -> nx_interface_ip_network_mask) ==                             \
+      (interface_ptr) -> nx_interface_ip_network) &&                                                  \
+     (((ip_address) & ~((interface_ptr) -> nx_interface_ip_network_mask)) ==                          \
+      ~((interface_ptr) -> nx_interface_ip_network_mask)))
+
+/* Whether ip_address is the network address of the network attached to
+   interface_ptr; _nx_ipv4_network_address_check() is this test.  */
+#define NX_IPV4_NETWORK_ADDRESS_CHECK(interface_ptr, ip_address)                                     \
+    (((interface_ptr) -> nx_interface_ip_network_mask < NX_IPV4_NO_BROADCAST_MASK) &&                 \
+     ((ip_address) == (interface_ptr) -> nx_interface_ip_network))
+
 /* Define IPv4 internal function prototypes.  */
 VOID  _nx_ip_forward_packet_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 VOID  _nx_ip_fragment_forward_packet(NX_IP *ip_ptr, NX_PACKET *packet_ptr, ULONG destination_ip, ULONG fragment, ULONG next_hop_address);
@@ -151,6 +174,8 @@ VOID  _nx_ip_driver_packet_send(NX_IP *ip_ptr, NX_PACKET *packet_ptr, ULONG dest
 ULONG _nx_ip_route_find(NX_IP *ip_ptr, ULONG destination_address, NX_INTERFACE **nx_ip_interface, ULONG *next_hop_address);
 VOID  _nx_ipv4_packet_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 UINT  _nx_ipv4_option_process(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
+UINT  _nx_ipv4_directed_broadcast_check(NX_INTERFACE *interface_ptr, ULONG ip_address);
+UINT  _nx_ipv4_network_address_check(NX_INTERFACE *interface_ptr, ULONG ip_address);
 #endif /* NX_DISABLE_IPV4 */
 
 /* Define IPv4 function prototypes.  */

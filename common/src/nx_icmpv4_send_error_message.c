@@ -9,6 +9,8 @@
  * SPDX-License-Identifier: MIT
  **************************************************************************/
 
+/* Portions of this file were generated with AI assistance. */
+
 
 /**************************************************************************/
 /**************************************************************************/
@@ -67,6 +69,7 @@
 /*                                                                        */
 /*  CALLS                                                                 */
 /*                                                                        */
+/*    _nx_ipv4_directed_broadcast_check     Check directed broadcast      */
 /*    _nx_ip_checksum_compute               Computer ICMP checksum        */
 /*    _nx_ip_packet_send                    Send ICMP packet out          */
 /*    _nx_packet_allocate                   Packet allocate               */
@@ -133,10 +136,7 @@ NXD_ADDRESS      dest_addr;
     }
 
     /* A datagram sent as a link-layer broadcast.  */
-    if (((ip_header_ptr -> nx_ip_header_destination_ip & if_ptr -> nx_interface_ip_network_mask) ==
-         if_ptr -> nx_interface_ip_network) &&
-        ((ip_header_ptr -> nx_ip_header_destination_ip & ~(if_ptr -> nx_interface_ip_network_mask)) ==
-         ~(if_ptr -> nx_interface_ip_network_mask)))
+    if (_nx_ipv4_directed_broadcast_check(if_ptr, ip_header_ptr -> nx_ip_header_destination_ip))
     {
         return;
     }

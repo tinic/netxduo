@@ -11990,7 +11990,7 @@ ULONG                   destination_ip;
 
         /* Determine whether or not the destination address is out of  this local network.  */
         if (((destination_ip & network_mask) != network) ||
-            ((destination_ip & ~network_mask) == ~network_mask) ||
+            _nx_ipv4_directed_broadcast_check(packet_ptr -> nx_packet_address.nx_packet_interface_ptr, destination_ip) ||
              (destination_ip == packet_ptr -> nx_packet_address.nx_packet_interface_ptr -> nx_interface_ip_address))
         {
 
@@ -11999,8 +11999,7 @@ ULONG                   destination_ip;
 
             /* Determine if an IP limited or directed broadcast is requested.  */
             if ((destination_ip == NX_IP_LIMITED_BROADCAST) ||
-                (((destination_ip & network_mask) == network) &&
-                 ((destination_ip & ~network_mask) == ~network_mask)))
+                _nx_ipv4_directed_broadcast_check(packet_ptr -> nx_packet_address.nx_packet_interface_ptr, destination_ip))
             {
 
                 /* Build the driver request.  */
